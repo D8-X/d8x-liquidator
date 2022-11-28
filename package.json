@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@d8x/perpetuals-sdk": "^0.0.8",
+    "ethers": "^5.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^18.11.9"
+  }
+}
