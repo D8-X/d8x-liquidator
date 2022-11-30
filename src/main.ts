@@ -13,7 +13,7 @@ function chooseRPC(rpcArray: string[]): string {
 }
 
 async function run() {
-  const symbol = "ETH-USD-MATIC";
+  const symbol = "MATIC-USD-MATIC";
   let pk: string = <string>process.env.PK;
   let RPC: string = <string>process.env.RPC;
   let liqConfig = loadConfig();

@@ -1,4 +1,4 @@
-import { MarketData, PerpetualDataHandler, LiquidatorTool, Order, MarginAccount } from "@d8x/perpetuals-sdk";
+import { MarketData, PerpetualDataHandler, LiquidatorTool, MarginAccount } from "@d8x/perpetuals-sdk";
 import { ethers } from "ethers";
 import { PositionBundle, ZERO_POSITION } from "./types";
 
@@ -6,12 +6,13 @@ export default class Liquidator {
   private mktData: MarketData | undefined;
   private liqTool: LiquidatorTool | undefined;
   private proxyContract: ethers.Contract | undefined;
-  private perpetualId: number;
+  private perpetualId: number | undefined;
   private perpSymbol: string;
   private liquidatorAddr: string | undefined;
   private openPositions: PositionBundle[] = new Array<PositionBundle>();
+  private newPositions: PositionBundle[] = new Array<PositionBundle>();
   private removePositions: PositionBundle[] = new Array<PositionBundle>();
-  // private newPositions: PositionBundle[] = new Array<PositionBundle>();
+  private addressWatch: Set<string> = new Set<string>();
   private isLiquidating: boolean = false;
   private privateKey: string;
 
@@ -41,7 +42,8 @@ export default class Liquidator {
     await this.mktData.createProxyInstance();
     await this.liqTool.createProxyInstance();
     // get perpetual Id
-    this.perpetualId = this.mktData.getPerpIdFromSymbol(this.perpSymbol);
+    // TODO: remove comment, this is for testing
+    this.perpetualId = 100; // this.mktData.getPerpIdFromSymbol(this.perpSymbol);
     // build all orders
     await this.refreshActiveAccounts();
   }
@@ -76,12 +78,16 @@ export default class Liquidator {
       this.proxyContract!.on(
         "Trade",
         async (perpetualId, traderAddr, positionId, order, orderDigest, fNewPositionBC, price) => {
+          console.log("Trade caught");
           if (perpetualId != this.perpetualId) {
             // not our perp
             return;
           }
-          if (fNewPositionBC == ZERO_POSITION) {
-            console.log(`new trade from address ${traderAddr}`);
+          if (!this.addressWatch.has(traderAddr)) {
+            console.log(`now watching trader ${traderAddr}`);
+            this.addAccount(traderAddr);
+          } else if (fNewPositionBC == ZERO_POSITION) {
+            console.log(`trader ${traderAddr} has fully closed`);
             this.removeAccount(traderAddr);
           }
         }
@@ -90,11 +96,16 @@ export default class Liquidator {
       this.proxyContract!.on(
         "Liquidate",
         async (perpetualId, liquidatorAddr, traderAddr, positionId, fLiquidatedAmount, fPrice, fNewPositionBC) => {
+          console.log("Liquidate caught");
           if (perpetualId != this.perpetualId) {
             // not our perp
             return;
           }
-          if (fNewPositionBC == ZERO_POSITION && liquidatorAddr != this.liquidatorAddr) {
+          if (
+            fNewPositionBC == ZERO_POSITION &&
+            liquidatorAddr != this.liquidatorAddr &&
+            this.addressWatch.has(traderAddr)
+          ) {
             // someone else liquidated this trader
             console.log(`trader ${traderAddr} was liquidated by ${liquidatorAddr}`);
             this.removeAccount(traderAddr);
@@ -105,8 +116,33 @@ export default class Liquidator {
   }
 
   public async removeAccount(traderAddr: string) {
+    // let account = await this.mktData!.positionRisk(traderAddr, this.perpSymbol);
+    // this.removePositions.push({ address: traderAddr, account: account });
+    this.addressWatch.delete(traderAddr);
+  }
+
+  public async addAccount(traderAddr: string) {
     let account = await this.mktData!.positionRisk(traderAddr, this.perpSymbol);
-    this.removePositions.push({ address: traderAddr, account: account });
+    this.newPositions.push({ address: traderAddr, account: account });
+    this.addressWatch.add(traderAddr);
+  }
+
+  private _updateAccounts() {
+    // remove closed positions
+    let k = 0;
+    while (k < this.openPositions.length) {
+      if (!this.addressWatch.has(this.openPositions[k].address)) {
+        this.openPositions[k] = this.openPositions[this.openPositions.length - 1];
+        this.openPositions.pop();
+      } else {
+        k++;
+      }
+    }
+    // add new positions
+    while (this.newPositions.length > 0) {
+      let newAcc = this.newPositions.pop();
+      this.openPositions.push(newAcc!);
+    }
   }
 
   /**
@@ -117,15 +153,21 @@ export default class Liquidator {
       throw Error("liqTool not defined");
     }
     // get active accounts
+    let numAccounts = await this.liqTool.countActivePerpAccounts(this.perpSymbol);
+    console.log(`There are ${numAccounts} active accounts`);
     let accountAddresses = await this.liqTool.getAllActiveAccounts(this.perpSymbol);
     let accountPromises: Array<Promise<MarginAccount>> = new Array<Promise<MarginAccount>>();
+    this.addressWatch.clear();
     for (var k = 0; k < accountAddresses.length; k++) {
       accountPromises.push(this.mktData!.positionRisk(accountAddresses[k], this.perpSymbol));
     }
     let accounts = await Promise.all(accountPromises);
     for (var k = 0; k < accounts.length; k++) {
       this.openPositions.push({ address: accountAddresses[k], account: accounts[k] });
+      this.addressWatch.add(accountAddresses[k]);
     }
+    console.log("Addresses:");
+    console.log(this.addressWatch);
   }
 
   /**
@@ -139,9 +181,11 @@ export default class Liquidator {
     if (this.isLiquidating) {
       return { numSubmitted: 0, numLiquidated: 0 };
     }
+
     let numSubmitted = 0;
     let numLiquidated = 0;
     try {
+      this._updateAccounts();
       let res = await this._liquidate();
       numSubmitted = res[0];
       numLiquidated = res[1];
@@ -153,9 +197,6 @@ export default class Liquidator {
 
   private async _liquidate(): Promise<number[]> {
     this.isLiquidating = true;
-
-    // TODO: remove closed positions from openPositions
-
     // narrow down potentially liquidatable
     let liquidatable: Array<Promise<boolean>> = new Array<Promise<boolean>>();
     for (let k = 0; k < this.openPositions.length; k++) {
