@@ -16,20 +16,20 @@ async function run() {
   const symbol = "ETH-USD-MATIC";
   let pk: string = <string>process.env.PK;
   let RPC: string = <string>process.env.RPC;
-  let refConfig = loadConfig();
+  let liqConfig = loadConfig();
   if (RPC != undefined) {
-    refConfig.RPC.push(RPC);
+    liqConfig.RPC.push(RPC);
   }
 
   if (pk == undefined) {
     throw new Error("private key not defined");
   }
-  let myReferrer: Liquidator = new Liquidator(pk, symbol);
+  let myLiquidator: Liquidator = new Liquidator(pk, symbol);
   try {
-    await myReferrer.initialize(chooseRPC(refConfig.RPC));
-    await myReferrer.runForNumBlocks(10);
+    await myLiquidator.initialize(chooseRPC(liqConfig.RPC));
+    await myLiquidator.runForNumBlocks(10);
   } catch (error) {
-    console.log(`error in referrer: ${error}`);
+    console.log(`error in liquidator: ${error}`);
   }
 }
 
