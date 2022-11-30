@@ -3,8 +3,8 @@ import { ABK64x64ToFloat, floatToABK64x64, MarginAccount } from "@d8x/perpetuals
 export const ZERO_POSITION = floatToABK64x64(0);
 
 export interface PositionBundle {
-  address: string,
-  account: MarginAccount
+  address: string;
+  account: MarginAccount;
 }
 
 export interface LiqConfig {
