@@ -41,7 +41,7 @@ export default class Liquidator {
     await this.mktData.createProxyInstance();
     await this.liqTool.createProxyInstance();
     // get perpetual Id
-
+    this.perpetualId = this.mktData.getPerpIdFromSymbol(this.perpSymbol);
     // build all orders
     await this.refreshActiveAccounts();
   }
