@@ -1,8 +1,6 @@
 # D8X Liquidator
 
-Liquidator for D8X futures.
-
-# How to:
+Liquidator for D8X Perpetual Futures.
 
 ### Install
 
