@@ -67,7 +67,11 @@ export default class Liquidator {
         try {
           let res = await this.liquidateTraders();
           if (numBlocks % 10 == 0 || res.numSubmitted > 0) {
-            console.log(`${blockNumber}: Tried: ${res.numSubmitted}, Liquidated: ${res.numLiquidated}`);
+            console.log(
+              `${new Date().toUTCString()} Block: ${blockNumber}, Tried: ${res.numSubmitted}, Liquidated: ${
+                res.numLiquidated
+              }`
+            );
           }
           if (numBlocks >= maxBlocks) {
             resolve();
