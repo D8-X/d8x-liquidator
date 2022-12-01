@@ -161,7 +161,14 @@ export default class Liquidator {
         // position should be updated
         let traderAddr = this.openPositions[k].address;
         console.log(`Updating position risk of trader ${traderAddr}`);
-        let account = await this.mktData!.positionRisk(traderAddr, this.perpSymbol);
+        let account: MarginAccount;
+        try {
+          account = await this.mktData!.positionRisk(traderAddr, this.perpSymbol);
+        } catch (e) {
+          console.log("Error in _updateAccounts: update positionRisk");
+          console.log(e);
+          throw Error();
+        }
         this.openPositions[k] = { address: traderAddr, account: account };
       }
       // can move to next position
@@ -174,7 +181,14 @@ export default class Liquidator {
     while (newAddresseses.length > 0) {
       let newAddress = newAddresseses.pop();
       console.log(`Adding new trader ${newAddress}`);
-      let newAccount = await this.mktData!.positionRisk(newAddress!, this.perpSymbol);
+      let newAccount: MarginAccount;
+      try {
+        newAccount = await this.mktData!.positionRisk(newAddress!, this.perpSymbol);
+      } catch (e) {
+        console.log("Error in _updateAccounts: add new positionRisk");
+        console.log(e);
+        throw Error();
+      }
       this.openPositions.push({ address: newAddress!, account: newAccount });
       this.addressWatch.add(newAddress!);
     }
@@ -203,8 +217,8 @@ export default class Liquidator {
       this.openPositions.push({ address: accountAddresses[k], account: accounts[k] });
       this.addressWatch.add(accountAddresses[k]);
     }
-    console.log("Addresses:");
-    console.log(this.addressWatch);
+    console.log("Watching positions:");
+    console.log(this.openPositions);
   }
 
   /**
@@ -226,7 +240,8 @@ export default class Liquidator {
       numSubmitted = res[0];
       numLiquidated = res[1];
     } catch (e) {
-      console.log(`Error in liquidateTraders: ${e}`);
+      console.log("Error in liquidateTraders:");
+      console.log(e);
     }
     this.isLiquidating = false;
     return { numSubmitted: numSubmitted, numLiquidated: numLiquidated };
@@ -244,7 +259,14 @@ export default class Liquidator {
       liquidatable.push(shouldLiquidate);
     }
     // wait for all promises
-    let isLiquidatable = await Promise.all(liquidatable);
+    let isLiquidatable: Array<boolean>;
+    try {
+      isLiquidatable = await Promise.all(liquidatable);
+    } catch (e) {
+      console.log("Error in _liquidate: check maintenance margin:");
+      console.log(e);
+      throw Error();
+    }
     // try to execute all executable ones
     let executeRequests: Array<Promise<number>> = [];
     let executeIdxInOpenPositions: Array<number> = [];
@@ -258,7 +280,14 @@ export default class Liquidator {
       }
     }
     // wait for all requests to go through and determine what was executed
-    let amountsArray = await Promise.all(executeRequests);
+    let amountsArray: Array<number>;
+    try {
+      amountsArray = await Promise.all(executeRequests);
+    } catch (e) {
+      console.log("Error in _liquidate: submit liquidations:");
+      console.log(e);
+      throw Error();
+    }
     let numSubmitted = amountsArray.length;
     let numLiquidated = 0;
     for (let k = 0; k < amountsArray.length; k++) {
