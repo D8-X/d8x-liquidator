@@ -87,26 +87,26 @@ export default class Liquidator {
         }
       );
 
-      this.proxyContract!.on(
-        "UpdateMarginAccount",
-        async (
-          perpetualId,
-          traderAddr,
-          positionId,
-          fPositionBC,
-          fCashCC,
-          fLockedInValueQC,
-          fFundingPayment,
-          fOpenInterest
-        ) => {
-          console.log("Trade caught");
-          if (perpetualId != this.perpetualId) {
-            // not our perp
-            return;
-          }
-          this.updateOnEvent(traderAddr, fPositionBC);
-        }
-      );
+      // this.proxyContract!.on(
+      //   "UpdateMarginAccount",
+      //   async (
+      //     perpetualId,
+      //     traderAddr,
+      //     positionId,
+      //     fPositionBC,
+      //     fCashCC,
+      //     fLockedInValueQC,
+      //     fFundingPayment,
+      //     fOpenInterest
+      //   ) => {
+      //     console.log("UpdateMarginAccount caught");
+      //     if (perpetualId != this.perpetualId) {
+      //       // not our perp
+      //       return;
+      //     }
+      //     this.updateOnEvent(traderAddr, fPositionBC);
+      //   }
+      // );
 
       this.proxyContract!.on(
         "Liquidate",
@@ -127,15 +127,18 @@ export default class Liquidator {
       // we are monitoring this trader
       if (fPositionBC == ZERO_POSITION) {
         // position is closed, we should not watch it anymore
+        console.log(`Trader ${traderAddr} is out - will remove from watch list.`);
         this.addressWatch.delete(traderAddr);
       } else {
         // something changed in this account, we should update it
+        console.log(`Trader ${traderAddr} did something - will update the account.`);
         this.addressUpdate.add(traderAddr);
       }
     } else {
       // we have not seen this trader before
       if (fPositionBC != ZERO_POSITION) {
         // the position is active, so we monitor it
+        console.log(`New trader ${traderAddr} dectected - will add to watch list.`);
         this.addressAdd.add(traderAddr);
       }
     }
@@ -171,6 +174,8 @@ export default class Liquidator {
     }
     // done adding
     this.addressAdd.clear();
+    console.log("Positions being watched:");
+    console.log(this.openPositions);
   }
 
   /**
