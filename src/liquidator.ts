@@ -238,10 +238,10 @@ export default class Liquidator {
     let liquidatable: Array<Promise<boolean>> = new Array<Promise<boolean>>();
     for (let k = 0; k < this.openPositions.length; k++) {
       // query whether the position can be liquidated
-      let isMarginSafe = this.liqTool!.isMaintenanceMarginSafe(this.perpSymbol, this.openPositions[k].address).then(
+      let shouldLiquidate = this.liqTool!.isMaintenanceMarginSafe(this.perpSymbol, this.openPositions[k].address).then(
         (x) => !x && this.openPositions[k].account.positionNotionalBaseCCY > this.minPositionSizeToLiquidate!
       );
-      liquidatable.push(isMarginSafe);
+      liquidatable.push(shouldLiquidate);
     }
     // wait for all promises
     let isLiquidatable = await Promise.all(liquidatable);
