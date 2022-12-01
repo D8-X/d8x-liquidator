@@ -1,5 +1,5 @@
 import { MarketData, PerpetualDataHandler, LiquidatorTool, MarginAccount } from "@d8x/perpetuals-sdk";
-import { ethers } from "ethers";
+import { BigNumber, ethers } from "ethers";
 import { PositionBundle, ZERO_POSITION } from "./types";
 
 export default class Liquidator {
@@ -10,9 +10,9 @@ export default class Liquidator {
   private perpSymbol: string;
   private liquidatorAddr: string | undefined;
   private openPositions: PositionBundle[] = new Array<PositionBundle>();
-  private newPositions: PositionBundle[] = new Array<PositionBundle>();
-  private removePositions: PositionBundle[] = new Array<PositionBundle>();
+  private addressUpdate: Set<string> = new Set<string>();
   private addressWatch: Set<string> = new Set<string>();
+  private addressAdd: Set<string> = new Set<string>();
   private isLiquidating: boolean = false;
   private privateKey: string;
 
@@ -83,13 +83,28 @@ export default class Liquidator {
             // not our perp
             return;
           }
-          if (!this.addressWatch.has(traderAddr)) {
-            console.log(`now watching trader ${traderAddr}`);
-            this.addAccount(traderAddr);
-          } else if (fNewPositionBC == ZERO_POSITION) {
-            console.log(`trader ${traderAddr} has fully closed`);
-            this.removeAccount(traderAddr);
+          this.updateOnEvent(traderAddr, fNewPositionBC);
+        }
+      );
+
+      this.proxyContract!.on(
+        "UpdateMarginAccount",
+        async (
+          perpetualId,
+          traderAddr,
+          positionId,
+          fPositionBC,
+          fCashCC,
+          fLockedInValueQC,
+          fFundingPayment,
+          fOpenInterest
+        ) => {
+          console.log("Trade caught");
+          if (perpetualId != this.perpetualId) {
+            // not our perp
+            return;
           }
+          this.updateOnEvent(traderAddr, fPositionBC);
         }
       );
 
@@ -101,48 +116,61 @@ export default class Liquidator {
             // not our perp
             return;
           }
-          if (
-            fNewPositionBC == ZERO_POSITION &&
-            liquidatorAddr != this.liquidatorAddr &&
-            this.addressWatch.has(traderAddr)
-          ) {
-            // someone else liquidated this trader
-            console.log(`trader ${traderAddr} was liquidated by ${liquidatorAddr}`);
-            this.removeAccount(traderAddr);
-          }
+          this.updateOnEvent(traderAddr, fNewPositionBC);
         }
       );
     });
   }
 
-  public async removeAccount(traderAddr: string) {
-    // let account = await this.mktData!.positionRisk(traderAddr, this.perpSymbol);
-    // this.removePositions.push({ address: traderAddr, account: account });
-    this.addressWatch.delete(traderAddr);
+  public updateOnEvent(traderAddr: string, fPositionBC: BigNumber) {
+    if (this.addressWatch.has(traderAddr)) {
+      // we are monitoring this trader
+      if (fPositionBC == ZERO_POSITION) {
+        // position is closed, we should not watch it anymore
+        this.addressWatch.delete(traderAddr);
+      } else {
+        // something changed in this account, we should update it
+        this.addressUpdate.add(traderAddr);
+      }
+    } else {
+      // we have not seen this trader before
+      if (fPositionBC != ZERO_POSITION) {
+        // the position is active, so we monitor it
+        this.addressAdd.add(traderAddr);
+      }
+    }
   }
 
-  public async addAccount(traderAddr: string) {
-    let account = await this.mktData!.positionRisk(traderAddr, this.perpSymbol);
-    this.newPositions.push({ address: traderAddr, account: account });
-    this.addressWatch.add(traderAddr);
-  }
-
-  private _updateAccounts() {
+  private async _updateAccounts() {
     // remove closed positions
     let k = 0;
     while (k < this.openPositions.length) {
       if (!this.addressWatch.has(this.openPositions[k].address)) {
+        // position should be dropped
         this.openPositions[k] = this.openPositions[this.openPositions.length - 1];
         this.openPositions.pop();
+      } else if (this.addressUpdate.has(this.openPositions[k].address)) {
+        // position should be updated
+        let traderAddr = this.openPositions[k].address;
+        let account = await this.mktData!.positionRisk(traderAddr, this.perpSymbol);
+        this.openPositions[k] = { address: traderAddr, account: account };
       } else {
+        // position does not need to be updated nor removed
         k++;
       }
     }
+    // done updating
+    this.addressUpdate.clear();
     // add new positions
-    while (this.newPositions.length > 0) {
-      let newAcc = this.newPositions.pop();
-      this.openPositions.push(newAcc!);
+    let newAddresseses = Array.from(this.addressAdd);
+    while (newAddresseses.length > 0) {
+      let newAddress = newAddresseses.pop();
+      let newAccount = await this.mktData!.positionRisk(newAddress!, this.perpSymbol);
+      this.openPositions.push({ address: newAddress!, account: newAccount });
+      this.addressWatch.add(newAddress!);
     }
+    // done adding
+    this.addressAdd.clear();
   }
 
   /**
