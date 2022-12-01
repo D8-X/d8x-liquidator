@@ -15,6 +15,7 @@ export default class Liquidator {
   private addressAdd: Set<string> = new Set<string>();
   private isLiquidating: boolean = false;
   private privateKey: string;
+  private minPositionSizeToLiquidate: number | undefined = undefined;
 
   constructor(privateKey: string, perpSymbol: string, liquidatorAddr?: string) {
     this.privateKey = privateKey;
@@ -42,8 +43,9 @@ export default class Liquidator {
     await this.mktData.createProxyInstance();
     await this.liqTool.createProxyInstance();
     // get perpetual Id
-    // TODO: remove comment, this is for testing
     this.perpetualId = this.mktData.getPerpIdFromSymbol(this.perpSymbol);
+    // set minimal position size to liquidate: $1000 at mark price
+    this.minPositionSizeToLiquidate = 1_000 / (await this.mktData!.getMarkPrice(this.perpSymbol));
     // build all orders
     await this.refreshActiveAccounts();
   }
@@ -150,17 +152,20 @@ export default class Liquidator {
     while (k < this.openPositions.length) {
       if (!this.addressWatch.has(this.openPositions[k].address)) {
         // position should be dropped
+        console.log(`Removing trader ${this.openPositions[k].address}`);
         this.openPositions[k] = this.openPositions[this.openPositions.length - 1];
         this.openPositions.pop();
+        // we don't move index k
+        continue;
       } else if (this.addressUpdate.has(this.openPositions[k].address)) {
         // position should be updated
         let traderAddr = this.openPositions[k].address;
+        console.log(`Updating position risk of trader ${traderAddr}`);
         let account = await this.mktData!.positionRisk(traderAddr, this.perpSymbol);
         this.openPositions[k] = { address: traderAddr, account: account };
-      } else {
-        // position does not need to be updated nor removed
-        k++;
       }
+      // can move to next position
+      k++;
     }
     // done updating
     this.addressUpdate.clear();
@@ -168,14 +173,13 @@ export default class Liquidator {
     let newAddresseses = Array.from(this.addressAdd);
     while (newAddresseses.length > 0) {
       let newAddress = newAddresseses.pop();
+      console.log(`Adding new trader ${newAddress}`);
       let newAccount = await this.mktData!.positionRisk(newAddress!, this.perpSymbol);
       this.openPositions.push({ address: newAddress!, account: newAccount });
       this.addressWatch.add(newAddress!);
     }
     // done adding
     this.addressAdd.clear();
-    console.log("Positions being watched:");
-    console.log(this.openPositions);
   }
 
   /**
@@ -214,17 +218,17 @@ export default class Liquidator {
     if (this.isLiquidating) {
       return { numSubmitted: 0, numLiquidated: 0 };
     }
-
     let numSubmitted = 0;
     let numLiquidated = 0;
     try {
-      this._updateAccounts();
+      await this._updateAccounts();
       let res = await this._liquidate();
       numSubmitted = res[0];
       numLiquidated = res[1];
     } catch (e) {
       console.log(`Error in liquidateTraders: ${e}`);
     }
+    this.isLiquidating = false;
     return { numSubmitted: numSubmitted, numLiquidated: numLiquidated };
   }
 
@@ -234,7 +238,10 @@ export default class Liquidator {
     let liquidatable: Array<Promise<boolean>> = new Array<Promise<boolean>>();
     for (let k = 0; k < this.openPositions.length; k++) {
       // query whether the position can be liquidated
-      liquidatable.push(this.liqTool!.isMaintenanceMarginSafe(this.perpSymbol, this.openPositions[k].address));
+      let isMarginSafe = this.liqTool!.isMaintenanceMarginSafe(this.perpSymbol, this.openPositions[k].address).then(
+        (x) => !x && this.openPositions[k].account.positionNotionalBaseCCY > this.minPositionSizeToLiquidate!
+      );
+      liquidatable.push(isMarginSafe);
     }
     // wait for all promises
     let isLiquidatable = await Promise.all(liquidatable);
@@ -242,7 +249,6 @@ export default class Liquidator {
     let executeRequests: Array<Promise<number>> = [];
     let executeIdxInOpenPositions: Array<number> = [];
     for (let k = 0; k < this.openPositions.length; k++) {
-      // TODO: should be careful with indexing
       if (isLiquidatable[k]) {
         // execute
         executeRequests.push(
