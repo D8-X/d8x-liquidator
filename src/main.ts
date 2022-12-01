@@ -1,3 +1,13 @@
+/**
+ * How to run this script:
+ * 1) Install:
+ * $ yarn
+ * 2) Run:
+ * $ yarn run
+ * 3) Monitor in real time:
+ * $ pm2 monit
+ */
+
 import Liquidator from "./liquidator";
 import { LiqConfig } from "./types";
 
@@ -13,7 +23,7 @@ function chooseRPC(rpcArray: string[]): string {
 }
 
 async function run() {
-  const symbol = "MATIC-USD-MATIC";
+  const symbol = process.argv[2] ?? "MATIC-USD-MATIC"; // "ETH-USD-MATIC";
   let pk: string = <string>process.env.PK;
   let RPC: string = <string>process.env.RPC;
   let liqConfig = loadConfig();

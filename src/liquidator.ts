@@ -66,10 +66,13 @@ export default class Liquidator {
       this.proxyContract!.provider.on("block", async (blockNumber) => {
         try {
           let res = await this.liquidateTraders();
-          numBlocks++;
-          console.log(`${blockNumber}: Tried: ${res.numSubmitted}, Liquidated: ${res.numLiquidated}`);
+          if (numBlocks % 10 == 0 || res.numSubmitted > 0) {
+            console.log(`${blockNumber}: Tried: ${res.numSubmitted}, Liquidated: ${res.numLiquidated}`);
+          }
           if (numBlocks >= maxBlocks) {
             resolve();
+          } else {
+            numBlocks++;
           }
         } catch (e) {
           console.log(`Error in block processing callback:`, e);
