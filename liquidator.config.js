@@ -1,18 +1,3 @@
-# D8X Liquidator
-
-Liquidator for D8X futures.
-
-# How to:
-
-### Install
-
-Run `yarn`.
-
-### Configure
-
-Inspect and edit the liquidator.config.js file to set-up the liquidators. For instance, if you want to run liquidators for BTC and ETH, you could use a config file like this:
-
-```
 module.exports = {
   apps: [
     {
@@ -33,16 +18,3 @@ module.exports = {
     },
   ],
 };
-```
-
-### Start
-
-Run `yarn start`.
-
-### Monitor
-
-Inspect logs in the 'logs' folder, or run `pm2 monit`.
-
-### Stop
-
-Run `pm2 stop all && pm2 delete all`.

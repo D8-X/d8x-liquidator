@@ -9,6 +9,6 @@
   },
   "scripts": {
     "postinstall": "$(yarn bin)/pm2 install typescript",
-    "start": "pm2 start src/main.ts --watch"
+    "start": "pm2 start liquidator.config.js --watch --log ./logs/liquidations.log"
   }
 }

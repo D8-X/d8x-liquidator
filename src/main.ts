@@ -1,13 +1,3 @@
-/**
- * How to run this script:
- * 1) Install:
- * $ yarn
- * 2) Run:
- * $ yarn run
- * 3) Monitor in real time:
- * $ pm2 monit
- */
-
 import Liquidator from "./liquidator";
 import { LiqConfig } from "./types";
 
@@ -32,14 +22,15 @@ async function run() {
   }
 
   if (pk == undefined) {
-    throw new Error("private key not defined");
+    throw new Error("Private key not defined: use $export PK='myPrivateKey'");
   }
+  console.log(`Starting liquidator for symbol ${symbol}...`);
   let myLiquidator: Liquidator = new Liquidator(pk, symbol);
   try {
     await myLiquidator.initialize(chooseRPC(liqConfig.RPC));
     await myLiquidator.runForNumBlocks(10);
-  } catch (error) {
-    console.log(`error in liquidator: ${error}`);
+  } catch (e) {
+    console.log(e);
   }
 }
 

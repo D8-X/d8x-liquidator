@@ -211,18 +211,33 @@ export default class Liquidator {
       throw Error("liqTool not defined");
     }
     // get active accounts
+    // console.log("Counting active accounts...");
     let numAccounts = await this.liqTool.countActivePerpAccounts(this.perpSymbol);
     console.log(`There are ${numAccounts} active accounts`);
-    let accountAddresses = await this.liqTool.getAllActiveAccounts(this.perpSymbol);
-    let accountPromises: Array<Promise<MarginAccount>> = new Array<Promise<MarginAccount>>();
-    this.addressWatch.clear();
-    for (var k = 0; k < accountAddresses.length; k++) {
-      accountPromises.push(this.mktData!.positionRisk(accountAddresses[k], this.perpSymbol));
-    }
-    let accounts = await Promise.all(accountPromises);
-    for (var k = 0; k < accounts.length; k++) {
-      this.openPositions.push({ address: accountAddresses[k], account: accounts[k] });
-      this.addressWatch.add(accountAddresses[k]);
+    try {
+      console.log("Fetching addresses...");
+      let accountAddresses = await this.liqTool.getAllActiveAccounts(this.perpSymbol);
+      // console.log("Addresses fetched.");
+      let accountPromises: Array<Promise<MarginAccount>> = new Array<Promise<MarginAccount>>();
+      this.addressWatch.clear();
+      for (var k = 0; k < accountAddresses.length; k++) {
+        accountPromises.push(this.mktData!.positionRisk(accountAddresses[k], this.perpSymbol));
+      }
+      console.log("Fetching account information...");
+      let accounts = await Promise.all(accountPromises);
+      for (var k = 0; k < accounts.length; k++) {
+        // check again that this account makes sense
+        if (accounts[k].positionNotionalBaseCCY == 0) {
+          continue;
+        }
+        this.openPositions.push({ address: accountAddresses[k], account: accounts[k] });
+        this.addressWatch.add(accountAddresses[k]);
+      }
+      // console.log("Accounts fetched.");
+    } catch (e) {
+      console.log("Error in refreshActiveAccounts:");
+      console.log(e);
+      throw Error();
     }
     console.log("Watching positions:");
     console.log(this.openPositions);
