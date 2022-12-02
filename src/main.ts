@@ -28,7 +28,7 @@ async function run() {
   let myLiquidator: Liquidator = new Liquidator(pk, symbol);
   try {
     await myLiquidator.initialize(chooseRPC(liqConfig.RPC));
-    await myLiquidator.runForNumBlocks(10);
+    await myLiquidator.runForNumBlocks(1_000);
   } catch (e) {
     console.log(e);
   }

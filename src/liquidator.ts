@@ -66,7 +66,7 @@ export default class Liquidator {
       this.proxyContract!.provider.on("block", async (blockNumber) => {
         try {
           let res = await this.liquidateTraders();
-          if (numBlocks % 10 == 0 || res.numSubmitted > 0) {
+          if (numBlocks % 100 == 0 || res.numSubmitted > 0) {
             console.log(
               `${new Date().toUTCString()} Block: ${blockNumber}, Tried: ${res.numSubmitted}, Liquidated: ${
                 res.numLiquidated
@@ -87,44 +87,23 @@ export default class Liquidator {
       this.proxyContract!.on(
         "Trade",
         async (perpetualId, traderAddr, positionId, order, orderDigest, fNewPositionBC, price) => {
-          console.log("Trade caught");
           if (perpetualId != this.perpetualId) {
             // not our perp
             return;
           }
+          console.log("Trade caught");
           this.updateOnEvent(traderAddr, fNewPositionBC);
         }
       );
 
-      // this.proxyContract!.on(
-      //   "UpdateMarginAccount",
-      //   async (
-      //     perpetualId,
-      //     traderAddr,
-      //     positionId,
-      //     fPositionBC,
-      //     fCashCC,
-      //     fLockedInValueQC,
-      //     fFundingPayment,
-      //     fOpenInterest
-      //   ) => {
-      //     console.log("UpdateMarginAccount caught");
-      //     if (perpetualId != this.perpetualId) {
-      //       // not our perp
-      //       return;
-      //     }
-      //     this.updateOnEvent(traderAddr, fPositionBC);
-      //   }
-      // );
-
       this.proxyContract!.on(
         "Liquidate",
         async (perpetualId, liquidatorAddr, traderAddr, positionId, fLiquidatedAmount, fPrice, fNewPositionBC) => {
-          console.log("Liquidate caught");
           if (perpetualId != this.perpetualId) {
             // not our perp
             return;
           }
+          console.log("Liquidate caught");
           this.updateOnEvent(traderAddr, fNewPositionBC);
         }
       );
@@ -284,6 +263,7 @@ export default class Liquidator {
     let isLiquidatable: Array<boolean>;
     try {
       isLiquidatable = await Promise.all(liquidatable);
+      // console.log(`Checked ${isLiquidatable.length} positions.`);
     } catch (e) {
       console.log("Error in _liquidate: check maintenance margin:");
       console.log(e);
