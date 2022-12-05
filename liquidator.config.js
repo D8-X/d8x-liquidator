@@ -16,5 +16,13 @@ module.exports = {
       out_file: "./logs/eth-liquidator-log.log",
       args: "ETH-USD-MATIC",
     },
+    {
+      name: "d8x-liquidator-3",
+      script: "./src/main.ts",
+      watch: ["./src"],
+      error_file: "./logs/matic-liquidator-errors.log",
+      out_file: "./logs/matic-liquidator-log.log",
+      args: "MATIC-USD-MATIC",
+    },
   ],
 };
