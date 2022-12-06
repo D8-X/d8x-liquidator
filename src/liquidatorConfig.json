@@ -1,3 +1,7 @@
 {
-  "RPC": ["https://rpc-mumbai.maticvigil.com/"]
+  "RPC": ["https://rpc-mumbai.maticvigil.com/"],
+  "watchDogPulseLogDir": "./pulse",
+  "runForMaxBlocks": 50,
+  "watchDogMaxTimeSeconds": 150,
+  "watchDogAlarmCoolOffSeconds": 1800
 }

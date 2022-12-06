@@ -4,3 +4,5 @@ artifacts
 cache
 yarn-error.log
 dist
+logs/*.log
+.secrets

@@ -1,6 +1,7 @@
 import { MarketData, PerpetualDataHandler, LiquidatorTool, MarginAccount } from "@d8x/perpetuals-sdk";
 import { BigNumber, ethers } from "ethers";
-import { PositionBundle, ZERO_POSITION } from "./types";
+import { writeFileSync } from "fs";
+import { LiqConfig, PositionBundle, ZERO_POSITION } from "./types";
 
 export default class Liquidator {
   private mktData: MarketData | undefined;
@@ -16,11 +17,13 @@ export default class Liquidator {
   private isLiquidating: boolean = false;
   private privateKey: string;
   private minPositionSizeToLiquidate: number | undefined = undefined;
+  private config: LiqConfig;
 
-  constructor(privateKey: string, perpSymbol: string, liquidatorAddr?: string) {
+  constructor(privateKey: string, perpSymbol: string, config: LiqConfig, liquidatorAddr?: string) {
     this.privateKey = privateKey;
     this.perpSymbol = perpSymbol;
     this.liquidatorAddr = liquidatorAddr;
+    this.config = config;
   }
 
   private initObjects(RPC?: string) {
@@ -32,6 +35,15 @@ export default class Liquidator {
     // MarketData (read only, no authentication needed)
     this.mktData = new MarketData(config);
     this.liqTool = new LiquidatorTool(config, this.privateKey);
+  }
+
+  /**
+   * write current UTC timestamp to file for watcher
+   */
+  private logPulseToFile() {
+    let filename = `${this.config.watchDogPulseLogDir}/pulse/${this.perpSymbol}.txt`;
+    let timestamp = Date.now().toString();
+    writeFileSync(filename, timestamp, { flag: "w" });
   }
 
   public async initialize(RPC?: string) {
@@ -74,6 +86,7 @@ export default class Liquidator {
             );
           }
           if (numBlocks >= maxBlocks) {
+            this.logPulseToFile();
             resolve();
           } else {
             numBlocks++;
