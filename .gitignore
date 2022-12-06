@@ -4,5 +4,6 @@ artifacts
 cache
 yarn-error.log
 dist
+pulse/*.txt
 logs/*.log
 .secrets

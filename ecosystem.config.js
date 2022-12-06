@@ -24,5 +24,12 @@ module.exports = {
       out_file: "./logs/matic-liquidator-log.log",
       args: "MATIC-USD-MATIC 2",
     },
+    {
+      name: "watchdog",
+      script: "ts-node ./src/runWatchDog.ts BTC-USD-MATIC ETH-USD-MATIC MATIC-USD-MATIC",
+      watch: ["./src"],
+      error_file: "./logs/watchdog-errors.log",
+      out_file: "./logs/watchdog-log.log",
+    },
   ],
 };

@@ -41,7 +41,7 @@ export default class Liquidator {
    * write current UTC timestamp to file for watcher
    */
   private logPulseToFile() {
-    let filename = `${this.config.watchDogPulseLogDir}/pulse/${this.perpSymbol}.txt`;
+    let filename = `${this.config.watchDogPulseLogDir}/pulse${this.perpSymbol}.txt`;
     let timestamp = Date.now().toString();
     writeFileSync(filename, timestamp, { flag: "w" });
   }
