@@ -8,7 +8,7 @@ Run `yarn`.
 
 ### Configure
 
-Inspect and edit the liquidator.config.js file to set-up the liquidators. For instance, if you want to run liquidators for BTC and ETH, you could use a config file like this:
+Inspect and edit the liquidator.config.js file to set-up the liquidators. For instance, if you want to run liquidators for BTC and ETH only, you would use a config file like this:
 
 ```
 module.exports = {
@@ -29,6 +29,13 @@ module.exports = {
       out_file: "./logs/eth-liquidator-log.log",
       args: "ETH-USD-MATIC",
     },
+    {
+      name: "watchdog",
+      script: "ts-node ./src/runWatchDog.ts BTC-USD-MATIC ETH-USD-MATIC",
+      watch: ["./src"],
+      error_file: "./logs/watchdog-errors.log",
+      out_file: "./logs/watchdog-log.log",
+    },
   ],
 };
 ```
@@ -43,4 +50,4 @@ Inspect logs in the 'logs' folder, or run `pm2 monit`.
 
 ### Stop
 
-Run `pm2 stop all && pm2 delete all`.
+Run `yarn stop`.

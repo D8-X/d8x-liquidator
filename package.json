@@ -9,6 +9,7 @@
   },
   "scripts": {
     "postinstall": "$(yarn bin)/pm2 install typescript",
-    "start": "pm2 start ecosystem.config.js --watch --log ./logs/liquidations.log"
+    "start": "pm2 start ecosystem.config.js --watch --log ./logs/liquidations.log",
+    "stop": "pm2 stop all && pm2 delete all"
   }
 }
