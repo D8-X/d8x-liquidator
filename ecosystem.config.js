@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: "d8x-liquidator-1",
+      name: "BTC-USD-MATIC",
       script: "./src/main.ts",
       watch: ["./src"],
       error_file: "./logs/btc-liquidator-errors.log",
@@ -9,7 +9,7 @@ module.exports = {
       args: "BTC-USD-MATIC 0",
     },
     {
-      name: "d8x-liquidator-2",
+      name: "ETH-USD-MATIC",
       script: "./src/main.ts",
       watch: ["./src"],
       error_file: "./logs/eth-liquidator-errors.log",
@@ -17,7 +17,7 @@ module.exports = {
       args: "ETH-USD-MATIC 1",
     },
     {
-      name: "d8x-liquidator-3",
+      name: "MATIC-USD-MATIC",
       script: "./src/main.ts",
       watch: ["./src"],
       error_file: "./logs/matic-liquidator-errors.log",

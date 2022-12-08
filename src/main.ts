@@ -47,7 +47,10 @@ async function run() {
   console.log(`Starting liquidator for symbol ${symbol}...`);
   let myLiquidator: Liquidator = new Liquidator(pk, symbol, liqConfig);
   try {
-    await myLiquidator.initialize(chooseRPC(liqConfig.RPC));
+    let rpc = chooseRPC(liqConfig.RPC);
+    console.log(`Initializing liquidator using RPC ${rpc}...`);
+    await myLiquidator.initialize(rpc);
+    console.log(`Liquidator initialized. Running for ${liqConfig.runForMaxBlocks} blocks ...`);
     await myLiquidator.runForNumBlocks(liqConfig.runForMaxBlocks);
   } catch (e) {
     console.log(e);

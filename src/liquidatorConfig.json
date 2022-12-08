@@ -1,7 +1,13 @@
 {
-  "RPC": ["https://rpc-mumbai.maticvigil.com/"],
+  "RPC": [
+    "https://polygon-testnet-rpc.allthatnode.com:8545",
+    "https://matic-testnet-archive-rpc.bwarelabs.com",
+    "https://matic-mumbai.chainstacklabs.com",
+    "https://rpc-mumbai.maticvigil.com",
+    "https://rpc-mumbai.matic.today"
+  ],
   "watchDogPulseLogDir": "./pulse",
-  "runForMaxBlocks": 50,
+  "runForMaxBlocks": 1000,
   "watchDogMaxTimeSeconds": 150,
   "watchDogAlarmCoolOffSeconds": 1800
 }

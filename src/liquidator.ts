@@ -18,6 +18,7 @@ export default class Liquidator {
   private privateKey: string;
   private minPositionSizeToLiquidate: number | undefined = undefined;
   private config: LiqConfig;
+  private confirmedRunning: boolean = false;
 
   constructor(privateKey: string, perpSymbol: string, config: LiqConfig, liquidatorAddr?: string) {
     this.privateKey = privateKey;
@@ -54,6 +55,7 @@ export default class Liquidator {
     // Create a proxy instance to access the blockchain
     await this.mktData.createProxyInstance();
     await this.liqTool.createProxyInstance();
+    console.log("Proxy instances created.");
     // get perpetual Id
     this.perpetualId = this.mktData.getPerpIdFromSymbol(this.perpSymbol);
     // set minimal position size to liquidate: $1000 at mark price
@@ -82,7 +84,7 @@ export default class Liquidator {
             console.log(
               `${new Date().toUTCString()} Block: ${blockNumber}, Tried: ${res.numSubmitted}, Liquidated: ${
                 res.numLiquidated
-              }`
+              }, confirmed running: ${this.confirmedRunning}`
             );
           }
           if (numBlocks >= maxBlocks) {
@@ -256,6 +258,7 @@ export default class Liquidator {
     } catch (e) {
       console.log("Error in liquidateTraders:");
       console.log(e);
+      this.confirmedRunning = false;
     }
     this.isLiquidating = false;
     return { numSubmitted: numSubmitted, numLiquidated: numLiquidated };
@@ -263,6 +266,7 @@ export default class Liquidator {
 
   private async _liquidate(): Promise<number[]> {
     this.isLiquidating = true;
+    this.confirmedRunning = false;
     // narrow down potentially liquidatable
     let liquidatable: Array<Promise<boolean>> = new Array<Promise<boolean>>();
     for (let k = 0; k < this.openPositions.length; k++) {
@@ -276,10 +280,14 @@ export default class Liquidator {
     let isLiquidatable: Array<boolean>;
     try {
       isLiquidatable = await Promise.all(liquidatable);
+      if (isLiquidatable.length > 0) {
+        this.confirmedRunning = true;
+      }
       // console.log(`Checked ${isLiquidatable.length} positions.`);
     } catch (e) {
       console.log("Error in _liquidate: check maintenance margin:");
       console.log(e);
+      this.confirmedRunning = false;
       throw Error();
     }
     // try to execute all executable ones
@@ -301,6 +309,7 @@ export default class Liquidator {
     } catch (e) {
       console.log("Error in _liquidate: submit liquidations:");
       console.log(e);
+      this.confirmedRunning = false;
       throw Error();
     }
     let numSubmitted = amountsArray.length;
