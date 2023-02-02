@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "@d8x/perpetuals-sdk": "^0.0.15",
+    "@d8x/perpetuals-sdk": "^0.0.20",
     "ethers": "^5.7.2",
     "pm2": "^5.2.2"
   },

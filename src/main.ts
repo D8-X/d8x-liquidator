@@ -41,8 +41,6 @@ async function run() {
 
   if (pk == undefined) {
     throw new Error("Private key not defined");
-  } else {
-    console.log(`Your private key is ${pk}`);
   }
   console.log(`Starting liquidator for symbol ${symbol}...`);
   let myLiquidator: Liquidator = new Liquidator(pk, symbol, liqConfig);

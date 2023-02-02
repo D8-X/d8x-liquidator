@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: "BTC-USD-MATIC",
+      name: "Liquidator:BTC-USD-MATIC",
       script: "./src/main.ts",
       watch: ["./src"],
       error_file: "./logs/btc-liquidator-errors.log",
@@ -9,7 +9,7 @@ module.exports = {
       args: "BTC-USD-MATIC 0",
     },
     {
-      name: "ETH-USD-MATIC",
+      name: "Liquidator:ETH-USD-MATIC",
       script: "./src/main.ts",
       watch: ["./src"],
       error_file: "./logs/eth-liquidator-errors.log",
@@ -17,7 +17,7 @@ module.exports = {
       args: "ETH-USD-MATIC 1",
     },
     {
-      name: "MATIC-USD-MATIC",
+      name: "Liquidator:MATIC-USD-MATIC",
       script: "./src/main.ts",
       watch: ["./src"],
       error_file: "./logs/matic-liquidator-errors.log",
@@ -25,7 +25,7 @@ module.exports = {
       args: "MATIC-USD-MATIC 2",
     },
     {
-      name: "watchdog",
+      name: "Liquidator:Watchdog",
       script: "ts-node ./src/runWatchDog.ts BTC-USD-MATIC ETH-USD-MATIC MATIC-USD-MATIC",
       watch: ["./src"],
       error_file: "./logs/watchdog-errors.log",
