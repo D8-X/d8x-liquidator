@@ -2,6 +2,8 @@ import { ethers } from "ethers";
 import Liquidator from "./liquidator";
 import { loadConfig } from "./types";
 
+require("dotenv").config();
+
 function chooseRPC(rpcArray: string[]): string {
   let idx = Math.floor(Math.random() * rpcArray.length);
   return rpcArray[idx];
