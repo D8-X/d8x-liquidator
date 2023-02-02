@@ -1,2 +1,4 @@
+# required: menmonic seed phrase used to generate private keys
 MNEMONIC="your own mnemonic phrase"
+# optional: your own RPC node, if public nodes are not reliable enough
 RPC="https://your-own-rpc.com"
