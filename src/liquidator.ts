@@ -1,11 +1,17 @@
-import { MarketData, PerpetualDataHandler, LiquidatorTool, MarginAccount } from "@d8x/perpetuals-sdk";
+import {
+  MarketData,
+  PerpetualDataHandler,
+  LiquidatorTool,
+  MarginAccount,
+  PriceFeedSubmission,
+} from "@d8x/perpetuals-sdk";
 import { BigNumber, ethers } from "ethers";
 import { writeFileSync } from "fs";
 import { LiqConfig, PositionBundle, ZERO_POSITION } from "./types";
 
 export default class Liquidator {
   private mktData: MarketData | undefined;
-  private liqTool: LiquidatorTool | undefined;
+  private liqTool: LiquidatorTool[] | undefined;
   private proxyContract: ethers.Contract | undefined;
   private perpetualId: number | undefined;
   private perpSymbol: string;
@@ -15,13 +21,19 @@ export default class Liquidator {
   private addressWatch: Set<string> = new Set<string>();
   private addressAdd: Set<string> = new Set<string>();
   private isLiquidating: boolean = false;
-  private privateKey: string;
+  private privateKey: string[];
+  // params
   private minPositionSizeToLiquidate: number | undefined = undefined;
   private config: LiqConfig;
   private confirmedRunning: boolean = false;
+  private currentBlockNumber: number = 0;
+  private MIN_BLOCKTIME_SECONDS: number = 2;
+  private LIQUIDATE_TOPIC = ethers.utils.keccak256(
+    ethers.utils.toUtf8Bytes("Liquidate(uint24,address,address,bytes16,int128,int128,int128)")
+  );
 
   constructor(privateKey: string, perpSymbol: string, config: LiqConfig, liquidatorAddr?: string) {
-    this.privateKey = privateKey;
+    this.privateKey = typeof privateKey == "string" ? [privateKey] : privateKey;
     this.perpSymbol = perpSymbol;
     this.liquidatorAddr = liquidatorAddr;
     this.config = config;
@@ -29,32 +41,23 @@ export default class Liquidator {
 
   private initObjects(RPC?: string) {
     // load configuration for testnet
-    const config = PerpetualDataHandler.readSDKConfig("testnet");
+    const config = PerpetualDataHandler.readSDKConfig("central-park");
     if (RPC != undefined) {
       config.nodeURL = RPC;
     }
     // MarketData (read only, no authentication needed)
     this.mktData = new MarketData(config);
-    this.liqTool = new LiquidatorTool(config, this.privateKey);
+    this.liqTool = this.privateKey.map((pk) => new LiquidatorTool(config, pk));
   }
 
-  /**
-   * write current UTC timestamp to file for watcher
-   */
-  private logPulseToFile() {
-    let filename = `${this.config.watchDogPulseLogDir}/pulse${this.perpSymbol}.txt`;
-    let timestamp = Date.now().toString();
-    writeFileSync(filename, timestamp, { flag: "w" });
-  }
-
-  public async initialize(RPC?: string) {
+  public async initialize(RPC?: string, provider?: ethers.providers.JsonRpcProvider) {
     this.initObjects(RPC);
     if (this.mktData == undefined || this.liqTool == undefined) {
       throw Error("objects not initialized");
     }
     // Create a proxy instance to access the blockchain
     await this.mktData.createProxyInstance();
-    await this.liqTool.createProxyInstance();
+    await Promise.all(this.liqTool.map((obj) => obj.createProxyInstance(provider)));
     console.log("Proxy instances created.");
     // get perpetual Id
     this.perpetualId = this.mktData.getPerpIdFromSymbol(this.perpSymbol);
@@ -62,6 +65,11 @@ export default class Liquidator {
     this.minPositionSizeToLiquidate = 1_000 / (await this.mktData!.getMarkPrice(this.perpSymbol));
     // build all orders
     await this.refreshActiveAccounts();
+  }
+
+  private unsubscribe() {
+    console.log("Unsubscribing");
+    this.proxyContract!.provider.removeAllListeners();
   }
 
   /**
@@ -75,30 +83,37 @@ export default class Liquidator {
       throw Error("objects not initialized");
     }
     this.proxyContract = await this.mktData.getReadOnlyProxyInstance();
-    let numBlocks = 0;
+    let numBlocks = -1;
     return new Promise<void>((resolve, reject) => {
+      // on every block:
       this.proxyContract!.provider.on("block", async (blockNumber) => {
         try {
+          // count block, maybe stop
+          numBlocks++;
+          if (numBlocks > maxBlocks) {
+            this.unsubscribe();
+            this.logPulseToFile();
+            return resolve();
+          }
+          this.currentBlockNumber = blockNumber;
+          // maybe liquidate
           let res = await this.liquidateTraders();
-          if (numBlocks % 100 == 0 || res.numSubmitted > 0) {
+          if (numBlocks % 10 == 0 || res.numSubmitted > 0) {
             console.log(
-              `${new Date().toUTCString()} Block: ${blockNumber}, Tried: ${res.numSubmitted}, Liquidated: ${
-                res.numLiquidated
-              }, confirmed running: ${this.confirmedRunning}`
+              `${blockNumber} ${new Date(Date.now()).toISOString()}: (${numBlocks}/${maxBlocks}), Tried: ${
+                res.numSubmitted
+              }, Liquidated: ${res.numLiquidated}, confirmed running: ${this.confirmedRunning}`
             );
           }
-          if (numBlocks >= maxBlocks) {
-            this.logPulseToFile();
-            resolve();
-          } else {
-            numBlocks++;
-          }
         } catch (e) {
-          console.log(`Error in block processing callback:`, e);
-          reject(e);
+          // error will be logged outside, we just send it in reject()
+          console.log(`${new Date(Date.now()).toISOString()} Error in block ${blockNumber} processing callback:`);
+          this.unsubscribe();
+          return reject(e);
         }
       });
 
+      // on Trade event
       this.proxyContract!.on(
         "Trade",
         async (perpetualId, traderAddr, positionId, order, orderDigest, fNewPositionBC, price) => {
@@ -106,11 +121,14 @@ export default class Liquidator {
             // not our perp
             return;
           }
-          console.log("Trade caught");
+          console.log(
+            `${this.currentBlockNumber} ${new Date(Date.now()).toISOString()} Trade caught: order id ${orderDigest}`
+          );
           this.updateOnEvent(traderAddr, fNewPositionBC);
         }
       );
 
+      // on Liquidate event
       this.proxyContract!.on(
         "Liquidate",
         async (perpetualId, liquidatorAddr, traderAddr, positionId, fLiquidatedAmount, fPrice, fNewPositionBC) => {
@@ -118,7 +136,7 @@ export default class Liquidator {
             // not our perp
             return;
           }
-          console.log("Liquidate caught");
+          console.log(`${this.currentBlockNumber} ${new Date(Date.now()).toISOString()} Liquidate caught`);
           this.updateOnEvent(traderAddr, fNewPositionBC);
         }
       );
@@ -133,7 +151,7 @@ export default class Liquidator {
         console.log(`Trader ${traderAddr} is out - will remove from watch list.`);
         this.addressWatch.delete(traderAddr);
       } else {
-        // something changed in this account, we should update it
+        // this acount is still open but something about it changed, we should update it
         console.log(`Trader ${traderAddr} did something - will update the account.`);
         this.addressUpdate.add(traderAddr);
       }
@@ -206,11 +224,11 @@ export default class Liquidator {
     }
     // get active accounts
     // console.log("Counting active accounts...");
-    let numAccounts = await this.liqTool.countActivePerpAccounts(this.perpSymbol);
+    let numAccounts = await this.liqTool[0].countActivePerpAccounts(this.perpSymbol);
     console.log(`There are ${numAccounts} active accounts`);
     try {
       console.log("Fetching addresses...");
-      let accountAddresses = await this.liqTool.getAllActiveAccounts(this.perpSymbol);
+      let accountAddresses = await this.liqTool[0].getAllActiveAccounts(this.perpSymbol);
       // console.log("Addresses fetched.");
       let accountPromises: Array<Promise<MarginAccount>> = new Array<Promise<MarginAccount>>();
       this.addressWatch.clear();
@@ -250,11 +268,17 @@ export default class Liquidator {
     }
     let numSubmitted = 0;
     let numLiquidated = 0;
+    let submission: { submission: PriceFeedSubmission; pxS2S3: [number, number] };
     try {
       await this._updateAccounts();
-      let res = await this._liquidate();
-      numSubmitted = res[0];
-      numLiquidated = res[1];
+      submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.perpSymbol);
+      if (!this.checkSubmissionsInSync(submission.submission.timestamps)) {
+        this.isLiquidating = false;
+        return { numSubmitted: numSubmitted, numLiquidated: numLiquidated };
+      }
+      let res = await this._liquidate(submission.submission);
+      numSubmitted = res.numLiquidated;
+      numLiquidated = res.numSubmitted;
     } catch (e) {
       console.log("Error in liquidateTraders:");
       console.log(e);
@@ -264,16 +288,17 @@ export default class Liquidator {
     return { numSubmitted: numSubmitted, numLiquidated: numLiquidated };
   }
 
-  private async _liquidate(): Promise<number[]> {
+  private async _liquidate(submission: PriceFeedSubmission): Promise<{ numSubmitted: number; numLiquidated: number }> {
     this.isLiquidating = true;
     this.confirmedRunning = false;
     // narrow down potentially liquidatable
     let liquidatable: Array<Promise<boolean>> = new Array<Promise<boolean>>();
     for (let k = 0; k < this.openPositions.length; k++) {
       // query whether the position can be liquidated
-      let shouldLiquidate = this.liqTool!.isMaintenanceMarginSafe(this.perpSymbol, this.openPositions[k].address).then(
-        (x) => !x && this.openPositions[k].account.positionNotionalBaseCCY > this.minPositionSizeToLiquidate!
-      );
+      let shouldLiquidate = this.liqTool![k % this.liqTool!.length].isMaintenanceMarginSafe(
+        this.perpSymbol,
+        this.openPositions[k].address
+      ).then((x) => !x && this.openPositions[k].account.positionNotionalBaseCCY > this.minPositionSizeToLiquidate!);
       liquidatable.push(shouldLiquidate);
     }
     // wait for all promises
@@ -290,40 +315,99 @@ export default class Liquidator {
       this.confirmedRunning = false;
       throw Error();
     }
-    // try to execute all executable ones
-    let executeRequests: Array<Promise<number>> = [];
-    let executeIdxInOpenPositions: Array<number> = [];
-    for (let k = 0; k < this.openPositions.length; k++) {
+
+    // try to execute all liquidatable ones
+    let liquidateRequests: Array<Promise<ethers.ContractTransaction>> = [];
+    let liquidateIdxInOpenPositions: Array<number> = [];
+    let numToLiquidate = 0;
+    for (let k = 0; k < this.openPositions.length && numToLiquidate < this.liqTool!.length; k++) {
       if (isLiquidatable[k]) {
-        // execute
-        executeRequests.push(
-          this.liqTool!.liquidateTrader(this.perpSymbol, this.openPositions[k].address, this.liquidatorAddr)
+        // will try to liquidate
+        console.log(
+          `${this.currentBlockNumber} ${new Date(Date.now()).toISOString()}: adding trader ${
+            this.openPositions[k].address
+          } to slot ${numToLiquidate} in this batch:`
         );
-        executeIdxInOpenPositions.push(k);
+        console.log(this.openPositions[k].account);
+        // liquidate
+        liquidateRequests.push(
+          this.liqTool![numToLiquidate].liquidateTrader(
+            this.perpSymbol,
+            this.openPositions[k].address,
+            this.liquidatorAddr,
+            submission
+          )
+        );
+        liquidateIdxInOpenPositions.push(k);
+        numToLiquidate++;
       }
     }
-    // wait for all requests to go through and determine what was executed
-    let amountsArray: Array<number>;
-    try {
-      amountsArray = await Promise.all(executeRequests);
-    } catch (e) {
-      console.log("Error in _liquidate: submit liquidations:");
-      console.log(e);
-      this.confirmedRunning = false;
-      throw Error();
+
+    // remove positions we will try to liquidate from the watch list and release the lock
+    liquidateIdxInOpenPositions = liquidateIdxInOpenPositions.sort((a, b) => b - a);
+    for (let k = 0; k < liquidateIdxInOpenPositions.length; k++) {
+      // remove order from list
+      let idx = liquidateIdxInOpenPositions[k];
+      this.openPositions[idx] = this.openPositions[this.openPositions.length - 1];
+      this.openPositions.pop();
     }
-    let numSubmitted = amountsArray.length;
+    this.isLiquidating = false;
+
+    // send the liquidation requests
+    let txArray: Array<ethers.ContractTransaction>;
+    try {
+      txArray = await Promise.all(liquidateRequests);
+    } catch (e) {
+      console.log("_liquidate: submit liquidations:");
+      // console.log(e);
+      this.confirmedRunning = false;
+      throw e;
+    }
+    let numSubmitted = txArray.length;
     let numLiquidated = 0;
-    for (let k = 0; k < amountsArray.length; k++) {
-      if (amountsArray[k] != 0) {
-        let idx = executeIdxInOpenPositions[k];
-        this.openPositions[idx] = this.openPositions[this.openPositions.length - 1];
-        this.openPositions.pop();
-        numLiquidated += 1;
+    for (let k = 0; k < txArray.length; k++) {
+      let receipt: ethers.ContractReceipt;
+      try {
+        receipt = await txArray[k].wait();
+        console.log(`Tried tx=${txArray[k].hash}`);
+      } catch (e) {
+        console.log(`Failed tx=${txArray[k].hash}`);
+        throw e;
+      }
+      if (receipt.status == 1) {
+        let liqEvent = receipt.events?.filter((event) => event.topics[0] == this.LIQUIDATE_TOPIC);
+        if (liqEvent?.length) {
+          // transaction went through and we got paid, so order was succesfully executed
+          numLiquidated++;
+          // totalReward += ABK64x64ToFloat(ethers.BigNumber.from(liqEvent[0].data));
+        }
       }
     }
     this.isLiquidating = false;
 
-    return [numSubmitted, numLiquidated];
+    return { numSubmitted: numSubmitted, numLiquidated: numLiquidated };
+  }
+
+  /**
+   * write current UTC timestamp to file for watcher
+   */
+  private logPulseToFile() {
+    let filename = `${this.config.watchDogPulseLogDir}/pulse${this.perpSymbol}.txt`;
+    let timestamp = Date.now().toString();
+    writeFileSync(filename, timestamp, { flag: "w" });
+  }
+
+  /**
+   * Check that max(t) - min (t) <= threshold
+   * @param timestamps Array of timestamps
+   * @returns True if the timestamps are sufficiently close to each other
+   */
+  private checkSubmissionsInSync(timestamps: number[]): boolean {
+    let gap = Math.max(...timestamps) - Math.min(...timestamps);
+    if (gap > 2 * this.MIN_BLOCKTIME_SECONDS) {
+      console.log("feed submissions not synced:", timestamps, " gap =", gap);
+      return false;
+    }
+    return true;
   }
 }

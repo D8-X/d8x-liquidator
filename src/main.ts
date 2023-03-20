@@ -54,6 +54,8 @@ async function run() {
     await myLiquidator.runForNumBlocks(liqConfig.runForMaxBlocks);
   } catch (e) {
     console.log(e);
+  } finally {
+    process.exit(0);
   }
 }
 
