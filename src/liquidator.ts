@@ -4,6 +4,10 @@ import {
   LiquidatorTool,
   MarginAccount,
   PriceFeedSubmission,
+  BUY_SIDE,
+  CLOSED_SIDE,
+  ABK64x64ToFloat,
+  COLLATERAL_CURRENCY_QUOTE,
 } from "@d8x/perpetuals-sdk";
 import { BigNumber, ethers } from "ethers";
 import { writeFileSync } from "fs";
@@ -15,6 +19,7 @@ export default class Liquidator {
   private proxyContract: ethers.Contract | undefined;
   private perpetualId: number | undefined;
   private perpSymbol: string;
+  private maintenanceRate: number | undefined;
   private liquidatorAddr: string | undefined;
   private openPositions: PositionBundle[] = new Array<PositionBundle>();
   private addressUpdate: Set<string> = new Set<string>();
@@ -22,6 +27,9 @@ export default class Liquidator {
   private addressAdd: Set<string> = new Set<string>();
   private isLiquidating: boolean = false;
   private privateKey: string[];
+  private submission: { submission: PriceFeedSubmission; pxS2S3: [number, number] } | undefined;
+  private markPremium: number | undefined;
+  private isQuote: boolean | undefined;
   // params
   private minPositionSizeToLiquidate: number | undefined = undefined;
   private config: LiqConfig;
@@ -61,6 +69,12 @@ export default class Liquidator {
     console.log("Proxy instances created.");
     // get perpetual Id
     this.perpetualId = this.mktData.getPerpIdFromSymbol(this.perpSymbol);
+    this.maintenanceRate = this.mktData.getPerpetualStaticInfo(this.perpSymbol).maintenanceMarginRate;
+    this.isQuote =
+      this.mktData.getPerpetualStaticInfo(this.perpSymbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE;
+    this.submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.perpSymbol);
+    this.markPremium =
+      (await this.mktData.getMarkPrice(this.perpSymbol, this.submission.pxS2S3)) / this.submission.pxS2S3[0] - 1;
     // set minimal position size to liquidate: $1000 at mark price
     this.minPositionSizeToLiquidate = 1_000 / (await this.mktData!.getMarkPrice(this.perpSymbol));
     // build all orders
@@ -140,6 +154,13 @@ export default class Liquidator {
           this.updateOnEvent(traderAddr, fNewPositionBC);
         }
       );
+
+      // on mark price update
+      this.proxyContract!.on("UpdateMarkPrice", (perpId, fMidPremium, fMarkPremium, fSpotPriceS2) => {
+        if (this.perpetualId == perpId) {
+          this.markPremium = ABK64x64ToFloat(fMarkPremium);
+        }
+      });
     });
   }
 
@@ -271,12 +292,20 @@ export default class Liquidator {
     let submission: { submission: PriceFeedSubmission; pxS2S3: [number, number] };
     try {
       await this._updateAccounts();
+      // we update our current submission data if not synced (it can't be used to submit liquidations anyways)
       submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.perpSymbol);
+      if (!this.checkSubmissionsInSync(this.submission!.submission.timestamps)) {
+        this.submission = submission;
+      }
+      // the new submission data may be out of sync, in which case we stop here
       if (!this.checkSubmissionsInSync(submission.submission.timestamps)) {
         this.isLiquidating = false;
         return { numSubmitted: numSubmitted, numLiquidated: numLiquidated };
       }
-      let res = await this._liquidate(submission.submission);
+      // at this point we have two sets of submission data
+      // 1) both are in sync (can be used to submit)
+      // 2) 'this.submission' could be a bit older than 'submission'
+      let res = await this._liquidate(submission);
       numSubmitted = res.numLiquidated;
       numLiquidated = res.numSubmitted;
     } catch (e) {
@@ -288,35 +317,45 @@ export default class Liquidator {
     return { numSubmitted: numSubmitted, numLiquidated: numLiquidated };
   }
 
-  private async _liquidate(submission: PriceFeedSubmission): Promise<{ numSubmitted: number; numLiquidated: number }> {
+  private isMarginSafe(account: MarginAccount, pxS2S3: [number, number | undefined]) {
+    if (account.side == CLOSED_SIDE) {
+      return true;
+    }
+    let S2 = pxS2S3[0];
+    let Sm = S2 * (1 + this.markPremium!);
+    // undefined -> either S3 = 1 (quote coll) or S3 = S2 (base coll)
+    let S3 = pxS2S3[1] ?? (this.isQuote! ? 1 : S2);
+    let pos = account.positionNotionalBaseCCY * (account.side == BUY_SIDE ? 1 : -1);
+    let lockedIn = account.entryPrice * pos;
+    let cash = account.collateralCC + account.unrealizedFundingCollateralCCY;
+    let maintenanceMargin = ((Math.abs(pos) * Sm) / S3) * this.maintenanceRate!;
+    let balance = cash + (pos * Sm - lockedIn) / S3;
+    return balance >= maintenanceMargin;
+  }
+
+  private async _liquidate(submission: {
+    submission: PriceFeedSubmission;
+    pxS2S3: [number, number];
+  }): Promise<{ numSubmitted: number; numLiquidated: number }> {
     this.isLiquidating = true;
     this.confirmedRunning = false;
-    // narrow down potentially liquidatable
-    let liquidatable: Array<Promise<boolean>> = new Array<Promise<boolean>>();
-    for (let k = 0; k < this.openPositions.length; k++) {
-      // query whether the position can be liquidated
-      let shouldLiquidate = this.liqTool![k % this.liqTool!.length].isMaintenanceMarginSafe(
-        this.perpSymbol,
-        this.openPositions[k].address
-      ).then((x) => !x && this.openPositions[k].account.positionNotionalBaseCCY > this.minPositionSizeToLiquidate!);
-      liquidatable.push(shouldLiquidate);
-    }
-    // wait for all promises
-    let isLiquidatable: Array<boolean>;
-    try {
-      isLiquidatable = await Promise.all(liquidatable);
-      if (isLiquidatable.length > 0) {
-        this.confirmedRunning = true;
-      }
-      // console.log(`Checked ${isLiquidatable.length} positions.`);
-    } catch (e) {
-      console.log("Error in _liquidate: check maintenance margin:");
-      console.log(e);
-      this.confirmedRunning = false;
-      throw Error();
-    }
 
-    // try to execute all liquidatable ones
+    // check who can be liquidated using currently ("old") stored prices
+    let isLiquidatable = this.openPositions.map(
+      (p: PositionBundle) => !this.isMarginSafe(p.account, this.submission!.pxS2S3)
+    );
+    if (!isLiquidatable.some((x) => x)) {
+      // nobody: try new prices then
+      isLiquidatable = this.openPositions.map((p: PositionBundle) => !this.isMarginSafe(p.account, submission.pxS2S3));
+      this.submission = submission;
+      // no liquidations possible even with new prices
+      if (!isLiquidatable.some((x) => x)) {
+        // release lock and continue
+        this.isLiquidating = false;
+        return { numSubmitted: 0, numLiquidated: 0 };
+      }
+    }
+    // we're here so we can liquidate with stored prices
     let liquidateRequests: Array<Promise<ethers.ContractTransaction>> = [];
     let liquidateIdxInOpenPositions: Array<number> = [];
     let numToLiquidate = 0;
@@ -335,7 +374,7 @@ export default class Liquidator {
             this.perpSymbol,
             this.openPositions[k].address,
             this.liquidatorAddr,
-            submission
+            this.submission!.submission
           )
         );
         liquidateIdxInOpenPositions.push(k);
@@ -357,6 +396,8 @@ export default class Liquidator {
     let txArray: Array<ethers.ContractTransaction>;
     try {
       txArray = await Promise.all(liquidateRequests);
+      // requests could be sent, so this bot is running
+      this.confirmedRunning = true;
     } catch (e) {
       console.log("_liquidate: submit liquidations:");
       // console.log(e);
