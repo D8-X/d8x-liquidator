@@ -206,8 +206,7 @@ export default class Liquidator {
           account = await this.mktData!.positionRisk(traderAddr, this.perpSymbol);
         } catch (e) {
           console.log("Error in _updateAccounts: update positionRisk");
-          console.log(e);
-          throw Error();
+          throw e;
         }
         this.openPositions[k] = { address: traderAddr, account: account };
       }
@@ -226,8 +225,7 @@ export default class Liquidator {
         newAccount = await this.mktData!.positionRisk(newAddress!, this.perpSymbol);
       } catch (e) {
         console.log("Error in _updateAccounts: add new positionRisk");
-        console.log(e);
-        throw Error();
+        throw e;
       }
       this.openPositions.push({ address: newAddress!, account: newAccount });
       this.addressWatch.add(newAddress!);
@@ -250,7 +248,7 @@ export default class Liquidator {
     try {
       console.log("Fetching addresses...");
       let accountAddresses = await this.liqTool[0].getAllActiveAccounts(this.perpSymbol);
-      // console.log("Addresses fetched.");
+      console.log(`${accountAddresses.length} addresses fetched.`);
       let accountPromises: Array<Promise<MarginAccount>> = new Array<Promise<MarginAccount>>();
       this.addressWatch.clear();
       for (var k = 0; k < accountAddresses.length; k++) {
@@ -269,11 +267,11 @@ export default class Liquidator {
       // console.log("Accounts fetched.");
     } catch (e) {
       console.log("Error in refreshActiveAccounts:");
-      console.log(e);
-      throw Error();
+      throw e;
     }
     console.log("Watching positions:");
-    console.log(this.openPositions);
+    // console.log(this.openPositions);
+    this.openPositions.map((p) => console.log(p.address));
   }
 
   /**
@@ -367,7 +365,7 @@ export default class Liquidator {
             this.openPositions[k].address
           } to slot ${numToLiquidate} in this batch:`
         );
-        console.log(this.openPositions[k].account);
+        // console.log(this.openPositions[k].account);
         // liquidate
         liquidateRequests.push(
           this.liqTool![numToLiquidate].liquidateTrader(
@@ -381,6 +379,8 @@ export default class Liquidator {
         numToLiquidate++;
       }
     }
+    // update submission data just in case, this set is 'used'
+    this.submission = submission;
 
     // remove positions we will try to liquidate from the watch list and release the lock
     liquidateIdxInOpenPositions = liquidateIdxInOpenPositions.sort((a, b) => b - a);
