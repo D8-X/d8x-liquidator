@@ -14,27 +14,33 @@ import { writeFileSync } from "fs";
 import { LiqConfig, PositionBundle, ZERO_POSITION } from "./types";
 
 export default class Liquidator {
+  // objects
+  private provider: ethers.providers.Provider | undefined;
   private mktData: MarketData | undefined;
   private liqTool: LiquidatorTool[] | undefined;
   private proxyContract: ethers.Contract | undefined;
-  private perpetualId: number | undefined;
+
+  // parameters
   private perpSymbol: string;
+  private perpetualId: number | undefined;
   private maintenanceRate: number | undefined;
   private liquidatorAddr: string | undefined;
+  private privateKey: string[];
+
+  // state
   private openPositions: PositionBundle[] = new Array<PositionBundle>();
   private addressUpdate: Set<string> = new Set<string>();
   private addressWatch: Set<string> = new Set<string>();
   private addressAdd: Set<string> = new Set<string>();
   private isLiquidating: boolean = false;
-  private privateKey: string[];
+  private config: LiqConfig;
   private submission: { submission: PriceFeedSubmission; pxS2S3: [number, number] } | undefined;
   private markPremium: number | undefined;
   private isQuote: boolean | undefined;
-  // params
-  private minPositionSizeToLiquidate: number | undefined = undefined;
-  private config: LiqConfig;
   private confirmedRunning: boolean = false;
-  private currentBlockNumber: number = 0;
+  private lockedAtBlockNumber: number = 0;
+
+  // constants
   private MIN_BLOCKTIME_SECONDS: number = 2;
   private LIQUIDATE_TOPIC = ethers.utils.keccak256(
     ethers.utils.toUtf8Bytes("Liquidate(uint24,address,address,bytes16,int128,int128,int128)")
@@ -47,19 +53,9 @@ export default class Liquidator {
     this.config = config;
   }
 
-  private initObjects(RPC?: string) {
-    // load configuration for testnet
-    const config = PerpetualDataHandler.readSDKConfig("central-park");
-    if (RPC != undefined) {
-      config.nodeURL = RPC;
-    }
-    // MarketData (read only, no authentication needed)
-    this.mktData = new MarketData(config);
-    this.liqTool = this.privateKey.map((pk) => new LiquidatorTool(config, pk));
-  }
-
-  public async initialize(RPC?: string, provider?: ethers.providers.JsonRpcProvider) {
-    this.initObjects(RPC);
+  public async initialize(provider: ethers.providers.Provider) {
+    this.provider = provider;
+    await this.initObjects();
     if (this.mktData == undefined || this.liqTool == undefined) {
       throw Error("objects not initialized");
     }
@@ -75,10 +71,18 @@ export default class Liquidator {
     this.submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.perpSymbol);
     this.markPremium =
       (await this.mktData.getMarkPrice(this.perpSymbol, this.submission.pxS2S3)) / this.submission.pxS2S3[0] - 1;
-    // set minimal position size to liquidate: $1000 at mark price
-    this.minPositionSizeToLiquidate = 1_000 / (await this.mktData!.getMarkPrice(this.perpSymbol));
     // build all orders
     await this.refreshActiveAccounts();
+  }
+
+  private async initObjects() {
+    // load configuration
+    const chainId = (await this.provider!.getNetwork()).chainId;
+    const config = PerpetualDataHandler.readSDKConfig(chainId);
+    console.log(`config ${config.name} v${config.version}, manager ${config.proxyAddr} on chain id ${config.chainId}`);
+    // MarketData (read only, no authentication needed)
+    this.mktData = new MarketData(config);
+    this.liqTool = this.privateKey.map((pk) => new LiquidatorTool(config, pk));
   }
 
   private unsubscribe() {
@@ -109,7 +113,7 @@ export default class Liquidator {
             this.logPulseToFile();
             return resolve();
           }
-          this.currentBlockNumber = blockNumber;
+          this.lockedAtBlockNumber = blockNumber;
           // maybe liquidate
           let res = await this.liquidateTraders();
           if (numBlocks % 10 == 0 || res.numSubmitted > 0) {
@@ -130,13 +134,23 @@ export default class Liquidator {
       // on Trade event
       this.proxyContract!.on(
         "Trade",
-        async (perpetualId, traderAddr, positionId, order, orderDigest, fNewPositionBC, price) => {
+        async (
+          perpetualId,
+          traderAddr,
+          _positionId,
+          _order,
+          orderDigest,
+          fNewPositionBC,
+          _fPrice,
+          _fFee,
+          _fRealizedPnL
+        ) => {
           if (perpetualId != this.perpetualId) {
             // not our perp
             return;
           }
           console.log(
-            `${this.currentBlockNumber} ${new Date(Date.now()).toISOString()} Trade caught: order id ${orderDigest}`
+            `${this.lockedAtBlockNumber} ${new Date(Date.now()).toISOString()} Trade caught: order id ${orderDigest}`
           );
           this.updateOnEvent(traderAddr, fNewPositionBC);
         }
@@ -145,18 +159,28 @@ export default class Liquidator {
       // on Liquidate event
       this.proxyContract!.on(
         "Liquidate",
-        async (perpetualId, liquidatorAddr, traderAddr, positionId, fLiquidatedAmount, fPrice, fNewPositionBC) => {
+        async (
+          perpetualId,
+          _liquidatorAddr,
+          traderAddr,
+          _positionId,
+          _fLiquidatedAmount,
+          _fPrice,
+          fNewPositionBC,
+          _fFee,
+          _fRealizedPnL
+        ) => {
           if (perpetualId != this.perpetualId) {
             // not our perp
             return;
           }
-          console.log(`${this.currentBlockNumber} ${new Date(Date.now()).toISOString()} Liquidate caught`);
+          console.log(`${this.lockedAtBlockNumber} ${new Date(Date.now()).toISOString()} Liquidate caught`);
           this.updateOnEvent(traderAddr, fNewPositionBC);
         }
       );
 
       // on mark price update
-      this.proxyContract!.on("UpdateMarkPrice", (perpId, fMidPremium, fMarkPremium, fSpotPriceS2) => {
+      this.proxyContract!.on("UpdateMarkPrice", (perpId, _fMidPremium, fMarkPremium, _fSpotPriceS2) => {
         if (this.perpetualId == perpId) {
           this.markPremium = ABK64x64ToFloat(fMarkPremium);
         }
@@ -361,7 +385,7 @@ export default class Liquidator {
       if (isLiquidatable[k]) {
         // will try to liquidate
         console.log(
-          `${this.currentBlockNumber} ${new Date(Date.now()).toISOString()}: adding trader ${
+          `${this.lockedAtBlockNumber} ${new Date(Date.now()).toISOString()}: adding trader ${
             this.openPositions[k].address
           } to slot ${numToLiquidate} in this batch:`
         );
