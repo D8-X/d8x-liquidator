@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "@d8x/perpetuals-sdk": "^0.2.0",
+    "@d8x/perpetuals-sdk": "^0.4.2",
     "dotenv": "^16.0.3",
     "ethers": "^5.7.2",
     "pm2": "^5.2.2"
@@ -11,6 +11,9 @@
   "scripts": {
     "postinstall": "$(yarn bin)/pm2 install typescript",
     "start": "pm2 start ecosystem.config.js --watch",
-    "stop": "pm2 stop all && pm2 delete all"
+    "stop": "pm2 stop liquidator && pm2 delete all",
+    "restart": "pm2 restart liquidator",
+    "delete": "pm2 delete liquidator",
+    "clean-logs": "rm  -r logs/*.log | : && rm -r pulse/*.txt | :"
   }
 }

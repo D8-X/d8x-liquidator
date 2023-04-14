@@ -68,9 +68,10 @@ export default class Liquidator {
     this.maintenanceRate = this.mktData.getPerpetualStaticInfo(this.perpSymbol).maintenanceMarginRate;
     this.isQuote =
       this.mktData.getPerpetualStaticInfo(this.perpSymbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE;
+    // console.log(`is quote? ${this.isQuote}`);
     this.submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.perpSymbol);
-    this.markPremium =
-      (await this.mktData.getMarkPrice(this.perpSymbol, this.submission.pxS2S3)) / this.submission.pxS2S3[0] - 1;
+    const perpState = await this.mktData.getPerpetualState(this.perpSymbol);
+    this.markPremium = perpState.markPrice / perpState.indexPrice - 1;
     // build all orders
     await this.refreshActiveAccounts();
   }
@@ -370,9 +371,9 @@ export default class Liquidator {
       // nobody: try new prices then
       isLiquidatable = this.openPositions.map((p: PositionBundle) => !this.isMarginSafe(p.account, submission.pxS2S3));
       this.submission = submission;
-      // no liquidations possible even with new prices
+      // any liquidations possible with new prices?
       if (!isLiquidatable.some((x) => x)) {
-        // release lock and continue
+        // no, release lock and continue
         this.isLiquidating = false;
         return { numSubmitted: 0, numLiquidated: 0 };
       }
@@ -401,7 +402,7 @@ export default class Liquidator {
         );
         liquidateIdxInOpenPositions.push(k);
         numToLiquidate++;
-      }
+      } 
     }
     // update submission data just in case, this set is 'used'
     this.submission = submission;

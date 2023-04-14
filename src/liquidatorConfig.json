@@ -7,7 +7,7 @@
     "https://rpc-mumbai.matic.today"
   ],
   "watchDogPulseLogDir": "./pulse",
-  "runForMaxBlocks": 100,
+  "runForMaxBlocks": 200,
   "watchDogMaxTimeSeconds": 150,
   "watchDogAlarmCoolOffSeconds": 1800
 }

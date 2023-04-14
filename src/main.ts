@@ -48,8 +48,9 @@ async function run() {
   let myLiquidator: Liquidator = new Liquidator(pk, symbol, liqConfig);
   try {
     let rpc = chooseRPC(liqConfig.RPC);
+    const provider = new ethers.providers.JsonRpcBatchProvider(rpc);
     console.log(`Initializing liquidator using RPC ${rpc}...`);
-    await myLiquidator.initialize(rpc);
+    await myLiquidator.initialize(provider);
     console.log(`Liquidator initialized. Running for ${liqConfig.runForMaxBlocks} blocks ...`);
     await myLiquidator.runForNumBlocks(liqConfig.runForMaxBlocks);
   } catch (e) {
