@@ -53,7 +53,6 @@ async function run() {
     lastRPC = currRPC;
     const provider = new ethers.providers.StaticJsonRpcProvider(currRPC);
     await liquidator.initialize(provider);
-    console.log(`Liquidator initialized. Running for ${config.runForMaxBlocks} blocks ...`);
     runPromise = liquidator.runForNumBlocks(config.runForMaxBlocks);
   } catch (e: any) {
     // we are here if we couldn't create a referrer (typically an RPC issue)
