@@ -79,7 +79,7 @@ module.exports = {
 };
 ```
 
-## Starting the Relayers
+## Starting the Liquidators
 
 ### With Docker
 
@@ -106,10 +106,10 @@ $ redis-server
 $ yarn start-streamer
 ```
 
-#### Rrelayers
+#### Liquidators
 
 ```
-$ yarn start-relayers
+$ yarn start-liquidators
 ```
 
 #### Monitor
