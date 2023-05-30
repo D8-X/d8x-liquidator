@@ -7,6 +7,12 @@ export interface PositionBundle {
   account: MarginAccount;
 }
 
+export interface RedisConfig {
+  host: string;
+  port: number;
+  password: string;
+}
+
 export interface LiqConfig {
   RPC: string[];
   watchDogPulseLogDir: string;
@@ -18,16 +24,4 @@ export interface LiqConfig {
 export interface watchDogAlarm {
   isCoolOff: boolean;
   timestampSec: number;
-}
-
-export function loadConfig(): LiqConfig {
-  let file = require("./liquidatorConfig.json");
-  let config: LiqConfig = {
-    RPC: file["RPC"],
-    watchDogPulseLogDir: file["watchDogPulseLogDir"],
-    runForMaxBlocks: file["runForMaxBlocks"],
-    watchDogMaxTimeSeconds: file["watchDogMaxTimeSeconds"],
-    watchDogAlarmCoolOffSeconds: file["watchDogAlarmCoolOffSeconds"],
-  };
-  return config;
 }
