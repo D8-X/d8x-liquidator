@@ -1,4 +1,4 @@
-import { loadConfig } from "./types";
+import { loadConfig } from "./utils";
 import WatchDog from "./watchdog";
 
 async function start() {
@@ -7,8 +7,8 @@ async function start() {
     throw new Error("watchdog requires arguments e.g. ETH-USD-MATIC BTC-USD-MATIC");
   }
   let config = loadConfig();
-  let dog=new WatchDog(config);
-  for(let k=0; k<args.length; k++) {
+  let dog = new WatchDog(config);
+  for (let k = 0; k < args.length; k++) {
     console.log(`watching ${args[k]}`);
     dog.addWatchee(args[k]);
   }

@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 import { MarketData, PerpetualDataHandler, SmartContractOrder } from "@d8x/perpetuals-sdk";
 import { Redis } from "ioredis";
-import { constructRedis } from "../utils.ts";
+import { constructRedis } from "../utils";
 
 export default class BlockhainListener {
   private httpProvider: ethers.providers.StaticJsonRpcProvider;
@@ -40,12 +40,7 @@ export default class BlockhainListener {
     const md = new MarketData(config);
     await md.createProxyInstance();
 
-    // get order book addresses
-    const perpIds: number[] = (await md.getReadOnlyProxyInstance().getPoolStaticInfo(1, 255))[0].flat();
-    const obAddr = await Promise.all(perpIds.map((id) => md.getReadOnlyProxyInstance().getOrderBookAddress(id)));
-
     // smart contracts on ws provider
-    const orderBooks = obAddr.map((addr) => new ethers.Contract(addr, md.getABI("lob")!, this.wsProvider));
     const proxy = new ethers.Contract(md.getProxyAddress(), md.getABI("proxy")!, this.wsProvider);
 
     // listeners:
@@ -69,61 +64,54 @@ export default class BlockhainListener {
       this.redisPubClient.publish("block", blockNumber.toString());
     });
 
-    // add listeners for each order book
-    orderBooks.map((ob, idx) => {
-      console.log(`Subscribing to ${perpIds[idx]} ${obAddr[idx]}`);
-      // order posted
-      ob.on("PerpetualLimitOrderCreated", (perpetualId, trader, _brokerAddr, scOrder, digest) => {
-        console.log(`${new Date(Date.now()).toISOString()} PerpetualLimitOrderCreated:`, {
+    // position liquidated
+    proxy.on(
+      "Liquidate",
+      (
+        perpetualId,
+        _liquidatorAddr,
+        traderAddr,
+        _positionId,
+        _fLiquidatedAmount,
+        _fPrice,
+        fNewPositionBC,
+        _fFee,
+        _fRealizedPnL
+      ) => {
+        console.log(`${new Date(Date.now()).toISOString()} Liquidate:`, {
           perpetualId: perpetualId,
-          trader: trader,
+          _liquidatorAddr: _liquidatorAddr,
+          traderAddr: traderAddr,
+          fNewPositionBC: fNewPositionBC,
+          _fLiquidatedAmount: _fLiquidatedAmount,
+        });
+        this.redisPubClient.publish(
+          "Liquidate",
+          JSON.stringify({ perpetualId: perpetualId, traderAddr: traderAddr, fNewPositionBC: fNewPositionBC })
+        );
+      }
+    );
+
+    // order executed
+    proxy.on(
+      "Trade",
+      (perpetualId, traderAddr, _positionId, _order, digest, fNewPositionBC, _fPrice, _fFee, _fPnLCC) => {
+        console.log(`${new Date(Date.now()).toISOString()} Trade:`, {
+          perpetualId: perpetualId,
+          traderAddr: traderAddr,
+          fNewPositionBC: fNewPositionBC,
           digest: digest,
         });
         this.redisPubClient.publish(
-          "PerpetualLimitOrderCreated",
+          "Trade",
           JSON.stringify({
             perpetualId: perpetualId,
-            trader: trader,
-            order: { ...scOrder },
+            traderAddr: traderAddr,
+            fNewPositionBC: fNewPositionBC,
             digest: digest,
           })
         );
-      });
-
-      // order execution failed
-      ob.on("ExecutionFailed", (perpetualId, _trader, digest, reason) => {
-        console.log(`${new Date(Date.now()).toISOString()} ExecutionFailed:`, {
-          perpetualId: perpetualId,
-          digest: digest,
-          reason: reason,
-        });
-        this.redisPubClient.publish(
-          "ExecutionFailed",
-          JSON.stringify({ perpetualId: perpetualId, digest: digest, reason: reason })
-        );
-      });
-    });
-
-    // order cancelled
-    proxy.on("PerpetualLimitOrderCancelled", (perpetualId, digest) => {
-      console.log(`${new Date(Date.now()).toISOString()} PerpetualLimitOrderCancelled:`, {
-        perpetualId: perpetualId,
-        digest: digest,
-      });
-      this.redisPubClient.publish(
-        "PerpetualLimitOrderCancelled",
-        JSON.stringify({ perpetualId: perpetualId, digest: digest })
-      );
-    });
-
-    // order executed
-    proxy.on("Trade", (perpetualId, _traderAddr, _positionId, _order, digest, _fNewPos, _fPrice, _fFee, _fPnLCC) => {
-      console.log(`${new Date(Date.now()).toISOString()} Trade:`, {
-        perpetualId: perpetualId,
-        traderAddr: _traderAddr,
-        digest: digest,
-      });
-      this.redisPubClient.publish("Trade", JSON.stringify({ perpetualId: perpetualId, digest: digest }));
-    });
+      }
+    );
   }
 }

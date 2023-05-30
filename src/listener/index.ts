@@ -1,5 +1,5 @@
 import { PerpetualDataHandler } from "@d8x/perpetuals-sdk";
-import { chooseRPC, loadConfig } from "../utils.ts";
+import { chooseRPC, loadConfig } from "../utils";
 import BlockhainListener from "./blockchainListener";
 import { ethers } from "ethers";
 

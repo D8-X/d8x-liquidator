@@ -27,5 +27,4 @@ RUN echo -e "REDIS_URL=${REDIS_URL}\n""RPC_HTTP_URL=${RPC_HTTP_URL}\n""RPC_USE_O
 
 RUN yarn build
 
-CMD yarn start-relayer ${SYMBOL} ${WALLET_INDEX}
-# CMD ["yarn", "start-relayer", SYMBOL, WALLET_INDEX]
+CMD yarn start-liquidator ${SYMBOL} ${WALLET_INDEX}

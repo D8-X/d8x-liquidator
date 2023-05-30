@@ -5,7 +5,7 @@ import { ethers } from "ethers";
 require("dotenv").config();
 
 export function loadConfig(otherRPC?: string | undefined, onlyOther?: string | undefined): LiqConfig {
-  let file = require("./referrerConfig.json");
+  let file = require("./liquidatorConfig.json");
   let config: LiqConfig = {
     RPC: file["RPC"],
     watchDogPulseLogDir: file["watchDogPulseLogDir"],

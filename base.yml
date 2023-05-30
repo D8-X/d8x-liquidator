@@ -1,0 +1,24 @@
+version: "2"
+
+services:
+  base:
+    stdin_open: true # docker run -i
+    tty: true # docker run -t
+    build:
+      context: .
+      dockerfile: ./src/liquidator/Dockerfile
+    environment:
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      RPC_HTTP_URL: ${RPC_HTTP_URL}
+      RPC_USE_OWN_ONLY: ${RPC_USE_OWN_ONLY}
+      PEER_COUNT: ${PEER_COUNT}
+      PEER_INDEX: ${PEER_INDEX}
+      SEED_PHRASE: ${SEED_PHRASE}
+      SYMBOL: ${SYMBOL}
+      WALLET_INDEX: ${WALLET_INDEX}
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "10"

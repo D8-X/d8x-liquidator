@@ -1,16 +1,21 @@
 {
   "dependencies": {
-    "@d8x/perpetuals-sdk": "^0.4.2",
+    "@d8x/perpetuals-sdk": "^0.6.0",
     "dotenv": "^16.0.3",
     "ethers": "^5.7.2",
-    "pm2": "^5.2.2"
+    "ioredis": "^5.3.2",
+    "pm2": "^5.2.2",
+    "typescript": "^5.0.4"
   },
   "devDependencies": {
     "@types/node": "^18.11.9"
   },
   "scripts": {
+    "build": "npx tsc",
     "postinstall": "$(yarn bin)/pm2 install typescript",
-    "start": "pm2 start ecosystem.config.js --watch",
+    "start-streamer": "node dist/src/listener/index.js",
+    "start-liquidators": "pm2 start ecosystem.config.js --watch",
+    "start-liquidator": "node dist/src/liquidator/main.js",
     "stop": "pm2 stop liquidator && pm2 delete all",
     "restart": "pm2 restart liquidator",
     "delete": "pm2 delete liquidator",

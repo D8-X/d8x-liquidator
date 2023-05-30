@@ -11,14 +11,16 @@ import {
 } from "@d8x/perpetuals-sdk";
 import { BigNumber, ethers } from "ethers";
 import { writeFileSync } from "fs";
-import { LiqConfig, PositionBundle, ZERO_POSITION } from "./types";
+import { Redis } from "ioredis";
+import { constructRedis } from "../utils";
+import { LiqConfig, PositionBundle, ZERO_POSITION } from "../types";
 
 export default class Liquidator {
   // objects
   private provider: ethers.providers.Provider | undefined;
   private mktData: MarketData | undefined;
   private liqTool: LiquidatorTool[] | undefined;
-  private proxyContract: ethers.Contract | undefined;
+  private redisSubClient: Redis;
 
   // parameters
   private perpSymbol: string;
@@ -39,30 +41,42 @@ export default class Liquidator {
   private isQuote: boolean | undefined;
   private confirmedRunning: boolean = false;
   private lockedAtBlockNumber: number = 0;
+  private lastRefreshTime: number = Infinity;
 
   // constants
   private MIN_BLOCKTIME_SECONDS: number = 2;
+  private REFRESH_INTERVAL_MS: number = 60 * 60 * 1_000;
   private LIQUIDATE_TOPIC = ethers.utils.keccak256(
     ethers.utils.toUtf8Bytes("Liquidate(uint24,address,address,bytes16,int128,int128,int128)")
   );
 
-  constructor(privateKey: string, perpSymbol: string, config: LiqConfig, liquidatorAddr?: string) {
+  constructor(privateKey: string | string[], perpSymbol: string, config: LiqConfig, liquidatorAddr?: string) {
     this.privateKey = typeof privateKey == "string" ? [privateKey] : privateKey;
     this.perpSymbol = perpSymbol;
     this.liquidatorAddr = liquidatorAddr;
     this.config = config;
+    this.redisSubClient = constructRedis("LiquidatorListener");
   }
 
+  /**
+   *
+   * @param provider Provider - used to query open positions and execute liquidations
+   */
   public async initialize(provider: ethers.providers.Provider) {
     this.provider = provider;
-    await this.initObjects();
-    if (this.mktData == undefined || this.liqTool == undefined) {
-      throw Error("objects not initialized");
-    }
+
+    // infer config from provider
+    const chainId = (await this.provider!.getNetwork()).chainId;
+    const config = PerpetualDataHandler.readSDKConfig(chainId);
+
+    // MarketData (read only, no authentication needed)
+    this.mktData = new MarketData(config);
+    this.liqTool = this.privateKey.map((pk) => new LiquidatorTool(config, pk));
+
     // Create a proxy instance to access the blockchain
     await this.mktData.createProxyInstance();
     await Promise.all(this.liqTool.map((obj) => obj.createProxyInstance(provider)));
-    console.log("Proxy instances created.");
+
     // get perpetual Id
     this.perpetualId = this.mktData.getPerpIdFromSymbol(this.perpSymbol);
     this.maintenanceRate = this.mktData.getPerpetualStaticInfo(this.perpSymbol).maintenanceMarginRate;
@@ -74,21 +88,29 @@ export default class Liquidator {
     this.markPremium = perpState.markPrice / perpState.indexPrice - 1;
     // build all orders
     await this.refreshActiveAccounts();
+
+    // Subscribe to blockchain events
+    console.log(
+      `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: subscribing to blockchain event streamer...`
+    );
+    await this.redisSubClient.subscribe("block", "Liquidate", "Trade", "UpdateMarkPrice", (err, count) => {
+      if (err) {
+        console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: subscription failed: ${err}`);
+        process.exit(1);
+      } else {
+        console.log(
+          `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: subscription success - ${count} active channels`
+        );
+      }
+    });
   }
 
-  private async initObjects() {
-    // load configuration
-    const chainId = (await this.provider!.getNetwork()).chainId;
-    const config = PerpetualDataHandler.readSDKConfig(chainId);
-    console.log(`config ${config.name} v${config.version}, manager ${config.proxyAddr} on chain id ${config.chainId}`);
-    // MarketData (read only, no authentication needed)
-    this.mktData = new MarketData(config);
-    this.liqTool = this.privateKey.map((pk) => new LiquidatorTool(config, pk));
-  }
-
+  /**
+   * Unsubscribes from the Redis connection
+   */
   private unsubscribe() {
-    console.log("Unsubscribing");
-    this.proxyContract!.provider.removeAllListeners();
+    console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Unsubscribing`);
+    this.redisSubClient.unsubscribe();
   }
 
   /**
@@ -101,89 +123,66 @@ export default class Liquidator {
     if (this.mktData == undefined || this.liqTool == undefined) {
       throw Error("objects not initialized");
     }
-    this.proxyContract = await this.mktData.getReadOnlyProxyInstance();
     let numBlocks = -1;
+
     return new Promise<void>((resolve, reject) => {
-      // on every block:
-      this.proxyContract!.provider.on("block", async (blockNumber) => {
-        try {
-          // count block, maybe stop
-          numBlocks++;
-          if (numBlocks > maxBlocks) {
-            this.unsubscribe();
-            this.logPulseToFile();
-            return resolve();
+      this.redisSubClient.on("message", async (channel, msg) => {
+        switch (channel) {
+          case "block": {
+            numBlocks++;
+            try {
+              // stop if max number of blocks reached
+              if (numBlocks > maxBlocks) {
+                this.unsubscribe();
+                this.logPulseToFile();
+                return resolve();
+              }
+              // refresh periodically
+              if (Date.now() - this.lastRefreshTime > this.REFRESH_INTERVAL_MS) {
+                await this.refreshActiveAccounts();
+              }
+              // maybe liquidate
+              let res = await this.liquidateTraders();
+              if (numBlocks % 256 == 0 || res.numSubmitted > 0) {
+                console.log(
+                  `${new Date(Date.now()).toISOString()}: (${numBlocks}/${maxBlocks}), Tried: ${
+                    res.numSubmitted
+                  }, Liquidated: ${res.numLiquidated}, confirmed running: ${this.confirmedRunning}`
+                );
+              }
+            } catch (e) {
+              // error will be logged outside, we just send it in reject()
+              console.log(`${new Date(Date.now()).toISOString()} Error processing block`);
+              this.unsubscribe();
+              return reject(e);
+            }
+            break;
           }
-          this.lockedAtBlockNumber = blockNumber;
-          // maybe liquidate
-          let res = await this.liquidateTraders();
-          if (numBlocks % 10 == 0 || res.numSubmitted > 0) {
-            console.log(
-              `${blockNumber} ${new Date(Date.now()).toISOString()}: (${numBlocks}/${maxBlocks}), Tried: ${
-                res.numSubmitted
-              }, Liquidated: ${res.numLiquidated}, confirmed running: ${this.confirmedRunning}`
-            );
+          case "Trade": {
+            const { perpetualId, traderAddr, fNewPositionBC, digest } = JSON.parse(msg);
+            if (perpetualId == this.perpetualId) {
+              console.log(
+                `${this.lockedAtBlockNumber} ${new Date(Date.now()).toISOString()} Trade caught: order id ${digest}`
+              );
+              this.updateOnEvent(traderAddr, fNewPositionBC);
+            }
+            break;
           }
-        } catch (e) {
-          // error will be logged outside, we just send it in reject()
-          console.log(`${new Date(Date.now()).toISOString()} Error in block ${blockNumber} processing callback:`);
-          this.unsubscribe();
-          return reject(e);
-        }
-      });
-
-      // on Trade event
-      this.proxyContract!.on(
-        "Trade",
-        async (
-          perpetualId,
-          traderAddr,
-          _positionId,
-          _order,
-          orderDigest,
-          fNewPositionBC,
-          _fPrice,
-          _fFee,
-          _fRealizedPnL
-        ) => {
-          if (perpetualId != this.perpetualId) {
-            // not our perp
-            return;
+          case "Liquidate": {
+            const { perpetualId, traderAddr, fNewPositionBC } = JSON.parse(msg);
+            if (perpetualId == this.perpetualId) {
+              console.log(`${this.lockedAtBlockNumber} ${new Date(Date.now()).toISOString()} Liquidate caught`);
+              this.updateOnEvent(traderAddr, fNewPositionBC);
+            }
+            break;
           }
-          console.log(
-            `${this.lockedAtBlockNumber} ${new Date(Date.now()).toISOString()} Trade caught: order id ${orderDigest}`
-          );
-          this.updateOnEvent(traderAddr, fNewPositionBC);
-        }
-      );
-
-      // on Liquidate event
-      this.proxyContract!.on(
-        "Liquidate",
-        async (
-          perpetualId,
-          _liquidatorAddr,
-          traderAddr,
-          _positionId,
-          _fLiquidatedAmount,
-          _fPrice,
-          fNewPositionBC,
-          _fFee,
-          _fRealizedPnL
-        ) => {
-          if (perpetualId != this.perpetualId) {
-            // not our perp
-            return;
+          case "UpdateMarkPrice": {
+            const { perpetualId, fMarkPremium } = JSON.parse(msg);
+            if (perpetualId == this.perpetualId) {
+              this.markPremium = ABK64x64ToFloat(fMarkPremium);
+            }
+            break;
           }
-          console.log(`${this.lockedAtBlockNumber} ${new Date(Date.now()).toISOString()} Liquidate caught`);
-          this.updateOnEvent(traderAddr, fNewPositionBC);
-        }
-      );
-
-      // on mark price update
-      this.proxyContract!.on("UpdateMarkPrice", (perpId, _fMidPremium, fMarkPremium, _fSpotPriceS2) => {
-        if (this.perpetualId == perpId) {
-          this.markPremium = ABK64x64ToFloat(fMarkPremium);
         }
       });
     });
@@ -228,7 +227,7 @@ export default class Liquidator {
         console.log(`Updating position risk of trader ${traderAddr}`);
         let account: MarginAccount;
         try {
-          account = await this.mktData!.positionRisk(traderAddr, this.perpSymbol);
+          account = (await this.mktData!.positionRisk(traderAddr, this.perpSymbol))[0];
         } catch (e) {
           console.log("Error in _updateAccounts: update positionRisk");
           throw e;
@@ -247,7 +246,7 @@ export default class Liquidator {
       console.log(`Adding new trader ${newAddress}`);
       let newAccount: MarginAccount;
       try {
-        newAccount = await this.mktData!.positionRisk(newAddress!, this.perpSymbol);
+        newAccount = (await this.mktData!.positionRisk(newAddress!, this.perpSymbol))[0];
       } catch (e) {
         console.log("Error in _updateAccounts: add new positionRisk");
         throw e;
@@ -268,13 +267,14 @@ export default class Liquidator {
     }
     // get active accounts
     // console.log("Counting active accounts...");
+    this.lastRefreshTime = Date.now();
     let numAccounts = await this.liqTool[0].countActivePerpAccounts(this.perpSymbol);
     console.log(`There are ${numAccounts} active accounts`);
     try {
       console.log("Fetching addresses...");
       let accountAddresses = await this.liqTool[0].getAllActiveAccounts(this.perpSymbol);
       console.log(`${accountAddresses.length} addresses fetched.`);
-      let accountPromises: Array<Promise<MarginAccount>> = new Array<Promise<MarginAccount>>();
+      let accountPromises: Array<Promise<MarginAccount[]>> = new Array<Promise<MarginAccount[]>>();
       this.addressWatch.clear();
       for (var k = 0; k < accountAddresses.length; k++) {
         accountPromises.push(this.mktData!.positionRisk(accountAddresses[k], this.perpSymbol));
@@ -283,10 +283,10 @@ export default class Liquidator {
       let accounts = await Promise.all(accountPromises);
       for (var k = 0; k < accounts.length; k++) {
         // check again that this account makes sense
-        if (accounts[k].positionNotionalBaseCCY == 0) {
+        if (accounts[k][0].positionNotionalBaseCCY == 0) {
           continue;
         }
-        this.openPositions.push({ address: accountAddresses[k], account: accounts[k] });
+        this.openPositions.push({ address: accountAddresses[k], account: accounts[k][0] });
         this.addressWatch.add(accountAddresses[k]);
       }
       // console.log("Accounts fetched.");
@@ -296,7 +296,7 @@ export default class Liquidator {
     }
     console.log("Watching positions:");
     // console.log(this.openPositions);
-    this.openPositions.map((p) => console.log(p.address));
+    this.openPositions.map((p) => console.log(`${p.address} (${Math.round(p.account.leverage * 100) / 100}x)`));
   }
 
   /**
@@ -304,7 +304,7 @@ export default class Liquidator {
    * @returns statistics for liquidation
    */
   public async liquidateTraders(): Promise<{ numSubmitted: number; numLiquidated: number }> {
-    if (this.mktData == undefined || this.liqTool == undefined || this.proxyContract == undefined) {
+    if (this.mktData == undefined || this.liqTool == undefined) {
       throw Error("objects not initialized");
     }
     if (this.isLiquidating) {
