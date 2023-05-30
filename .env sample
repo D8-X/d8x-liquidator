@@ -13,11 +13,6 @@ RPC_HTTP_URL="https://your-own-rpc.com"
 RPC_WS_URL="wss://your-own-rpc.com"
 RPC_USE_OWN_ONLY=false
 
-# Multi-server setup
-
-PEER_COUNT=2 # number of instances running on different servers
-PEER_INDEX=0 # index between 0 and PEER_COUNT-1
-
 # Seed phrase
 
 SEED_PHRASE="your twelve word mnemonic phrase"
