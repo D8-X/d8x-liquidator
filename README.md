@@ -1,66 +1,129 @@
 # D8X Liquidator
 
-Liquidator for D8X Perpetual Futures.
-
 ## Getting started
 
-### Pre-requisites
+### Dependencies
 
-You will need a mnemonic phrase used to generate as many private keys as liquidators you will be running.
+These services can be run using either [Docker](https://docs.docker.com/get-docker/) or [Yarn](https://yarnpkg.com/getting-started/install).
 
-Each wallet needs to be funded with MATIC in order to execute liquidations, and will be credited in the collateral currency of the perpetuals on which the liquidations would happen.
+In addition, you will need:
 
-### Installation
+- A mnemonic phrase used to generate the private keys for the wallets you will be using
+- RPCs (HTTP and WebSockets) to interact with the blockchain
 
-Run `yarn` to install this package and the required dependencies.
+Use the provided `.env` file to enter your mnemonic seed phrase and RPCs. A set of common free/public RPCs is also provideed in src/liquidatorConfig.json, which you may edit as needed.
+
+Each wallet needs to be funded with sufficient native tokens to liquidate positions, and will be credited in the collateral currency of the corresponding perpetual. For instance, if running on Polygon zkEVM, the wallets need to have ETH for gas, and if running on Polygon PoS, they need to have MATIC.
 
 ## Configuration
 
-Inspect and edit the ecosystem.config.js file to set-up the liquidators.
+### Environment variables
 
-The fields you may want to modify from their default values are "name" and "args": the former is used to uniquely identify the process within PM2; the latter contains the symbol for which to look for liquidation oportunities, and the index of the private key as generated from the mnemonic phrase.
+Rename the file `sample.env` as `.env` and edit as necessary:
 
-For instance, if you want to run liquidators for BTC and ETH only, using the third and fourth private keys derived from your seed phrase, you would use a config file like this:
+- REDIS_URL and REDIS_PASSWORD: you may leave these unchanged if running with Docker. See in-line comments otherwise.
+- RPC_HTTP_URL, RPC_WS_URL: your own RPCs
+- RPC_USE_OWN_ONLY: whether to use public RPCs for liquidations; your own RPCs above are still required for streaming blockchain events.
+- SEED_PHRASE: your mnemonic seed phrase.
+
+### With Docker
+
+Inspect the file `docker-compose.yml`. The services named `liquidator-1`, `liquidator-2`, etc contain the symbols and wallet indices to run. You may remove or add more bots following the provided syntax.
+
+### Without Docker
+
+Inspect and edit the liquidatorConfig.json file. Most importantly, ensure the RPCs include only those corresponding to the network of interest. The perpetual network is always inferred from the chain ID of the RPC provider.
+
+Inspect and edit the ecosystem.config.js file to set-up the bots.
+
+The arguments for each bot are:
+
+- Symbol of the form BTC-USD-MATIC
+- From-to indices along the derivation path of your mnemonic seed: "from" is mandatory, and "to" is optional (in case you want to use more than one wallet in one perpetual because of e.g. high market volatility)
+
+For instance, the below configuration is used to liquidate ETH-USD and BTC-USD positions in a MATIC pool, using the second and third wallets, respectively.
+
+#### ecosystem.config.js
 
 ```
 module.exports = {
   apps: [
-    {
-      name: "Liquidator:BTC-USD-MATIC",
-      script: "./src/main.ts",
-      watch: ["./src"],
-      error_file: "./logs/btc-liquidator-errors.log",
-      out_file: "./logs/btc-liquidator-log.log",
-      args: "BTC-USD-MATIC 3",
+        {
+      name: "ETH-USD-MATIC",
+      script: "dist/src/liquidator/main.js",
+      watch: ["dist/src/liquidator", "/node_modules/"],
+      error_file: "logs/liquidator-errors.log",
+      out_file: "logs/liquidator.log",
+      args: "ETH-USD-MATIC 1",
+      namespace: "liquidator",
     },
     {
-      name: "Liquidator:ETH-USD-MATIC",
-      script: "./src/main.ts",
-      watch: ["./src"],
-      error_file: "./logs/eth-liquidator-errors.log",
-      out_file: "./logs/eth-liquidator-log.log",
-      args: "ETH-USD-MATIC 4",
+      name: "BTC-USD-MATIC",
+      script: "dist/src/liquidator/main.js",
+      watch: ["dist/src/liquidator", "/node_modules/"],
+      error_file: "logs/liquidator-errors.log",
+      out_file: "logs/liquidator.log",
+      args: "BTC-USD-MATIC 2",
+      namespace: "liquidator",
     },
     {
-      name: "Liquidator:Watchdog",
-      script: "ts-node ./src/runWatchDog.ts BTC-USD-MATIC ETH-USD-MATIC",
+      name: "Watchdog",
+      script:
+        "node dist/src/runWatchDog.js ETH-USD-MATIC BTC-USD-MATIC",
       watch: ["./src"],
       error_file: "./logs/watchdog-errors.log",
-      out_file: "./logs/watchdog-log.log",
+      out_file: "./logs/watchdog.log",
+      namespace: "liquidator",
     },
   ],
 };
-
 ```
 
-## Start
+## Starting the Relayers
 
-The liquidators, as defined in the configuration file, can be starting by running `yarn start` on the command line.
+### With Docker
 
-## Monitor
+Start all services by running
 
-Inspect logs in the 'logs' folder, or run `pm2 monit`.
+```
+$ sudo docker-compose up --build
+```
 
-### Stop
+### Without Docker
 
-Run `yarn stop`.
+If running without Docker, you must start the services in the following order:
+
+#### Redis
+
+```
+$ sudo /etc/init.d/redis-server stop
+$ redis-server
+```
+
+#### Blockhain event streamer
+
+```
+$ yarn start-streamer
+```
+
+#### Rrelayers
+
+```
+$ yarn start-relayers
+```
+
+#### Monitor
+
+Inspect logs in the 'logs' folder, or run `yarn run pm2 monit`.
+
+#### Restart
+
+Run `yarn restart` to force the processes to stop and start again.
+
+#### Clean
+
+Run `yarn clean-logs` to delete all log files. This action is permanent.
+
+#### Stop
+
+Run `yarn stop` to stop all the processes.
