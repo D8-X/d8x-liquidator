@@ -1,0 +1,7 @@
+.git
+.gitignore
+.github
+.vscode
+examples/
+logs/
+node_modules/
