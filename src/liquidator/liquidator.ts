@@ -145,14 +145,14 @@ export default class Liquidator {
               let res = await this.liquidateTraders();
               if (numBlocks % 256 == 0 || res.numSubmitted > 0) {
                 console.log(
-                  `${new Date(Date.now()).toISOString()}: (${numBlocks}/${maxBlocks}), Tried: ${
+                  `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: (${numBlocks}/${maxBlocks}), Tried: ${
                     res.numSubmitted
                   }, Liquidated: ${res.numLiquidated}, confirmed running: ${this.confirmedRunning}`
                 );
               }
             } catch (e) {
               // error will be logged outside, we just send it in reject()
-              console.log(`${new Date(Date.now()).toISOString()} Error processing block`);
+              console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Error processing block`);
               this.unsubscribe();
               return reject(e);
             }
@@ -162,7 +162,9 @@ export default class Liquidator {
             const { perpetualId, traderAddr, fNewPositionBC, digest } = JSON.parse(msg);
             if (perpetualId == this.perpetualId) {
               console.log(
-                `${this.lockedAtBlockNumber} ${new Date(Date.now()).toISOString()} Trade caught: order id ${digest}`
+                `${this.perpSymbol} ${new Date(
+                  Date.now()
+                ).toISOString()}: Trade received: address: ${traderAddr}, id: ${digest}`
               );
               this.updateOnEvent(traderAddr, fNewPositionBC);
             }
@@ -171,7 +173,9 @@ export default class Liquidator {
           case "Liquidate": {
             const { perpetualId, traderAddr, fNewPositionBC } = JSON.parse(msg);
             if (perpetualId == this.perpetualId) {
-              console.log(`${this.lockedAtBlockNumber} ${new Date(Date.now()).toISOString()} Liquidate caught`);
+              console.log(
+                `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Liquidate caught, address: ${traderAddr}`
+              );
               this.updateOnEvent(traderAddr, fNewPositionBC);
             }
             break;
@@ -193,18 +197,30 @@ export default class Liquidator {
       // we are monitoring this trader
       if (fPositionBC == ZERO_POSITION) {
         // position is closed, we should not watch it anymore
-        console.log(`Trader ${traderAddr} is out - will remove from watch list.`);
+        console.log(
+          `${this.perpSymbol} ${new Date(
+            Date.now()
+          ).toISOString()}: Trader ${traderAddr} is out - will remove from watch list.`
+        );
         this.addressWatch.delete(traderAddr);
       } else {
         // this acount is still open but something about it changed, we should update it
-        console.log(`Trader ${traderAddr} did something - will update the account.`);
+        console.log(
+          `${this.perpSymbol} ${new Date(
+            Date.now()
+          ).toISOString()}: Trader ${traderAddr} traded - will update the account.`
+        );
         this.addressUpdate.add(traderAddr);
       }
     } else {
       // we have not seen this trader before
       if (fPositionBC != ZERO_POSITION) {
         // the position is active, so we monitor it
-        console.log(`New trader ${traderAddr} dectected - will add to watch list.`);
+        console.log(
+          `${this.perpSymbol} ${new Date(
+            Date.now()
+          ).toISOString()}: New trader ${traderAddr} dectected - will add to watch list.`
+        );
         this.addressAdd.add(traderAddr);
       }
     }
@@ -216,7 +232,9 @@ export default class Liquidator {
     while (k < this.openPositions.length) {
       if (!this.addressWatch.has(this.openPositions[k].address)) {
         // position should be dropped
-        console.log(`Removing trader ${this.openPositions[k].address}`);
+        console.log(
+          `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Removing trader ${this.openPositions[k].address}`
+        );
         this.openPositions[k] = this.openPositions[this.openPositions.length - 1];
         this.openPositions.pop();
         // we don't move index k
@@ -224,12 +242,16 @@ export default class Liquidator {
       } else if (this.addressUpdate.has(this.openPositions[k].address)) {
         // position should be updated
         let traderAddr = this.openPositions[k].address;
-        console.log(`Updating position risk of trader ${traderAddr}`);
+        console.log(
+          `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Updating position risk of trader ${traderAddr}`
+        );
         let account: MarginAccount;
         try {
           account = (await this.mktData!.positionRisk(traderAddr, this.perpSymbol))[0];
         } catch (e) {
-          console.log("Error in _updateAccounts: update positionRisk");
+          console.log(
+            `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Error in _updateAccounts: update positionRisk`
+          );
           throw e;
         }
         this.openPositions[k] = { address: traderAddr, account: account };
@@ -243,12 +265,14 @@ export default class Liquidator {
     let newAddresseses = Array.from(this.addressAdd);
     while (newAddresseses.length > 0) {
       let newAddress = newAddresseses.pop();
-      console.log(`Adding new trader ${newAddress}`);
+      console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Adding new trader ${newAddress}`);
       let newAccount: MarginAccount;
       try {
         newAccount = (await this.mktData!.positionRisk(newAddress!, this.perpSymbol))[0];
       } catch (e) {
-        console.log("Error in _updateAccounts: add new positionRisk");
+        console.log(
+          `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Error in _updateAccounts: add new positionRisk`
+        );
         throw e;
       }
       this.openPositions.push({ address: newAddress!, account: newAccount });
@@ -269,17 +293,17 @@ export default class Liquidator {
     // console.log("Counting active accounts...");
     this.lastRefreshTime = Date.now();
     let numAccounts = await this.liqTool[0].countActivePerpAccounts(this.perpSymbol);
-    console.log(`There are ${numAccounts} active accounts`);
+    console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: There are ${numAccounts} active accounts`);
     try {
-      console.log("Fetching addresses...");
+      // console.log("Fetching addresses...");
       let accountAddresses = await this.liqTool[0].getAllActiveAccounts(this.perpSymbol);
-      console.log(`${accountAddresses.length} addresses fetched.`);
+      // console.log(`${accountAddresses.length} addresses fetched.`);
       let accountPromises: Array<Promise<MarginAccount[]>> = new Array<Promise<MarginAccount[]>>();
       this.addressWatch.clear();
       for (var k = 0; k < accountAddresses.length; k++) {
         accountPromises.push(this.mktData!.positionRisk(accountAddresses[k], this.perpSymbol));
       }
-      console.log("Fetching account information...");
+      // console.log("Fetching account information...");
       let accounts = await Promise.all(accountPromises);
       for (var k = 0; k < accounts.length; k++) {
         // check again that this account makes sense
@@ -291,10 +315,12 @@ export default class Liquidator {
       }
       // console.log("Accounts fetched.");
     } catch (e) {
-      console.log("Error in refreshActiveAccounts:");
+      console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Error in refreshActiveAccounts:`);
       throw e;
     }
-    console.log("Watching positions:");
+    console.log(
+      `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Watching ${this.openPositions.length} positions:`
+    );
     // console.log(this.openPositions);
     this.openPositions.map((p) => console.log(`${p.address} (${Math.round(p.account.leverage * 100) / 100}x)`));
   }
@@ -386,7 +412,7 @@ export default class Liquidator {
       if (isLiquidatable[k]) {
         // will try to liquidate
         console.log(
-          `${this.lockedAtBlockNumber} ${new Date(Date.now()).toISOString()}: adding trader ${
+          `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: adding trader ${
             this.openPositions[k].address
           } to slot ${numToLiquidate} in this batch:`
         );
@@ -435,9 +461,9 @@ export default class Liquidator {
       let receipt: ethers.ContractReceipt;
       try {
         receipt = await txArray[k].wait();
-        console.log(`Tried tx=${txArray[k].hash}`);
+        console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Tried tx=${txArray[k].hash}`);
       } catch (e) {
-        console.log(`Failed tx=${txArray[k].hash}`);
+        console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Failed tx=${txArray[k].hash}`);
         throw e;
       }
       if (receipt.status == 1) {
@@ -471,7 +497,7 @@ export default class Liquidator {
   private checkSubmissionsInSync(timestamps: number[]): boolean {
     let gap = Math.max(...timestamps) - Math.min(...timestamps);
     if (gap > 2 * this.MIN_BLOCKTIME_SECONDS) {
-      console.log("feed submissions not synced:", timestamps, " gap =", gap);
+      // console.log("feed submissions not synced:", timestamps, " gap =", gap);
       return false;
     }
     return true;
