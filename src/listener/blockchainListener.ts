@@ -95,7 +95,7 @@ export default class BlockhainListener {
     // order executed
     proxy.on(
       "Trade",
-      (perpetualId, traderAddr, _positionId, _order, digest, fNewPositionBC, _fPrice, _fFee, _fPnLCC) => {
+      (perpetualId, traderAddr, _positionId, _order, digest, fNewPositionBC, _fPrice, _fFee, _fPnLCC, _fB2C) => {
         console.log(`${new Date(Date.now()).toISOString()} Trade:`, {
           perpetualId: perpetualId,
           traderAddr: traderAddr,
