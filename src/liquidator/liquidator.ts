@@ -420,7 +420,10 @@ export default class Liquidator {
             this.symbol,
             this.openPositions[k].address,
             this.treasuryAddr,
-            this.submission!.submission
+            this.submission!.submission,
+            {
+              gasLimit: 2_000_000,
+            }
           )
         );
         liquidateIdxInOpenPositions.push(k);
