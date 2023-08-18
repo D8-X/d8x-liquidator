@@ -10,10 +10,9 @@ import {
   COLLATERAL_CURRENCY_QUOTE,
 } from "@d8x/perpetuals-sdk";
 import { BigNumber, ethers } from "ethers";
-import { writeFileSync } from "fs";
 import { Redis } from "ioredis";
 import { constructRedis } from "../utils";
-import { LiqConfig, PositionBundle, ZERO_POSITION } from "../types";
+import { LiquidatorConfig, PositionBundle, ZERO_POSITION } from "../types";
 
 export default class Liquidator {
   // objects
@@ -23,10 +22,9 @@ export default class Liquidator {
   private redisSubClient: Redis;
 
   // parameters
-  private perpSymbol: string;
+  private symbol: string;
   private perpetualId: number | undefined;
   private maintenanceRate: number | undefined;
-  private liquidatorAddr: string | undefined;
   private privateKey: string[];
 
   // state
@@ -35,7 +33,7 @@ export default class Liquidator {
   private addressWatch: Set<string> = new Set<string>();
   private addressAdd: Set<string> = new Set<string>();
   private isLiquidating: boolean = false;
-  private config: LiqConfig;
+  private config: LiquidatorConfig;
   private submission: { submission: PriceFeedSubmission; pxS2S3: [number, number] } | undefined;
   private markPremium: number | undefined;
   private isQuote: boolean | undefined;
@@ -49,20 +47,41 @@ export default class Liquidator {
   private LIQUIDATE_TOPIC = ethers.utils.keccak256(
     ethers.utils.toUtf8Bytes("Liquidate(uint24,address,address,bytes16,int128,int128,int128)")
   );
+  private treasuryAddr: string;
+  private moduloTS: number;
+  private residualTS: number;
+  private LIQUIDATE_INTERVAL_MS: number;
+  private peerNonExecutionTimestampMS: Map<string, number>;
+  private blockNumber: number;
+  private lastLiquidateCall: number = 0;
+  private hasQueue: boolean = false;
 
-  constructor(privateKey: string | string[], perpSymbol: string, config: LiqConfig, liquidatorAddr?: string) {
+  constructor(
+    privateKey: string | string[],
+    symbol: string,
+    config: LiquidatorConfig,
+    moduloTS: number,
+    residualTS: number,
+    treasuryAddr: string
+  ) {
     this.privateKey = typeof privateKey == "string" ? [privateKey] : privateKey;
-    this.perpSymbol = perpSymbol;
-    this.liquidatorAddr = liquidatorAddr;
+    this.symbol = symbol;
+    this.treasuryAddr = treasuryAddr;
+    this.moduloTS = moduloTS;
+    this.residualTS = residualTS;
     this.config = config;
+    this.LIQUIDATE_INTERVAL_MS = this.config.liquidateIntervalSeconds * 1_000;
+    this.REFRESH_INTERVAL_MS = this.config.refreshOrdersSeconds * 1_000;
+    this.peerNonExecutionTimestampMS = new Map<string, number>();
     this.redisSubClient = constructRedis("LiquidatorListener");
+    this.blockNumber = 0;
   }
 
   /**
    *
    * @param provider Provider - used to query open positions and execute liquidations
    */
-  public async initialize(provider: ethers.providers.Provider) {
+  public async initialize(provider: ethers.providers.StaticJsonRpcProvider) {
     this.provider = provider;
 
     // infer config from provider
@@ -78,39 +97,28 @@ export default class Liquidator {
     await Promise.all(this.liqTool.map((obj) => obj.createProxyInstance(provider)));
 
     // get perpetual Id
-    this.perpetualId = this.mktData.getPerpIdFromSymbol(this.perpSymbol);
-    this.maintenanceRate = this.mktData.getPerpetualStaticInfo(this.perpSymbol).maintenanceMarginRate;
-    this.isQuote =
-      this.mktData.getPerpetualStaticInfo(this.perpSymbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE;
+    this.perpetualId = this.mktData.getPerpIdFromSymbol(this.symbol);
+    this.maintenanceRate = this.mktData.getPerpetualStaticInfo(this.symbol).maintenanceMarginRate;
+    this.isQuote = this.mktData.getPerpetualStaticInfo(this.symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE;
     // console.log(`is quote? ${this.isQuote}`);
-    this.submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.perpSymbol);
-    const perpState = await this.mktData.getPerpetualState(this.perpSymbol);
+    this.submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.symbol);
+    const perpState = await this.mktData.getPerpetualState(this.symbol);
     this.markPremium = perpState.markPrice / perpState.indexPrice - 1;
     // build all orders
     await this.refreshActiveAccounts();
 
     // Subscribe to blockchain events
-    console.log(
-      `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: subscribing to blockchain event streamer...`
-    );
+    console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: subscribing to blockchain event streamer...`);
     await this.redisSubClient.subscribe("block", "Liquidate", "Trade", "UpdateMarkPrice", (err, count) => {
       if (err) {
-        console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: subscription failed: ${err}`);
+        console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: subscription failed: ${err}`);
         process.exit(1);
       } else {
         console.log(
-          `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: subscription success - ${count} active channels`
+          `${this.symbol} ${new Date(Date.now()).toISOString()}: subscription success - ${count} active channels`
         );
       }
     });
-  }
-
-  /**
-   * Unsubscribes from the Redis connection
-   */
-  private unsubscribe() {
-    console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Unsubscribing`);
-    this.redisSubClient.unsubscribe();
   }
 
   /**
@@ -118,51 +126,40 @@ export default class Liquidator {
    * @param maxBlocks number of blocks we will listen to event handlers
    * @returns void
    */
-  public async runForNumBlocks(maxBlocks: number): Promise<void> {
-    // listen to blocks
+  public async run(): Promise<void> {
     if (this.mktData == undefined || this.liqTool == undefined) {
       throw Error("objects not initialized");
     }
     let numBlocks = -1;
-
     return new Promise<void>((resolve, reject) => {
+      // liquidate periodically
+      setInterval(async () => {
+        // should check if anyone can be liquidated every minute +- 10 sec
+        if (!this.hasQueue && Date.now() - this.lastLiquidateCall < this.LIQUIDATE_INTERVAL_MS) {
+          return;
+        }
+        await this.liquidate();
+      }, 10_000);
+
+      setInterval(async () => {
+        // checks that we refresh all orders every hour +- 10 sec
+        if (Date.now() - this.lastRefreshTime < this.REFRESH_INTERVAL_MS) {
+          return;
+        }
+        await this.refreshActiveAccounts();
+      }, 10_000);
+
       this.redisSubClient.on("message", async (channel, msg) => {
         switch (channel) {
           case "block": {
             numBlocks++;
-            try {
-              // stop if max number of blocks reached
-              if (numBlocks > maxBlocks) {
-                this.unsubscribe();
-                this.logPulseToFile();
-                return resolve();
-              }
-              // refresh periodically
-              if (Date.now() - this.lastRefreshTime > this.REFRESH_INTERVAL_MS) {
-                await this.refreshActiveAccounts();
-              }
-              // maybe liquidate
-              let res = await this.liquidateTraders();
-              if (numBlocks % 256 == 0 || res.numSubmitted > 0) {
-                console.log(
-                  `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: (${numBlocks}/${maxBlocks}), Tried: ${
-                    res.numSubmitted
-                  }, Liquidated: ${res.numLiquidated}, confirmed running: ${this.confirmedRunning}`
-                );
-              }
-            } catch (e) {
-              // error will be logged outside, we just send it in reject()
-              console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Error processing block`);
-              this.unsubscribe();
-              return reject(e);
-            }
             break;
           }
           case "Trade": {
             const { perpetualId, traderAddr, fNewPositionBC, digest } = JSON.parse(msg);
             if (perpetualId == this.perpetualId) {
               console.log(
-                `${this.perpSymbol} ${new Date(
+                `${this.symbol} ${new Date(
                   Date.now()
                 ).toISOString()}: Trade received: address: ${traderAddr}, id: ${digest}`
               );
@@ -174,7 +171,7 @@ export default class Liquidator {
             const { perpetualId, traderAddr, fNewPositionBC } = JSON.parse(msg);
             if (perpetualId == this.perpetualId) {
               console.log(
-                `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Liquidate caught, address: ${traderAddr}`
+                `${this.symbol} ${new Date(Date.now()).toISOString()}: Liquidate caught, address: ${traderAddr}`
               );
               this.updateOnEvent(traderAddr, fNewPositionBC);
             }
@@ -198,7 +195,7 @@ export default class Liquidator {
       if (fPositionBC == ZERO_POSITION) {
         // position is closed, we should not watch it anymore
         console.log(
-          `${this.perpSymbol} ${new Date(
+          `${this.symbol} ${new Date(
             Date.now()
           ).toISOString()}: Trader ${traderAddr} is out - will remove from watch list.`
         );
@@ -206,9 +203,7 @@ export default class Liquidator {
       } else {
         // this acount is still open but something about it changed, we should update it
         console.log(
-          `${this.perpSymbol} ${new Date(
-            Date.now()
-          ).toISOString()}: Trader ${traderAddr} traded - will update the account.`
+          `${this.symbol} ${new Date(Date.now()).toISOString()}: Trader ${traderAddr} traded - will update the account.`
         );
         this.addressUpdate.add(traderAddr);
       }
@@ -217,7 +212,7 @@ export default class Liquidator {
       if (fPositionBC != ZERO_POSITION) {
         // the position is active, so we monitor it
         console.log(
-          `${this.perpSymbol} ${new Date(
+          `${this.symbol} ${new Date(
             Date.now()
           ).toISOString()}: New trader ${traderAddr} dectected - will add to watch list.`
         );
@@ -233,7 +228,7 @@ export default class Liquidator {
       if (!this.addressWatch.has(this.openPositions[k].address)) {
         // position should be dropped
         console.log(
-          `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Removing trader ${this.openPositions[k].address}`
+          `${this.symbol} ${new Date(Date.now()).toISOString()}: Removing trader ${this.openPositions[k].address}`
         );
         this.openPositions[k] = this.openPositions[this.openPositions.length - 1];
         this.openPositions.pop();
@@ -243,14 +238,14 @@ export default class Liquidator {
         // position should be updated
         let traderAddr = this.openPositions[k].address;
         console.log(
-          `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Updating position risk of trader ${traderAddr}`
+          `${this.symbol} ${new Date(Date.now()).toISOString()}: Updating position risk of trader ${traderAddr}`
         );
         let account: MarginAccount;
         try {
-          account = (await this.mktData!.positionRisk(traderAddr, this.perpSymbol))[0];
+          account = (await this.mktData!.positionRisk(traderAddr, this.symbol))[0];
         } catch (e) {
           console.log(
-            `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Error in _updateAccounts: update positionRisk`
+            `${this.symbol} ${new Date(Date.now()).toISOString()}: Error in _updateAccounts: update positionRisk`
           );
           throw e;
         }
@@ -265,13 +260,13 @@ export default class Liquidator {
     let newAddresseses = Array.from(this.addressAdd);
     while (newAddresseses.length > 0) {
       let newAddress = newAddresseses.pop();
-      console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Adding new trader ${newAddress}`);
+      console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: Adding new trader ${newAddress}`);
       let newAccount: MarginAccount;
       try {
-        newAccount = (await this.mktData!.positionRisk(newAddress!, this.perpSymbol))[0];
+        newAccount = (await this.mktData!.positionRisk(newAddress!, this.symbol))[0];
       } catch (e) {
         console.log(
-          `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Error in _updateAccounts: add new positionRisk`
+          `${this.symbol} ${new Date(Date.now()).toISOString()}: Error in _updateAccounts: add new positionRisk`
         );
         throw e;
       }
@@ -292,16 +287,16 @@ export default class Liquidator {
     // get active accounts
     // console.log("Counting active accounts...");
     this.lastRefreshTime = Date.now();
-    let numAccounts = await this.liqTool[0].countActivePerpAccounts(this.perpSymbol);
-    console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: There are ${numAccounts} active accounts`);
+    let numAccounts = await this.liqTool[0].countActivePerpAccounts(this.symbol);
+    console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: There are ${numAccounts} active accounts`);
     try {
       // console.log("Fetching addresses...");
-      let accountAddresses = await this.liqTool[0].getAllActiveAccounts(this.perpSymbol);
+      let accountAddresses = await this.liqTool[0].getAllActiveAccounts(this.symbol);
       // console.log(`${accountAddresses.length} addresses fetched.`);
       let accountPromises: Array<Promise<MarginAccount[]>> = new Array<Promise<MarginAccount[]>>();
       this.addressWatch.clear();
       for (var k = 0; k < accountAddresses.length; k++) {
-        accountPromises.push(this.mktData!.positionRisk(accountAddresses[k], this.perpSymbol));
+        accountPromises.push(this.mktData!.positionRisk(accountAddresses[k], this.symbol));
       }
       // console.log("Fetching account information...");
       let accounts = await Promise.all(accountPromises);
@@ -315,11 +310,11 @@ export default class Liquidator {
       }
       // console.log("Accounts fetched.");
     } catch (e) {
-      console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Error in refreshActiveAccounts:`);
+      console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: Error in refreshActiveAccounts:`);
       throw e;
     }
     console.log(
-      `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Watching ${this.openPositions.length} positions:`
+      `${this.symbol} ${new Date(Date.now()).toISOString()}: Watching ${this.openPositions.length} positions:`
     );
     // console.log(this.openPositions);
     this.openPositions.map((p) => console.log(`${p.address} (${Math.round(p.account.leverage * 100) / 100}x)`));
@@ -329,7 +324,7 @@ export default class Liquidator {
    * Liquidate traders. Removes closed positions from list.
    * @returns statistics for liquidation
    */
-  public async liquidateTraders(): Promise<{ numSubmitted: number; numLiquidated: number }> {
+  public async liquidate(): Promise<{ numSubmitted: number; numLiquidated: number }> {
     if (this.mktData == undefined || this.liqTool == undefined) {
       throw Error("objects not initialized");
     }
@@ -339,10 +334,12 @@ export default class Liquidator {
     let numSubmitted = 0;
     let numLiquidated = 0;
     let submission: { submission: PriceFeedSubmission; pxS2S3: [number, number] };
+    this.hasQueue = false;
+    this.lastLiquidateCall = Date.now();
     try {
       await this._updateAccounts();
       // we update our current submission data if not synced (it can't be used to submit liquidations anyways)
-      submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.perpSymbol);
+      submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.symbol);
       if (!this.checkSubmissionsInSync(this.submission!.submission.timestamps)) {
         this.submission = submission;
       }
@@ -412,7 +409,7 @@ export default class Liquidator {
       if (isLiquidatable[k]) {
         // will try to liquidate
         console.log(
-          `${this.perpSymbol} ${new Date(Date.now()).toISOString()}: adding trader ${
+          `${this.symbol} ${new Date(Date.now()).toISOString()}: adding trader ${
             this.openPositions[k].address
           } to slot ${numToLiquidate} in this batch:`
         );
@@ -420,9 +417,9 @@ export default class Liquidator {
         // liquidate
         liquidateRequests.push(
           this.liqTool![numToLiquidate].liquidateTrader(
-            this.perpSymbol,
+            this.symbol,
             this.openPositions[k].address,
-            this.liquidatorAddr,
+            this.treasuryAddr,
             this.submission!.submission
           )
         );
@@ -461,32 +458,23 @@ export default class Liquidator {
       let receipt: ethers.ContractReceipt;
       try {
         receipt = await txArray[k].wait();
-        console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Tried tx=${txArray[k].hash}`);
-      } catch (e) {
-        console.log(`${this.perpSymbol} ${new Date(Date.now()).toISOString()}: Failed tx=${txArray[k].hash}`);
-        throw e;
-      }
-      if (receipt.status == 1) {
-        let liqEvent = receipt.events?.filter((event) => event.topics[0] == this.LIQUIDATE_TOPIC);
-        if (liqEvent?.length) {
-          // transaction went through and we got paid, so order was succesfully executed
-          numLiquidated++;
-          // totalReward += ABK64x64ToFloat(ethers.BigNumber.from(liqEvent[0].data));
+        console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: Tried tx=${txArray[k].hash}`);
+        if (receipt.status == 1) {
+          let liqEvent = receipt.events?.filter((event) => event.topics[0] == this.LIQUIDATE_TOPIC);
+          if (liqEvent?.length) {
+            // transaction went through and we got paid, so order was succesfully executed
+            numLiquidated++;
+            // totalReward += ABK64x64ToFloat(ethers.BigNumber.from(liqEvent[0].data));
+          }
         }
+      } catch (e) {
+        console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: Failed tx=${txArray[k].hash}`);
+        // don't throw - either it workd and events will update/remove the position, or it didn't and nothing has to change
       }
     }
     this.isLiquidating = false;
 
     return { numSubmitted: numSubmitted, numLiquidated: numLiquidated };
-  }
-
-  /**
-   * write current UTC timestamp to file for watcher
-   */
-  private logPulseToFile() {
-    let filename = `${this.config.watchDogPulseLogDir}/pulse${this.perpSymbol}.txt`;
-    let timestamp = Date.now().toString();
-    writeFileSync(filename, timestamp, { flag: "w" });
   }
 
   /**

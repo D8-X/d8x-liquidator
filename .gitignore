@@ -107,3 +107,5 @@ dist
 # .env file with mnemonic phrase and RPC
 .env
 dump.rdb
+
+src/config/live.*
