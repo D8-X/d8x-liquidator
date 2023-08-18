@@ -343,8 +343,11 @@ export default class Liquidator {
       if (!this.checkSubmissionsInSync(this.submission!.submission.timestamps)) {
         this.submission = submission;
       }
-      // the new submission data may be out of sync, in which case we stop here
-      if (!this.checkSubmissionsInSync(submission.submission.timestamps)) {
+      // the new submission data may be out of sync or the market may be closed, in which case we stop here
+      if (
+        submission.submission.isMarketClosed.some((x) => x) ||
+        !this.checkSubmissionsInSync(submission.submission.timestamps)
+      ) {
         this.isLiquidating = false;
         return { numSubmitted: numSubmitted, numLiquidated: numLiquidated };
       }
@@ -486,8 +489,9 @@ export default class Liquidator {
    * @returns True if the timestamps are sufficiently close to each other
    */
   private checkSubmissionsInSync(timestamps: number[]): boolean {
-    let gap = Math.max(...timestamps) - Math.min(...timestamps);
-    if (gap > 2 * this.MIN_BLOCKTIME_SECONDS) {
+    let min = Math.min(...timestamps);
+    let gap = Math.max(...timestamps) - min;
+    if (gap > 2 * this.MIN_BLOCKTIME_SECONDS || min < Date.now() / 1_000 - 10) {
       // console.log("feed submissions not synced:", timestamps, " gap =", gap);
       return false;
     }
