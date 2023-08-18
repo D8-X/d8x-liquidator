@@ -16,6 +16,8 @@ services:
       SEED_PHRASE: ${SEED_PHRASE}
       SYMBOL: ${SYMBOL}
       WALLET_INDEX: ${WALLET_INDEX}
+      CHAIN_ID: ${CHAIN_ID}
+      TREASURY_INDEX: ${TREASURY_INDEX}
     restart: on-failure
     logging:
       driver: "json-file"

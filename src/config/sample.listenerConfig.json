@@ -1,0 +1,18 @@
+[
+  {
+    "chainId": 80001,
+    "sdkConfig": "testnet",
+    "httpRPC": [],
+    "wsRPC": [],
+    "waitForBlockseconds": 10,
+    "healthCheckSeconds": 900
+  },
+  {
+    "chainId": 1442,
+    "sdkConfig": "zkevmTestnet",
+    "httpRPC": [],
+    "wsRPC": [],
+    "waitForBlockseconds": 10,
+    "healthCheckSeconds": 60
+  }
+]

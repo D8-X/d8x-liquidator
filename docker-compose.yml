@@ -21,6 +21,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - RPC_HTTP_URL=${RPC_HTTP_URL}
       - RPC_WS_URL=${RPC_WS_URL}
+      - CHAIN_ID=${CHAIN_ID}
     restart: on-failure
 
   # Liquidators

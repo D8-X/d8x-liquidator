@@ -13,15 +13,21 @@ export interface RedisConfig {
   password: string;
 }
 
-export interface LiqConfig {
+export interface LiquidatorConfig {
+  chainId: number;
   RPC: string[];
-  watchDogPulseLogDir: string;
-  runForMaxBlocks: number;
-  watchDogMaxTimeSeconds: number;
-  watchDogAlarmCoolOffSeconds: number;
+  gasStation: string;
+  liquidateIntervalSeconds: number;
+  refreshOrdersSeconds: number;
+  maxGasPriceGWei: number;
+  priceFeedEndpoints?: Array<{ type: string; endpoint: string }>;
 }
 
-export interface watchDogAlarm {
-  isCoolOff: boolean;
-  timestampSec: number;
+export interface ListenerConfig {
+  chainId: number;
+  sdkConfig: string;
+  httpRPC: string[];
+  wsRPC: string[];
+  waitForBlockseconds: number;
+  healthCheckSeconds: number;
 }

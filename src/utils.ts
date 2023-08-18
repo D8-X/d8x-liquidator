@@ -1,30 +1,25 @@
 import { Redis } from "ioredis";
-import { RedisConfig, LiqConfig } from "./types";
+import { RedisConfig, ListenerConfig, LiquidatorConfig } from "./types";
 import { ethers } from "ethers";
 
 require("dotenv").config();
 
-export function loadConfig(otherRPC?: string | undefined, onlyOther?: string | undefined): LiqConfig {
-  let file = require("./liquidatorConfig.json");
-  let config: LiqConfig = {
-    RPC: file["RPC"],
-    watchDogPulseLogDir: file["watchDogPulseLogDir"],
-    runForMaxBlocks: file["runForMaxBlocks"],
-    watchDogMaxTimeSeconds: file["watchDogMaxTimeSeconds"],
-    watchDogAlarmCoolOffSeconds: file["watchDogAlarmCoolOffSeconds"],
-  };
+export function loadLiquidatorConfig(chainId: number): LiquidatorConfig {
+  const configList = require("./config/live.liquidatorConfig.json") as LiquidatorConfig[];
+  const config = configList.find((config) => config.chainId == chainId);
+  if (!config) {
+    throw new Error(`Chain ID ${chainId} not found in config file.`);
+  }
+  return config;
+}
 
-  if (onlyOther != undefined && onlyOther.toLowerCase() == "true") {
-    config.RPC = [];
+export function loadListenerConfig(chainId: number): ListenerConfig {
+  const configList = require("./config/live.listenerConfig.json") as ListenerConfig[];
+  let config = configList.find((config) => config.chainId == chainId);
+  if (!config) {
+    throw new Error(`Chain ID ${chainId} not found in config file.`);
   }
-  let k = 1;
-  while (otherRPC != undefined) {
-    console.log(`adding RPC: ${otherRPC}`);
-    config.RPC.push(otherRPC);
-    otherRPC = <string>process.env["RPC_HTTP_URL" + k];
-    k++;
-  }
-  if (config.RPC == undefined || config.RPC.length < 1) {
+  if (config.httpRPC.length < 1) {
     throw new Error("no RPC defined");
   }
   return config;
@@ -53,6 +48,7 @@ export function chooseRPC(rpcArray: string[], lastRPC?: string): string {
     let idx = Math.floor(Math.random() * rpcArray.length);
     currRPC = rpcArray[idx];
   } while (currRPC == lastRPC && rpcArray.length > 1);
+  console.log({ RPC: currRPC });
   return currRPC;
 }
 
