@@ -260,18 +260,20 @@ export default class Liquidator {
     let newAddresseses = Array.from(this.addressAdd);
     while (newAddresseses.length > 0) {
       let newAddress = newAddresseses.pop();
-      console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: Adding new trader ${newAddress}`);
-      let newAccount: MarginAccount;
-      try {
-        newAccount = (await this.mktData!.positionRisk(newAddress!, this.symbol))[0];
-      } catch (e) {
-        console.log(
-          `${this.symbol} ${new Date(Date.now()).toISOString()}: Error in _updateAccounts: add new positionRisk`
-        );
-        throw e;
+      if (!!newAddress) {
+        console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: Adding new trader ${newAddress}`);
+        let newAccount: MarginAccount;
+        try {
+          newAccount = (await this.mktData!.positionRisk(newAddress, this.symbol))[0];
+        } catch (e) {
+          console.log(
+            `${this.symbol} ${new Date(Date.now()).toISOString()}: Error in _updateAccounts: add new positionRisk`
+          );
+          throw e;
+        }
+        this.openPositions.push({ address: newAddress, account: newAccount });
+        this.addressWatch.add(newAddress);
       }
-      this.openPositions.push({ address: newAddress!, account: newAccount });
-      this.addressWatch.add(newAddress!);
     }
     // done adding
     this.addressAdd.clear();
@@ -375,7 +377,7 @@ export default class Liquidator {
     // undefined -> either S3 = 1 (quote coll) or S3 = S2 (base coll)
     let S3 = pxS2S3[1] ?? (this.isQuote! ? 1 : S2);
     let pos = account.positionNotionalBaseCCY * (account.side == BUY_SIDE ? 1 : -1);
-    let lockedIn = account.entryPrice * pos;
+    let lockedIn = Math.abs(account.entryPrice) * pos;
     let cash = account.collateralCC + account.unrealizedFundingCollateralCCY;
     let maintenanceMargin = ((Math.abs(pos) * Sm) / S3) * this.maintenanceRate!;
     let balance = cash + (pos * Sm - lockedIn) / S3;
