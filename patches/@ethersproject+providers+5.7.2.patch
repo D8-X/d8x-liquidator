@@ -1,0 +1,13 @@
+diff --git a/node_modules/@ethersproject/providers/lib/formatter.js b/node_modules/@ethersproject/providers/lib/formatter.js
+index 7f118ae..1bedce9 100644
+--- a/node_modules/@ethersproject/providers/lib/formatter.js
++++ b/node_modules/@ethersproject/providers/lib/formatter.js
+@@ -371,7 +371,7 @@ var Formatter = /** @class */ (function () {
+         return Formatter.check(this.formats.filter, value);
+     };
+     Formatter.prototype.filterLog = function (value) {
+-        return Formatter.check(this.formats.filterLog, value);
++        return Formatter.check(this.formats.filterLog, Array.isArray(value) ? value[0] : value);
+     };
+     Formatter.check = function (format, object) {
+         var result = {};
