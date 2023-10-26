@@ -71,7 +71,7 @@ export default class Liquidator {
     this.residualTS = residualTS;
     this.config = config;
     this.LIQUIDATE_INTERVAL_MS = this.config.liquidateIntervalSeconds * 1_000;
-    this.REFRESH_INTERVAL_MS = this.config.refreshOrdersSeconds * 1_000;
+    this.REFRESH_INTERVAL_MS = this.config.refreshAccountsSeconds * 1_000;
     this.peerNonExecutionTimestampMS = new Map<string, number>();
     this.redisSubClient = constructRedis("LiquidatorListener");
     this.blockNumber = 0;

@@ -9,9 +9,9 @@ These services can be run using either [Docker](https://docs.docker.com/get-dock
 In addition, you will need:
 
 - A mnemonic phrase used to generate the private keys for the wallets you will be using
-- RPCs (HTTP and WebSockets) to interact with the blockchain
+- RPC nodes (HTTP and WebSockets) to interact with the blockchain
 
-Use the provided `.env` file to enter your mnemonic seed phrase and RPCs. A set of common free/public RPCs is also provideed in src/liquidatorConfig.json, which you may edit as needed.
+Use the provided `.sampleEnv` file to create an `.env` file containing a mnemonic seed phrase. A set of common free/public RPCs is also provideed in src/liquidatorConfig.json, which you may edit as needed.
 
 Each wallet needs to be funded with sufficient native tokens to liquidate positions, and will be credited in the collateral currency of the corresponding perpetual. For instance, if running on Polygon zkEVM, the wallets need to have ETH for gas, and if running on Polygon PoS, they need to have MATIC.
 

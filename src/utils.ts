@@ -1,12 +1,12 @@
 import { Redis } from "ioredis";
 import { RedisConfig, ListenerConfig, LiquidatorConfig } from "./types";
-import { ethers } from "ethers";
+import { BigNumber, BigNumberish, ethers } from "ethers";
 
 require("dotenv").config();
 
-export function loadLiquidatorConfig(chainId: number): LiquidatorConfig {
+export function loadLiquidatorConfig(chainId: BigNumberish): LiquidatorConfig {
   const configList = require("./config/live.liquidatorConfig.json") as LiquidatorConfig[];
-  const config = configList.find((config) => config.chainId == chainId);
+  const config = configList.find((config) => BigNumber.from(config.chainId).eq(BigNumber.from(chainId)));
   if (!config) {
     throw new Error(`Chain ID ${chainId} not found in config file.`);
   }
@@ -85,4 +85,34 @@ export function constructRedis(name: string): Redis {
   client = new Redis(redisConfig);
   client.on("error", (err) => console.log(`${name} Redis Client Error:` + err));
   return client;
+}
+
+/**
+ *
+ * @param promise async function to be esxecuted
+ * @param timeoutMs timeout in MS
+ * @param errMsgOnTimeout optional error message
+ * @returns function return value or ends in error
+ */
+export function executeWithTimeout<T>(
+  promise: Promise<T>,
+  timeout: number,
+  errMsgOnTimeout: string | undefined = undefined
+): Promise<T> {
+  let timeoutId: NodeJS.Timeout;
+
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const msg = errMsgOnTimeout ?? "Function execution timed out.";
+      reject(new Error(msg));
+    }, timeout);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
+export function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -108,4 +108,4 @@ dist
 .env
 dump.rdb
 
-src/config/live.*
+src/config/live.*.json

@@ -1,0 +1,26 @@
+# Environment variables
+
+## Required
+
+### Chain ID
+CHAIN_ID=
+
+### Seed phrase: first address manages gas, subsequent ones execute orders
+SEED_PHRASE=""
+
+### Earnings wallet: proceeds are sent to this address
+EARNINGS_WALLET="0x"
+
+
+## Optional (default values are sufficient)
+
+### Executor accounts per perpetual/bot
+ACCOUNTS_PER_BOT=2 # a higher number allows higher trading volume
+
+### Multi-server setup
+PEER_COUNT=1 # number of instances running on different servers
+PEER_INDEX=0 # index between 0 and PEER_COUNT-1
+
+### Redis
+REDIS_PASSWORD="thisismypassword"
+REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379s

@@ -8,16 +8,15 @@ services:
       context: .
       dockerfile: ./src/liquidator/Dockerfile
     environment:
+      EARNINGS_WALLET: ${EARNINGS_WALLET}
+      CHAIN_ID: ${CHAIN_ID}
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
-      RPC_HTTP_URL: ${RPC_HTTP_URL}
-      RPC_USE_OWN_ONLY: ${RPC_USE_OWN_ONLY}
       PEER_COUNT: ${PEER_COUNT}
       PEER_INDEX: ${PEER_INDEX}
       SEED_PHRASE: ${SEED_PHRASE}
       SYMBOL: ${SYMBOL}
       WALLET_INDEX: ${WALLET_INDEX}
-      CHAIN_ID: ${CHAIN_ID}
-      TREASURY_INDEX: ${TREASURY_INDEX}
+      ACCOUNTS_PER_BOT: ${ACCOUNTS_PER_BOT}
     restart: on-failure
     logging:
       driver: "json-file"
