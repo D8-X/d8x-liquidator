@@ -18,9 +18,9 @@ export interface LiquidatorConfig {
   RPC: string[];
   gasStation: string;
   liquidateIntervalSeconds: number;
-  refreshOrdersSeconds: number;
+  refreshAccountsSeconds: number;
   maxGasPriceGWei: number;
-  priceFeedEndpoints?: Array<{ type: string; endpoint: string }>;
+  priceFeedEndpoints: Array<{ type: string; endpoints: string[] }>;
 }
 
 export interface ListenerConfig {

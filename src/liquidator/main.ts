@@ -1,62 +1,71 @@
-import { ethers } from "ethers";
+import { BigNumber, ethers } from "ethers";
 import Liquidator from "./liquidator";
-import { chooseRPC, loadAccounts, loadLiquidatorConfig } from "../utils";
+import { chooseRPC, loadAccounts, loadLiquidatorConfig, sleep } from "../utils";
 
 require("dotenv").config();
 
 async function run() {
   let args = process.argv.slice(2);
-  if (args.length < 2 || args.length > 3) {
+  if (args.length != 2) {
     throw new Error("check arguments");
   }
-
-  // E.g. MATIC-USD-MATIC
+  // args
   const symbol = args[0];
-  if (symbol.split("-").length != 3) {
-    throw new Error(`Invalid 'symbol' argument: ${symbol}. It should be of the form ETH-USD-MATIC.`);
-  }
-  // First wallet to extract from mnemonic seed, 0-indexed
   const idxFrom = Number(args[1]);
-  if (idxFrom < 0) {
-    throw new Error(`Invalid 'from' argument: ${idxFrom}.`);
+  // validate
+  if (symbol.split("-").length != 3) {
+    throw new Error(`Invalid 'symbol' argument for bot: ${symbol}. It should be of the form ETH-USD-MATIC.`);
   }
-
-  // Last wallet to extrat from mnemonic seed:
-  // defaults to first one if not specified (i.e. single wallet)
-  let idxTo: number;
-  if (args.length > 2) {
-    idxTo = Number(args[2]);
-    if (idxTo == undefined || isNaN(idxTo) || idxTo < idxFrom) {
-      throw new Error(`Invalid 'to' argument: ${idxTo}.`);
-    }
-  } else {
-    idxTo = idxFrom;
+  if (idxFrom <= 0) {
+    throw new Error(`Invalid wallet starting index for bot: ${idxFrom}. It should be a positive integer.`);
   }
-  const chainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID as string) : undefined;
-  if (!chainId) {
-    throw new Error("Chain ID missing in env file.");
-  }
-
-  const mnemonicSeed: string = <string>process.env.SEED_PHRASE;
-  const treasuryIdx = Number(process.env.TREASURY_INDEX as string);
-  if (treasuryIdx == undefined) {
-    throw new Error("treasury index not defined");
-  }
-  const {
-    addr: [treasuryAddr],
-    pk: [treasuryPK],
-  } = loadAccounts(mnemonicSeed, treasuryIdx, treasuryIdx);
-
-  const { addr, pk } = loadAccounts(mnemonicSeed, idxFrom, idxTo);
-
+  // env
+  const chainId = process.env.CHAIN_ID ? BigNumber.from(process.env.CHAIN_ID as string) : undefined;
+  const mnemonicSeed = process.env.SEED_PHRASE;
+  const earningsAddr = process.env.EARNINGS_WALLET;
+  const accountsPerPerp = Number(process.env.ACCOUNTS_PER_BOT ?? "1");
   const modulo = Number(process.env.PEER_COUNT as string);
   const residual = Number(process.env.PEER_INDEX as string);
+  // validate
+  if (!chainId) {
+    throw new Error("Please enter a chain ID in .env file, e.g. export CHAIN_ID=42");
+  }
+  if (mnemonicSeed === undefined) {
+    throw new Error("Please enter a mnemonic seed in .env file, e.g. export SEED_PHRASE='your seed phrase'");
+  }
+  if (earningsAddr === undefined) {
+    throw new Error(
+      "Please enter an address to collect earnings in .env file, e.g. export EARNINGS_WALLET='0xYourAddress'"
+    );
+  }
+  if (accountsPerPerp === undefined || accountsPerPerp <= 0) {
+    throw new Error("Please enter a valid number of wallets per bot in .env file, e.g. export ACCOUNTS_PER_BOT=5");
+  }
   if (modulo == undefined || modulo < 1 || residual == undefined || residual < 0 || residual >= modulo) {
     throw new Error(`Invalid peer index/count pair ${residual}/${modulo}`);
   }
-
+  // bot treasury
+  const {
+    addr: [treasuryAddr],
+    pk: [treasuryPK],
+  } = loadAccounts(mnemonicSeed, 0, 0);
+  // bot wallets
+  const { addr, pk } = loadAccounts(mnemonicSeed, idxFrom, idxFrom + accountsPerPerp - 1);
+  // load config
   const config = loadLiquidatorConfig(chainId);
-
+  // check that price services are up
+  for (const pxServices of config.priceFeedEndpoints) {
+    let someOk = false;
+    for (const endpoint of pxServices.endpoints) {
+      const response = await fetch(endpoint.replace("/api", "/live"));
+      someOk = someOk || response.ok;
+    }
+    if (!someOk) {
+      console.log(`${pxServices.type} price service is down. Reconnecting in 1 minute`);
+      await sleep(60_000);
+      process.exit(1);
+    }
+  }
   console.log(`\nStarting ${addr.length} ${symbol} bots with addresses:`);
   for (let refAddr of addr) {
     console.log(refAddr);

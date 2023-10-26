@@ -1,18 +1,18 @@
 [
   {
-    "chainId": 80001,
-    "sdkConfig": "testnet",
-    "httpRPC": [],
+    "chainId": 1101,
+    "sdkConfig": "zkevm",
+    "httpRPC": ["https://zkevm-rpc.com"],
     "wsRPC": [],
-    "waitForBlockseconds": 10,
-    "healthCheckSeconds": 900
+    "waitForBlockseconds": 30,
+    "healthCheckSeconds": 2000
   },
   {
     "chainId": 1442,
     "sdkConfig": "zkevmTestnet",
-    "httpRPC": [],
+    "httpRPC": ["https://rpc.public.zkevm-test.net"],
     "wsRPC": [],
-    "waitForBlockseconds": 10,
-    "healthCheckSeconds": 60
+    "waitForBlockseconds": 30,
+    "healthCheckSeconds": 2000
   }
 ]
