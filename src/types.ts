@@ -1,4 +1,4 @@
-import { ABK64x64ToFloat, floatToABK64x64, MarginAccount } from "@d8x/perpetuals-sdk";
+import { floatToABK64x64, MarginAccount } from "@d8x/perpetuals-sdk";
 
 export const ZERO_POSITION = floatToABK64x64(0);
 

@@ -8,6 +8,8 @@ import {
   CLOSED_SIDE,
   ABK64x64ToFloat,
   COLLATERAL_CURRENCY_QUOTE,
+  GasInfo,
+  GasPriceV2,
 } from "@d8x/perpetuals-sdk";
 import { BigNumber, ethers } from "ethers";
 import { Redis } from "ioredis";
@@ -406,6 +408,25 @@ export default class Liquidator {
         return { numSubmitted: 0, numLiquidated: 0 };
       }
     }
+
+    try {
+      // check gas price
+      const gasInfo = await fetch(this.config.gasStation)
+        .then((res) => res.json())
+        .then((info) => info as GasInfo);
+      const gasPrice = typeof gasInfo.safeLow == "number" ? gasInfo.safeLow : (gasInfo.safeLow as GasPriceV2).maxfee;
+      if (gasPrice > this.config.maxGasPriceGWei) {
+        // if the lowest we need to pay is higher than the max allowed, we cannot proceed
+        console.log(
+          `gas price is too high: ${gasPrice} > ${this.config.maxGasPriceGWei} (low/market/high) = (${gasInfo.safeLow}/${gasInfo.standard}/${gasInfo.fast}) gwei, target max = ${this.config.maxGasPriceGWei} gwei)`
+        );
+        this.isLiquidating = false;
+        return { numSubmitted: 0, numLiquidated: 0 };
+      }
+    } catch (e) {
+      console.log("could not fetch gas price");
+    }
+
     // we're here so we can liquidate with stored prices
     let liquidateRequests: Array<Promise<ethers.ContractTransaction>> = [];
     let liquidateIdxInOpenPositions: Array<number> = [];

@@ -13,8 +13,8 @@
     "RPC": ["https://rpc.public.zkevm-test.net"],
     "gasStation": "https://gasstation-testnet.polygon.technology/zkevm",
     "liquidateIntervalSeconds": 60,
-    "refreshAccountsSeconds": 60,
-    "maxGasPriceGWei": 0.1,
+    "refreshAccountsSeconds": 28800,
+    "maxGasPriceGWei": 1,
     "priceFeedEndpoints": [{ "type": "pyth", "endpoints": ["https://hermes-beta.pyth.network/api"] }]
   }
 ]
