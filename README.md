@@ -1,129 +1,74 @@
 # D8X Liquidator
 
-## Getting started
+## 1 - Getting started
 
 ### Dependencies
 
-These services can be run using either [Docker](https://docs.docker.com/get-docker/) or [Yarn](https://yarnpkg.com/getting-started/install).
+These services can be run using [Docker](https://docs.docker.com/get-docker/).
 
 In addition, you will need:
 
-- A mnemonic phrase used to generate the private keys for the wallets you will be using
-- RPC nodes (HTTP and WebSockets) to interact with the blockchain
+- A mnemonic seed phrase, used to generate private keys for the wallets that will liquidate traders
+- RPCs (HTTP and WebSockets) to interact with the blockchain
+- Optional: number of different servers running these bots, if applicable
 
-Use the provided `.sampleEnv` file to create an `.env` file containing a mnemonic seed phrase. A set of common free/public RPCs is also provideed in src/liquidatorConfig.json, which you may edit as needed.
+The first address along the seed phrase's derivation path must be funded with with sufficient native tokens to execute liquidatons on-chain. For instance, if running on Polygon zkEVM, the first address needs to have sufficient ETH to pay for gas.
 
-Each wallet needs to be funded with sufficient native tokens to liquidate positions, and will be credited in the collateral currency of the corresponding perpetual. For instance, if running on Polygon zkEVM, the wallets need to have ETH for gas, and if running on Polygon PoS, they need to have MATIC.
+Note that your proceeds are sent to an address of your choice, which need not be associated with the mnemonic seed provided. Hence your earnings are not at risk even if the bots are compromised. Nevertheless we strongly encourage you to use a sufficiently secure network configuration when choosing a server.
 
-## Configuration
+## 2 - Configuration
 
 ### Environment variables
 
 Rename the file `sample.env` as `.env` and edit as necessary:
 
-- REDIS_URL and REDIS_PASSWORD: you may leave these unchanged if running with Docker. See in-line comments otherwise.
-- RPC_HTTP_URL, RPC_WS_URL: your own RPCs
-- RPC_USE_OWN_ONLY: whether to use public RPCs for liquidations; your own RPCs above are still required for streaming blockchain events.
-- SEED_PHRASE: your mnemonic seed phrase.
+These variables have sensible default values, but can be modified if needed:
 
-### With Docker
+- ACCOUNTS_PER_BOT: How many wallets will each bot be using.
+  - More wallets allows for a larger number of simulateneous liquidations, but will require more gas tokens to be held in the seed phrase's wallet
+- REDIS_URL
+- REDIS_PASSWORD
 
-Inspect the file `docker-compose.yml`. The services named `liquidator-1`, `liquidator-2`, etc contain the symbols and wallet indices to run. You may remove or add more bots following the provided syntax.
+These variables depend on your setup:
 
-### Without Docker
+- CHAIN_ID: The chain ID of the network where traders are liquidated
+- PEER_COUNT: Number of servers running bots. Defaults to 1 (single-server setup)
+- PEER_INDEX: 0-indexed identifier, unique for each server. Defaults to 0 (single-server setup)
+- EARNINGS_WALLET: Address of the wallet that will collect all earnings from liquidations
+- SEED_PHRASE: Your mnemonic seed phrase.
+  - Remember to fund the first address along the derivation path.
+  - You can create a seed phrase e.g. by creating a new Metamask wallet, exporting the seed phrase, and funding the first account in this wallet with sufficient native tokens.
 
-Inspect and edit the liquidatorConfig.json file. Most importantly, ensure the RPCs include only those corresponding to the network of interest. The perpetual network is always inferred from the chain ID of the RPC provider.
+### Parameter files
 
-Inspect and edit the ecosystem.config.js file to set-up the bots.
+Navigate to src/config, where you will find two files, `sample.liquidatorConfig.json` and `sample.listenrConfig.json`. Replace `sample` by `live` and use these files to enter your own RPCs. The liquidator configuration requires only HTTP providers, and the listener configuration requires both HTTP and WebSockets.
 
-The arguments for each bot are:
+All other values can be left unchanged.
 
-- Symbol of the form BTC-USD-MATIC
-- From-to indices along the derivation path of your mnemonic seed: "from" is mandatory, and "to" is optional (in case you want to use more than one wallet in one perpetual because of e.g. high market volatility)
+### Docker Compose
 
-For instance, the below configuration is used to liquidate ETH-USD and BTC-USD positions in a MATIC pool, using the second and third wallets, respectively.
+Inspect the file `perpetuals.yml`, and edit as follows:
 
-#### ecosystem.config.js
+- The services named `redis` and `blockchain-streamer` must be left untouched.
+- The services under `Liquidators` indicate which perpetual orders will be executed.
+  - Each perpetual should use a different value for `WALLET_INDEX` for best performance.
+  - If using a multi-server setup, we recommend either using different seed phrases. Note that in this case you must also specify different values for `PEER_INDEX` in the corresponding `.env` files.
+- A file named `perpetuals-testnet.yml` is provided, fully populated with all the details needed to run the bots on testnet. You may use this as guidance when populating your own `perpetuals.yml` file.
 
-```
-module.exports = {
-  apps: [
-        {
-      name: "ETH-USD-MATIC",
-      script: "dist/src/liquidator/main.js",
-      watch: ["dist/src/liquidator", "/node_modules/"],
-      error_file: "logs/liquidator-errors.log",
-      out_file: "logs/liquidator.log",
-      args: "ETH-USD-MATIC 1",
-      namespace: "liquidator",
-    },
-    {
-      name: "BTC-USD-MATIC",
-      script: "dist/src/liquidator/main.js",
-      watch: ["dist/src/liquidator", "/node_modules/"],
-      error_file: "logs/liquidator-errors.log",
-      out_file: "logs/liquidator.log",
-      args: "BTC-USD-MATIC 2",
-      namespace: "liquidator",
-    },
-    {
-      name: "Watchdog",
-      script:
-        "node dist/src/runWatchDog.js ETH-USD-MATIC BTC-USD-MATIC",
-      watch: ["./src"],
-      error_file: "./logs/watchdog-errors.log",
-      out_file: "./logs/watchdog.log",
-      namespace: "liquidator",
-    },
-  ],
-};
-```
+## 3 - Starting the bots
 
-## Starting the Liquidators
+### Testnet
 
-### With Docker
-
-Start all services by running
+Start all the liquidator bots on testnet by running
 
 ```
-$ sudo docker-compose up --build
+$ sudo docker compose -f perpetuals-testnet.yml up --build
 ```
 
-### Without Docker
+### Mainnet
 
-If running without Docker, you must start the services in the following order:
-
-#### Redis
+If you have already properly configured all the perpetuals you want to run in the `perpetuals.yml` file, then you can start the bots by running:
 
 ```
-$ sudo /etc/init.d/redis-server stop
-$ redis-server
+$ sudo docker compose -f perpetuals.yml up --build
 ```
-
-#### Blockhain event streamer
-
-```
-$ yarn start-streamer
-```
-
-#### Liquidators
-
-```
-$ yarn start-liquidators
-```
-
-#### Monitor
-
-Inspect logs in the 'logs' folder, or run `yarn run pm2 monit`.
-
-#### Restart
-
-Run `yarn restart` to force the processes to stop and start again.
-
-#### Clean
-
-Run `yarn clean-logs` to delete all log files. This action is permanent.
-
-#### Stop
-
-Run `yarn stop` to stop all the processes.

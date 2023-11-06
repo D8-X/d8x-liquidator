@@ -61,8 +61,11 @@ async function run() {
       someOk = someOk || response.ok;
     }
     if (!someOk) {
-      console.log(`${pxServices.type} price service is down. Reconnecting in 1 minute`);
-      await sleep(60_000);
+      const coolDown = 60_000 + Math.floor(Math.random() * 60_000);
+      console.log(
+        `${pxServices.type} price service is down. Reconnecting in ${Math.round((10 * coolDown) / 60_000) / 10} minutes`
+      );
+      await sleep(coolDown);
       process.exit(1);
     }
   }
@@ -75,13 +78,13 @@ async function run() {
   let bot: Liquidator;
   let runPromise: Promise<void>;
   try {
-    bot = new Liquidator(pk, symbol, config, modulo, residual, treasuryAddr);
+    bot = new Liquidator(pk, symbol, config, modulo, residual, earningsAddr);
     let currRPC = chooseRPC(config.RPC, lastRPC);
     lastRPC = currRPC;
     const provider = new ethers.providers.StaticJsonRpcProvider(currRPC);
     const treasury = new ethers.Wallet(treasuryPK, provider);
     // min balance should cover 1e7 gas
-    const minBalance = ethers.utils.parseUnits(`${config.maxGasPriceGWei * 1e7}`, "gwei"); //ethers.BigNumber.from(Math.round(refConfig.maxGasPriceGWei * 1e16)); // 1e9: to wei, 1e7: 10 million
+    const minBalance = ethers.utils.parseUnits(`${config.maxGasPriceGWei * 1e7}`, "gwei");
     for (let relayerAddr of addr) {
       const relayerBalance = await provider.getBalance(relayerAddr);
       console.log(
