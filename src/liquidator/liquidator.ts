@@ -304,13 +304,14 @@ export default class Liquidator {
       // console.log("Fetching addresses...");
       let accountAddresses = await this.liqTool[0].getAllActiveAccounts(this.symbol);
       // console.log(`${accountAddresses.length} addresses fetched.`);
-      let accountPromises: Array<Promise<MarginAccount[]>> = new Array<Promise<MarginAccount[]>>();
       this.addressWatch.clear();
+      let accounts: MarginAccount[][] = [];
       for (var k = 0; k < accountAddresses.length; k++) {
-        accountPromises.push(this.mktData!.positionRisk(accountAddresses[k], this.symbol));
+        // accountPromises.push(this.mktData!.positionRisk(accountAddresses[k], this.symbol));
+        accounts.push(await this.mktData!.positionRisk(accountAddresses[k], this.symbol));
       }
       // console.log("Fetching account information...");
-      let accounts = await Promise.all(accountPromises);
+      // let accounts = await Promise.all(accountPromises);
       for (var k = 0; k < accounts.length; k++) {
         // check again that this account makes sense
         if (accounts[k][0].positionNotionalBaseCCY == 0) {
