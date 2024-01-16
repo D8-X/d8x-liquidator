@@ -113,8 +113,6 @@ export default class Liquidator {
     this.submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.symbol);
     const perpState = await this.mktData.getPerpetualState(this.symbol);
     this.markPremium = perpState.markPrice / perpState.indexPrice - 1;
-    // build all orders
-    await this.refreshActiveAccounts();
 
     // Subscribe to blockchain events
     console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: subscribing to blockchain event streamer...`);
@@ -128,6 +126,9 @@ export default class Liquidator {
         );
       }
     });
+
+    // build all orders
+    this.refreshActiveAccounts();
   }
 
   /**
@@ -144,7 +145,7 @@ export default class Liquidator {
       // liquidate periodically
       setInterval(async () => {
         // should check if anyone can be liquidated every minute +- 10 sec
-        if (!this.hasQueue && Date.now() - this.lastLiquidateCall < this.LIQUIDATE_INTERVAL_MS) {
+        if (Date.now() - this.lastLiquidateCall < this.LIQUIDATE_INTERVAL_MS) {
           return;
         }
         await this.liquidate();
@@ -173,6 +174,7 @@ export default class Liquidator {
                 ).toISOString()}: Trade received: address: ${traderAddr}, id: ${digest}`
               );
               this.updateOnEvent(traderAddr, fNewPositionBC);
+              this.liquidate();
             }
             break;
           }
@@ -183,6 +185,7 @@ export default class Liquidator {
                 `${this.symbol} ${new Date(Date.now()).toISOString()}: Liquidate caught, address: ${traderAddr}`
               );
               this.updateOnEvent(traderAddr, fNewPositionBC);
+              this.liquidate();
             }
             break;
           }
@@ -190,6 +193,7 @@ export default class Liquidator {
             const { perpetualId, fMarkPremium } = JSON.parse(msg);
             if (perpetualId == this.perpetualId) {
               this.markPremium = ABK64x64ToFloat(fMarkPremium);
+              this.liquidate();
             }
             break;
           }
