@@ -54,21 +54,21 @@ async function run() {
   // load config
   const config = loadLiquidatorConfig(chainId);
   // check that price services are up
-  for (const pxServices of config.priceFeedEndpoints) {
-    let someOk = false;
-    for (const endpoint of pxServices.endpoints) {
-      const response = await fetch(endpoint.replace("/api", "/live"));
-      someOk = someOk || response.ok;
-    }
-    if (!someOk) {
-      const coolDown = 60_000 + Math.floor(Math.random() * 60_000);
-      console.log(
-        `${pxServices.type} price service is down. Reconnecting in ${Math.round((10 * coolDown) / 60_000) / 10} minutes`
-      );
-      await sleep(coolDown);
-      process.exit(1);
-    }
-  }
+  // for (const pxServices of config.priceFeedEndpoints) {
+  //   let someOk = false;
+  //   for (const endpoint of pxServices.endpoints) {
+  //     const response = await fetch(endpoint.replace("/api", "/live"));
+  //     someOk = someOk || response.ok;
+  //   }
+  //   if (!someOk) {
+  //     const coolDown = 60_000 + Math.floor(Math.random() * 60_000);
+  //     console.log(
+  //       `${pxServices.type} price service is down. Reconnecting in ${Math.round((10 * coolDown) / 60_000) / 10} minutes`
+  //     );
+  //     await sleep(coolDown);
+  //     process.exit(1);
+  //   }
+  // }
   console.log(`\nStarting ${addr.length} ${symbol} bots with addresses:`);
   for (let refAddr of addr) {
     console.log(refAddr);
