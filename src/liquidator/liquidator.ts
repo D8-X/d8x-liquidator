@@ -99,7 +99,14 @@ export default class Liquidator {
     await Promise.all(this.liqTool.map((obj) => obj.createProxyInstance(provider)));
 
     // get perpetual Id
-    this.perpetualId = this.mktData.getPerpIdFromSymbol(this.symbol);
+    // Create contracts
+    try {
+      this.perpetualId = this.mktData.getPerpIdFromSymbol(this.symbol);
+    } catch (e) {
+      // no such perpetual - exit gracefully without restart
+      console.log(`Perpetual ${this.symbol} not found - bot not running`);
+      process.exit(0);
+    }
     this.maintenanceRate = this.mktData.getPerpetualStaticInfo(this.symbol).maintenanceMarginRate;
     this.isQuote = this.mktData.getPerpetualStaticInfo(this.symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE;
     // console.log(`is quote? ${this.isQuote}`);
@@ -344,7 +351,10 @@ export default class Liquidator {
       await this._updateAccounts();
       // we update our current submission data if not synced (it can't be used to submit liquidations anyways)
       submission = await this.mktData.fetchPriceSubmissionInfoForPerpetual(this.symbol);
-      if (!this.checkSubmissionsInSync(this.submission!.submission.timestamps)) {
+      if (
+        this.submission?.submission.isMarketClosed.some((x) => x) ||
+        !this.checkSubmissionsInSync(this.submission!.submission.timestamps)
+      ) {
         this.submission = submission;
       }
       // the new submission data may be out of sync or the market may be closed, in which case we stop here
@@ -409,22 +419,24 @@ export default class Liquidator {
       }
     }
 
-    try {
-      // check gas price
-      const gasInfo = await fetch(this.config.gasStation)
-        .then((res) => res.json())
-        .then((info) => info as GasInfo);
-      const gasPrice = typeof gasInfo.safeLow == "number" ? gasInfo.safeLow : (gasInfo.safeLow as GasPriceV2).maxfee;
-      if (gasPrice > this.config.maxGasPriceGWei) {
-        // if the lowest we need to pay is higher than the max allowed, we cannot proceed
-        console.log(
-          `gas price is too high: ${gasPrice} > ${this.config.maxGasPriceGWei} (low/market/high) = (${gasInfo.safeLow}/${gasInfo.standard}/${gasInfo.fast}) gwei, target max = ${this.config.maxGasPriceGWei} gwei)`
-        );
-        this.isLiquidating = false;
-        return { numSubmitted: 0, numLiquidated: 0 };
+    if (this.config.gasStation && this.config.gasStation !== "") {
+      try {
+        // check gas price
+        const gasInfo = await fetch(this.config.gasStation)
+          .then((res) => res.json())
+          .then((info) => info as GasInfo);
+        const gasPrice = typeof gasInfo.safeLow == "number" ? gasInfo.safeLow : (gasInfo.safeLow as GasPriceV2).maxfee;
+        if (gasPrice > this.config.maxGasPriceGWei) {
+          // if the lowest we need to pay is higher than the max allowed, we cannot proceed
+          console.log(
+            `gas price is too high: ${gasPrice} > ${this.config.maxGasPriceGWei} (low/market/high) = (${gasInfo.safeLow}/${gasInfo.standard}/${gasInfo.fast}) gwei, target max = ${this.config.maxGasPriceGWei} gwei)`
+          );
+          this.isLiquidating = false;
+          return { numSubmitted: 0, numLiquidated: 0 };
+        }
+      } catch (e) {
+        console.log("could not fetch gas price");
       }
-    } catch (e) {
-      console.log("could not fetch gas price");
     }
 
     // we're here so we can liquidate with stored prices
@@ -449,6 +461,7 @@ export default class Liquidator {
             this.submission!.submission,
             {
               gasLimit: 2_000_000,
+              splitTx: false,
             }
           )
         );
