@@ -171,11 +171,14 @@ export default class BlockhainListener {
     // order executed
     proxy.on(
       "Trade",
-      (perpetualId, _traderAddr, _positionId, _order, digest, _fNewPos, _fPrice, _fFee, _fPnLCC, _fB2C) => {
-        this.redisPubClient.publish("Trade", JSON.stringify({ perpetualId: perpetualId, digest: digest }));
+      (perpetualId, traderAddr, _positionId, _order, digest, _fNewPos, _fPrice, _fFee, _fPnLCC, _fB2C) => {
+        this.redisPubClient.publish(
+          "Trade",
+          JSON.stringify({ perpetualId: perpetualId, traderAddr: traderAddr, digest: digest })
+        );
         console.log(`${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, Trade:`, {
           perpetualId: perpetualId,
-          traderAddr: _traderAddr,
+          traderAddr: traderAddr,
           digest: digest,
         });
       }
