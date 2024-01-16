@@ -155,13 +155,13 @@ export default class BlockhainListener {
     // broadcast new blocks
     provider.on("block", async (blockNumber) => {
       this.redisPubClient.publish("block", blockNumber.toString());
-      if (blockNumber % 10 == 0) {
-        console.log(
-          `${new Date(Date.now()).toISOString()} BlockchainListener received new block ${blockNumber} @ ts ${
-            Date.now() / 1_000
-          }, mode: ${this.mode}`
-        );
-      }
+      // if (blockNumber % 100 == 0) {
+      //   console.log(
+      //     `${new Date(Date.now()).toISOString()} BlockchainListener received new block ${blockNumber} @ ts ${
+      //       Date.now() / 1_000
+      //     }, mode: ${this.mode}`
+      //   );
+      // }
       this.blockNumber = blockNumber;
     });
 
