@@ -128,7 +128,7 @@ export default class Liquidator {
     });
 
     // build all orders
-    this.refreshActiveAccounts();
+    // this.refreshActiveAccounts();
   }
 
   /**
@@ -141,7 +141,10 @@ export default class Liquidator {
       throw Error("objects not initialized");
     }
     let numBlocks = -1;
+
     return new Promise<void>((resolve, reject) => {
+      this.refreshActiveAccounts();
+
       // liquidate periodically
       setInterval(async () => {
         // should check if anyone can be liquidated every minute +- 10 sec
