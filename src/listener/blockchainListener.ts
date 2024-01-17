@@ -1,10 +1,28 @@
-import { ethers } from "ethers";
-import { ABK64x64ToFloat, MarketData, PerpetualDataHandler } from "@d8x/perpetuals-sdk";
+import {
+  ABK64x64ToFloat,
+  ERC20__factory,
+  IPerpetualManager__factory,
+  LimitOrderBook__factory,
+  MarketData,
+  PerpetualDataHandler,
+  dec18ToFloat,
+  decNToFloat,
+} from "@d8x/perpetuals-sdk";
+import { BigNumber } from "@ethersproject/bignumber";
+import { Log, Network, StaticJsonRpcProvider, WebSocketProvider } from "@ethersproject/providers";
 import { Redis } from "ioredis";
-import { chooseRPC, constructRedis } from "../utils";
-import { ListenerConfig } from "../types";
 import SturdyWebSocket from "sturdy-websocket";
 import Websocket from "ws";
+import { LiquidateMsg, ListenerConfig, TradeMsg, UpdateMarginAccountMsg } from "../types";
+import { chooseRPC, constructRedis, executeWithTimeout, sleep } from "../utils";
+import {
+  IPerpetualOrder,
+  LiquidateEvent,
+  TradeEvent,
+  UpdateMarginAccountEvent,
+} from "@d8x/perpetuals-sdk/dist/esm/contracts/IPerpetualManager";
+import { TransferEvent } from "@d8x/perpetuals-sdk/dist/esm/contracts/ERC20";
+import { PerpetualLimitOrderCreatedEvent } from "@d8x/perpetuals-sdk/dist/esm/contracts/LimitOrderBook";
 
 enum ListeningMode {
   Polling = "Polling",
@@ -13,22 +31,39 @@ enum ListeningMode {
 
 export default class BlockhainListener {
   private config: ListenerConfig;
+  private network: Network;
 
   // objects
-  private httpProvider: ethers.providers.StaticJsonRpcProvider;
-  private listeningProvider: ethers.providers.Provider | ethers.providers.WebSocketProvider | undefined;
+  private httpProvider: StaticJsonRpcProvider;
+  private listeningProvider: StaticJsonRpcProvider | WebSocketProvider | undefined;
   private redisPubClient: Redis;
   private md: MarketData;
 
   // state
-  private blockNumber: number = 0;
+  private blockNumber: number | undefined;
   private mode: ListeningMode = ListeningMode.Events;
+  private lastBlockReceivedAt: number;
+  private lastRpcIndex = { http: -1, ws: -1 };
 
   constructor(config: ListenerConfig) {
     this.config = config;
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig));
     this.redisPubClient = constructRedis("BlockchainListener");
-    this.httpProvider = new ethers.providers.StaticJsonRpcProvider(chooseRPC(this.config.httpRPC));
+    this.httpProvider = new StaticJsonRpcProvider(this.chooseHttpRpc());
+    this.lastBlockReceivedAt = Date.now();
+    this.network = { name: "", chainId: 0 };
+  }
+
+  private chooseHttpRpc() {
+    const idx = (this.lastRpcIndex.http + 1) % this.config.httpRPC.length;
+    this.lastRpcIndex.http = idx;
+    return this.config.httpRPC[idx];
+  }
+
+  private chooseWsRpc() {
+    const idx = (this.lastRpcIndex.ws + 1) % this.config.wsRPC.length;
+    this.lastRpcIndex.ws = idx;
+    return this.config.wsRPC[idx];
   }
 
   public unsubscribe() {
@@ -38,112 +73,120 @@ export default class BlockhainListener {
     }
   }
 
-  public checkHeartbeat(latestBlock: number) {
-    if (this.mode == ListeningMode.Polling) {
-      return true;
-    }
-    const isAlive = this.blockNumber + 1 >= latestBlock; // allow one block behind
-    if (!isAlive) {
-      console.log(`${new Date(Date.now()).toISOString()}: websocket connection ended`);
-      console.log(`${new Date(Date.now()).toISOString()}: ws=${this.blockNumber}, http=${latestBlock}`);
+  public checkHeartbeat() {
+    const blockTime = Math.floor((Date.now() - this.lastBlockReceivedAt) / 1_000);
+    if (blockTime > this.config.waitForBlockseconds) {
+      console.log(
+        `${new Date(Date.now()).toISOString()}: websocket connection block time is ${blockTime} - disconnecting`
+      );
       return false;
     }
-    console.log(`${new Date(Date.now()).toISOString()}: websocket connection is alive @ block ${latestBlock}`);
+    console.log(
+      `${new Date(Date.now()).toISOString()}: websocket connection block time is ${blockTime} seconds @ block ${
+        this.blockNumber
+      }`
+    );
     return true;
   }
 
-  private switchListeningMode() {
-    // reset
+  private async switchListeningMode() {
     this.unsubscribe();
-    this.blockNumber = 0;
+    this.blockNumber = undefined;
+    this.listeningProvider?.removeAllListeners();
     if (this.mode == ListeningMode.Events) {
       console.log(`${new Date(Date.now()).toISOString()}: switching from WS to HTTP`);
       this.mode = ListeningMode.Polling;
-      this.listeningProvider = new ethers.providers.StaticJsonRpcProvider(chooseRPC(this.config.httpRPC));
-      this.addListeners(this.listeningProvider);
+      this.listeningProvider = new StaticJsonRpcProvider(this.chooseHttpRpc(), this.network);
     } else {
       console.log(`${new Date(Date.now()).toISOString()}: switching from HTTP to WS`);
       this.mode = ListeningMode.Events;
-      if (this.listeningProvider) {
-        this.listeningProvider.removeAllListeners();
-      }
-      this.listeningProvider = new ethers.providers.WebSocketProvider(chooseRPC(this.config.wsRPC));
-      this.addListeners(this.listeningProvider);
+      this.listeningProvider = new WebSocketProvider(this.chooseWsRpc(), this.network);
     }
+    await this.addListeners();
     this.redisPubClient.publish("switch-mode", this.mode);
   }
 
-  public async start() {
-    // infer chain from provider
-    const network = await this.httpProvider.ready;
-    // connect to http provider
-    console.log(
-      `${new Date(Date.now()).toISOString()}: connected to ${network.name}, chain id ${
-        network.chainId
-      }, using HTTP provider`
-    );
-    // connect to ws provider
-    if (this.config.wsRPC.length > 0) {
-      this.listeningProvider = new ethers.providers.WebSocketProvider(
-        new SturdyWebSocket(chooseRPC(this.config.wsRPC), { wsConstructor: Websocket }),
-        network
-      );
-    } else if (this.config.httpRPC.length > 0) {
-      this.listeningProvider = new ethers.providers.StaticJsonRpcProvider(chooseRPC(this.config.httpRPC));
-    } else {
-      throw new Error("Please specify your RPC URLs");
-    }
-
-    await this.md.createProxyInstance(this.httpProvider);
-    console.log(
-      `${new Date(Date.now()).toISOString()}: http connection established with proxy @ ${this.md.getProxyAddress()}`
-    );
-
-    // connection is established if we get a block
-    setTimeout(() => {
-      if (this.blockNumber == 0) {
+  private async connectOrSwitch() {
+    // try to connect via ws, switch to http on failure
+    this.blockNumber = undefined;
+    setTimeout(async () => {
+      if (!this.blockNumber) {
         console.log(`${new Date(Date.now()).toISOString()}: websocket connection could not be established`);
-        this.switchListeningMode();
-      } else {
-        console.log(`${new Date(Date.now()).toISOString()}: websocket connection established`);
+        await this.switchListeningMode();
       }
     }, this.config.waitForBlockseconds * 1_000);
+    await sleep(this.config.waitForBlockseconds * 1_000);
+  }
 
-    // add listeners
-    this.addListeners(this.listeningProvider);
-
+  private resetHealthChecks() {
     // periodic health checks
     setInterval(async () => {
       if (this.mode == ListeningMode.Events) {
-        // currently on WS - check that block number is still accurate
-        const latestBlock = await this.httpProvider.getBlockNumber();
-        // if not accurate, switch to http
-        if (!this.checkHeartbeat(latestBlock)) {
+        // currently on WS - check that block time is still reasonable or if we need to switch
+        if (!this.checkHeartbeat()) {
           this.switchListeningMode();
         }
       } else {
         // currently on HTTP - check if we can switch to WS by seeing if we get blocks
         let success = false;
-        let wsProvider = new ethers.providers.WebSocketProvider(
-          new SturdyWebSocket(chooseRPC(this.config.wsRPC), { wsConstructor: Websocket }),
-          network
+        let wsProvider = new WebSocketProvider(
+          new SturdyWebSocket(chooseRPC(this.config.wsRPC), {
+            wsConstructor: Websocket,
+          }),
+          this.network
         );
         wsProvider.once("block", () => {
           success = true;
         });
         // after N seconds, check if we received a block - if yes, switch
-        await setTimeout(async () => {
+        setTimeout(async () => {
           if (success) {
-            this.switchListeningMode();
+            await this.switchListeningMode();
           }
         }, this.config.waitForBlockseconds * 1_000);
       }
     }, this.config.healthCheckSeconds * 1_000);
   }
 
-  private addListeners(provider: ethers.providers.Provider) {
+  public async start() {
+    // http rpc
+    this.network = await executeWithTimeout(this.httpProvider.ready, 10_000, "could not establish http connection");
+    await this.md.createProxyInstance(this.httpProvider);
+    console.log(
+      `${new Date(Date.now()).toISOString()}: connected to ${this.network.name}, chain id ${
+        this.network.chainId
+      }, using HTTP provider`
+    );
+    // ws rpc
+    if (this.config.wsRPC.length > 0) {
+      this.listeningProvider = new WebSocketProvider(
+        new SturdyWebSocket(chooseRPC(this.config.wsRPC), {
+          wsConstructor: Websocket,
+        }),
+        this.network
+      );
+    } else if (this.config.httpRPC.length > 0) {
+      this.listeningProvider = new StaticJsonRpcProvider(chooseRPC(this.config.httpRPC));
+    } else {
+      throw new Error("Please specify your RPC URLs");
+    }
+
+    // // get perpetuals and order books
+    // this.perpIds = (
+    //   await this.md.getReadOnlyProxyInstance().getPoolStaticInfo(1, 255)
+    // )[0].flat();
+
+    this.connectOrSwitch();
+    this.addListeners();
+    this.resetHealthChecks();
+  }
+
+  private async addListeners() {
+    if (this.listeningProvider === undefined) {
+      throw new Error("No provider ready to listen.");
+    }
     // on error terminate
-    provider.on("error", (e) => {
+    this.listeningProvider.on("error", (e) => {
       console.log(
         `${new Date(Date.now()).toISOString()} BlockchainListener received error msg in ${this.mode} mode:`,
         e
@@ -152,63 +195,116 @@ export default class BlockhainListener {
       this.switchListeningMode();
     });
 
-    // broadcast new blocks
-    provider.on("block", async (blockNumber) => {
+    this.listeningProvider.on("block", (blockNumber) => {
+      this.lastBlockReceivedAt = Date.now();
       this.redisPubClient.publish("block", blockNumber.toString());
-      // if (blockNumber % 100 == 0) {
-      //   console.log(
-      //     `${new Date(Date.now()).toISOString()} BlockchainListener received new block ${blockNumber} @ ts ${
-      //       Date.now() / 1_000
-      //     }, mode: ${this.mode}`
-      //   );
-      // }
       this.blockNumber = blockNumber;
     });
 
-    // smart contract events
-    const proxy = new ethers.Contract(this.md.getProxyAddress(), this.md.getABI("proxy")!, provider);
+    const proxy = IPerpetualManager__factory.connect(this.md.getProxyAddress(), this.listeningProvider);
 
-    // order executed
     proxy.on(
       "Trade",
-      (perpetualId, traderAddr, _positionId, _order, digest, _fNewPos, _fPrice, _fFee, _fPnLCC, _fB2C) => {
-        this.redisPubClient.publish(
-          "Trade",
-          JSON.stringify({ perpetualId: perpetualId, traderAddr: traderAddr, digest: digest })
-        );
-        console.log(`${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, Trade:`, {
+      (
+        perpetualId: number,
+        trader: string,
+        positionId: string,
+        order: IPerpetualOrder.OrderStructOutput,
+        orderDigest: string,
+        newPositionSizeBC: BigNumber,
+        price: BigNumber,
+        fFeeCC: BigNumber,
+        fPnlCC: BigNumber,
+        fB2C: BigNumber,
+        event: TradeEvent
+      ) => {
+        const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+        const msg: TradeMsg = {
           perpetualId: perpetualId,
-          traderAddr: traderAddr,
-          digest: digest,
-        });
+          symbol: symbol,
+          orderId: orderDigest,
+          traderAddr: trader,
+          tradeAmount: ABK64x64ToFloat(order.fAmount),
+          broker: order.brokerAddr,
+          pnl: ABK64x64ToFloat(fPnlCC),
+          fee: ABK64x64ToFloat(fFeeCC),
+          newPositionSizeBC: ABK64x64ToFloat(newPositionSizeBC),
+          block: event.blockNumber,
+          hash: event.transactionHash,
+          id: `${event.transactionHash}:${event.logIndex}`,
+        };
+        this.redisPubClient.publish("Trade", JSON.stringify(msg));
+        console.log(`${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, Trade:`, msg);
       }
     );
 
-    // position liquidated
     proxy.on(
       "Liquidate",
       (
-        perpetualId,
-        _liquidatorAddr,
-        traderAddr,
-        _positionId,
-        _fLiquidatedAmount,
-        _fPrice,
-        fNewPositionBC,
-        _fFee,
-        _fRealizedPnL
+        perpetualId: number,
+        liquidator: string,
+        trader: string,
+        positionId: string,
+        amountLiquidatedBC: BigNumber,
+        liquidationPrice: BigNumber,
+        newPositionSizeBC: BigNumber,
+        fFeeCC: BigNumber,
+        fPnlCC: BigNumber,
+        event: LiquidateEvent
       ) => {
-        this.redisPubClient.publish(
-          "Liquidate",
-          JSON.stringify({ perpetualId: perpetualId, traderAddr: traderAddr, fNewPositionBC: fNewPositionBC })
-        );
-        console.log(`${new Date(Date.now()).toISOString()} Liquidate:`, {
+        const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+        const msg: LiquidateMsg = {
           perpetualId: perpetualId,
-          liquidatorAddr: _liquidatorAddr,
-          traderAddr: traderAddr,
-          fNewPositionBC: ABK64x64ToFloat(fNewPositionBC),
-          fLiquidatedAmount: ABK64x64ToFloat(_fLiquidatedAmount),
-        });
+          symbol: symbol,
+          traderAddr: trader,
+          tradeAmount: ABK64x64ToFloat(amountLiquidatedBC),
+          liquidator: liquidator,
+          pnl: ABK64x64ToFloat(fPnlCC),
+          fee: ABK64x64ToFloat(fFeeCC),
+          newPositionSizeBC: ABK64x64ToFloat(newPositionSizeBC),
+          block: event.blockNumber,
+          hash: event.transactionHash,
+          id: `${event.transactionHash}:${event.logIndex}`,
+        };
+        this.redisPubClient.publish("Liquidate", JSON.stringify(msg));
+        console.log(
+          `${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, Liquidate:`,
+          msg
+        );
+      }
+    );
+
+    proxy.on(
+      "UpdateMarginAccount",
+      (
+        perpetualId: number,
+        trader: string,
+        positionId: string,
+        fPositionBC: BigNumber,
+        fCashCC: BigNumber,
+        fLockedInValueQC: BigNumber,
+        fFundingPaymentCC: BigNumber,
+        fOpenInterestBC: BigNumber,
+        event: UpdateMarginAccountEvent
+      ) => {
+        const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+        const msg: UpdateMarginAccountMsg = {
+          perpetualId: perpetualId,
+          symbol: symbol,
+          traderAddr: trader,
+          positionBC: ABK64x64ToFloat(fPositionBC),
+          cashCC: ABK64x64ToFloat(fCashCC),
+          lockedInQC: ABK64x64ToFloat(fLockedInValueQC),
+          unpaidFundingCC: ABK64x64ToFloat(fFundingPaymentCC),
+          block: event.blockNumber,
+          hash: event.transactionHash,
+          id: `${event.transactionHash}:${event.logIndex}`,
+        };
+        this.redisPubClient.publish("UpdateMarginAccount", JSON.stringify(msg));
+        console.log(
+          `${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, UpdateMarginAccount:`,
+          msg
+        );
       }
     );
   }
