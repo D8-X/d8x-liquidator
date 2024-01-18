@@ -55,7 +55,8 @@ export default class PositionManager {
 
   // constants
   private MIN_BLOCKTIME_SECONDS: number = 2;
-  private REFRESH_INTERVAL_MS: number = 60 * 60 * 1_000;
+  private MAX_REFRESH_INTERVAL_MS: number = 60 * 60 * 1_000;
+  private MIN_REFRESH_INTERVAL_MS: number = 10_000;
   private LIQUIDATE_TOPIC = ethers.utils.keccak256(
     ethers.utils.toUtf8Bytes("Liquidate(uint24,address,address,bytes16,int128,int128,int128)")
   );
@@ -72,7 +73,8 @@ export default class PositionManager {
   constructor(config: ListenerConfig) {
     this.config = config;
     // this.LIQUIDATE_INTERVAL_MS = this.config.liquidateIntervalSeconds * 1_000;
-    this.REFRESH_INTERVAL_MS = this.config.refreshAccountsSeconds * 1_000;
+    // this.REFRESH_INTERVAL_MS = this.config.refreshAccountsSeconds * 1_000;
+    // this.MIN_REFRESH_INTERVAL_MS
     // this.peerNonExecutionTimestampMS = new Map<string, number>();
     this.redisSubClient = constructRedis("LiquidatorListener");
     this.redisPubClient = constructRedis("LiquidatorStreamer");
@@ -135,24 +137,18 @@ export default class PositionManager {
    * @returns void
    */
   public async run(): Promise<void> {
-    if (this.mktData == undefined || this.liqTool == undefined) {
-      throw Error("objects not initialized");
-    }
-    let numBlocks = -1;
-
     return new Promise<void>((resolve, reject) => {
       // fetch all accounts
       setInterval(async () => {
-        if (Date.now() - this.lastRefreshTime < this.REFRESH_INTERVAL_MS) {
+        if (Date.now() - this.lastRefreshTime < this.MAX_REFRESH_INTERVAL_MS) {
           return;
         }
-        await this.refreshActiveAccounts();
+        await Promise.allSettled(this.symbols.map((symbol) => this.refreshActiveAccounts(symbol)));
       }, 10_000);
 
       this.redisSubClient.on("message", async (channel, msg) => {
         switch (channel) {
           case "block": {
-            numBlocks++;
             for (const symbol of this.symbols) {
               this.checkPositions(symbol);
             }
@@ -173,7 +169,7 @@ export default class PositionManager {
 
           case "UpdateMarkPrice": {
             const { perpetualId, markPremium }: UpdateMarkPriceMsg = JSON.parse(msg);
-            this.markPremium.set(this.mktData?.getSymbolFromPerpId(perpetualId)!, markPremium);
+            this.markPremium.set(this.mktData!.getSymbolFromPerpId(perpetualId)!, markPremium);
             break;
           }
         }
@@ -193,70 +189,13 @@ export default class PositionManager {
     }
   }
 
-  private async fetchAccounts() {}
-
-  private async _updateAccounts() {
-    // remove closed positions
-    let k = 0;
-    while (k < this.openPositions.length) {
-      if (!this.addressWatch.has(this.openPositions[k].address)) {
-        // position should be dropped
-        console.log(
-          `${this.symbol} ${new Date(Date.now()).toISOString()}: Removing trader ${this.openPositions[k].address}`
-        );
-        this.openPositions[k] = this.openPositions[this.openPositions.length - 1];
-        this.openPositions.pop();
-        // we don't move index k
-        continue;
-      } else if (this.addressUpdate.has(this.openPositions[k].address)) {
-        // position should be updated
-        let traderAddr = this.openPositions[k].address;
-        console.log(
-          `${this.symbol} ${new Date(Date.now()).toISOString()}: Updating position risk of trader ${traderAddr}`
-        );
-        let account: MarginAccount;
-        try {
-          account = (await this.mktData!.positionRisk(traderAddr, this.symbol))[0];
-        } catch (e) {
-          console.log(
-            `${this.symbol} ${new Date(Date.now()).toISOString()}: Error in _updateAccounts: update positionRisk`
-          );
-          throw e;
-        }
-        this.openPositions[k] = { address: traderAddr, account: account };
-      }
-      // can move to next position
-      k++;
-    }
-    // done updating
-    this.addressUpdate.clear();
-    // add new positions
-    let newAddresseses = Array.from(this.addressAdd);
-    while (newAddresseses.length > 0) {
-      let newAddress = newAddresseses.pop();
-      if (!!newAddress) {
-        console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: Adding new trader ${newAddress}`);
-        let newAccount: MarginAccount;
-        try {
-          newAccount = (await this.mktData!.positionRisk(newAddress, this.symbol))[0];
-        } catch (e) {
-          console.log(
-            `${this.symbol} ${new Date(Date.now()).toISOString()}: Error in _updateAccounts: add new positionRisk`
-          );
-          throw e;
-        }
-        this.openPositions.push({ address: newAddress, account: newAccount });
-        this.addressWatch.add(newAddress);
-      }
-    }
-    // done adding
-    this.addressAdd.clear();
-  }
-
   /**
    * Reset active accounts array
    */
   public async refreshActiveAccounts(symbol: string) {
+    if (Date.now() - this.lastRefreshTime < this.MIN_REFRESH_INTERVAL_MS) {
+      return;
+    }
     const chunkSize1 = 5_000; // for addresses
     const chunkSize2 = 500; // for margin accounts
     const perpId = this.mktData!.getPerpIdFromSymbol(symbol)!;
@@ -265,11 +204,10 @@ export default class PositionManager {
     const rpcProviders = this.config.httpRPC.map((url) => new providers.StaticJsonRpcProvider(url));
     let providerIdx = Math.floor(Math.random() * rpcProviders.length);
 
-    // const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, rpcProviders[providerIdx]);
-    // providerIdx = (providerIdx + 1) % rpcProviders.length;
-
     this.lastRefreshTime = Date.now();
     const numAccounts = (await proxy.countActivePerpAccounts(perpId)).toNumber();
+
+    console.log(`${symbol} ${new Date(Date.now()).toISOString()}: There are ${numAccounts} active accounts`);
 
     // fetch addresses
     const promises: Promise<string[]>[] = [];
@@ -280,8 +218,12 @@ export default class PositionManager {
     let addresses: string[] = [];
     for (let i = 0; i < promises.length; i += rpcProviders.length) {
       try {
-        const chunks = await Promise.all(promises.slice(i, i + rpcProviders.length));
-        addresses = addresses.concat(chunks.flat());
+        const chunks = await Promise.allSettled(promises.slice(i, i + rpcProviders.length));
+        for (const result of chunks) {
+          if (result.status === "fulfilled") {
+            addresses = addresses.concat(result.value);
+          }
+        }
       } catch (e) {
         console.log("Error fetching address chunk (RPC)");
       }
@@ -302,7 +244,7 @@ export default class PositionManager {
       addressChunks.push(addressChunk);
       providerIdx = (providerIdx + 1) % rpcProviders.length;
     }
-    let accounts: Position[] = [];
+
     for (let i = 0; i < promises2.length; i += rpcProviders.length) {
       try {
         const addressChunk = addressChunks.slice(i, i + rpcProviders.length).flat();
@@ -311,19 +253,21 @@ export default class PositionManager {
         accountChunk.map((results, j) => {
           if (results.status === "fulfilled") {
             results.value.map((result) => {
-              const account = proxy.interface.decodeFunctionResult(
-                "getMarginAccount",
-                result.returnData
-              )[0] as PerpStorage.MarginAccountStructOutput;
-              const position: Position = {
-                perpetualId: perpId,
-                address: addressChunk[j],
-                positionBC: ABK64x64ToFloat(account.fPositionBC),
-                cashCC: ABK64x64ToFloat(account.fCashCC),
-                lockedInQC: ABK64x64ToFloat(account.fLockedInValueQC),
-                unpaidFundingCC: ABK64x64ToFloat(account.fUnitAccumulatedFundingStart),
-              };
-              accounts.push(position);
+              if (result.success) {
+                const account = proxy.interface.decodeFunctionResult(
+                  "getMarginAccount",
+                  result.returnData
+                )[0] as PerpStorage.MarginAccountStructOutput;
+                const position: Position = {
+                  perpetualId: perpId,
+                  address: addressChunk[j],
+                  positionBC: ABK64x64ToFloat(account.fPositionBC),
+                  cashCC: ABK64x64ToFloat(account.fCashCC),
+                  lockedInQC: ABK64x64ToFloat(account.fLockedInValueQC),
+                  unpaidFundingCC: ABK64x64ToFloat(account.fUnitAccumulatedFundingStart),
+                };
+                this.updatePosition(position);
+              }
             });
           }
         });
@@ -331,42 +275,7 @@ export default class PositionManager {
         console.log("Error fetching account chunk (RPC?)");
       }
     }
-
-    // get active accounts
-    // console.log("Counting active accounts...");
-    this.lastRefreshTime = Date.now();
-    // let numAccounts = await this.mktData!.getReadOnlyProxyInstance().countActivePerpAccounts(symbol);
-    console.log(`${new Date(Date.now()).toISOString()}: There are ${numAccounts} active accounts`);
-    try {
-      // console.log("Fetching addresses...");
-      let accountAddresses = await this.liqTool[0].getAllActiveAccounts(symbol);
-      // console.log(`${accountAddresses.length} addresses fetched.`);
-      this.addressWatch.clear();
-      let accounts: MarginAccount[][] = [];
-      for (var k = 0; k < accountAddresses.length; k++) {
-        // accountPromises.push(this.mktData!.positionRisk(accountAddresses[k], this.symbol));
-        accounts.push(await this.mktData!.positionRisk(accountAddresses[k], symbol));
-      }
-      // console.log("Fetching account information...");
-      // let accounts = await Promise.all(accountPromises);
-      for (var k = 0; k < accounts.length; k++) {
-        // check again that this account makes sense
-        if (accounts[k][0].positionNotionalBaseCCY == 0) {
-          continue;
-        }
-        // this.openPositions.push({ address: accountAddresses[k], account: accounts[k][0] });
-        // this.addressWatch.add(accountAddresses[k]);
-      }
-      // console.log("Accounts fetched.");
-    } catch (e) {
-      console.log(`${this.symbol} ${new Date(Date.now()).toISOString()}: Error in refreshActiveAccounts:`);
-      throw e;
-    }
-    console.log(
-      `${this.symbol} ${new Date(Date.now()).toISOString()}: Watching ${this.openPositions.length} positions:`
-    );
-    // console.log(this.openPositions);
-    this.openPositions.map((p) => console.log(`${p.address} (${Math.round(p.account.leverage * 100) / 100}x)`));
+    console.log(`${new Date(Date.now()).toISOString()}: Watching ${this.openPositions.get(symbol)!.size} positions:`);
   }
 
   /**
