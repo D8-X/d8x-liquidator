@@ -71,5 +71,13 @@ export interface UpdateMarginAccountMsg extends RedisMsg {
   positionBC: number;
   cashCC: number;
   lockedInQC: number;
-  unpaidFundingCC: number;
+  fundingPaymentCC: number;
+}
+
+export interface UpdateMarkPriceMsg extends RedisMsg {
+  perpetualId: number;
+  symbol: string;
+  midPremium: number;
+  markPremium: number;
+  spotIndexPrice: number;
 }

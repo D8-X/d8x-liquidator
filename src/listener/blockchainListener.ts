@@ -13,13 +13,14 @@ import { Log, Network, StaticJsonRpcProvider, WebSocketProvider } from "@ethersp
 import { Redis } from "ioredis";
 import SturdyWebSocket from "sturdy-websocket";
 import Websocket from "ws";
-import { LiquidateMsg, ListenerConfig, TradeMsg, UpdateMarginAccountMsg } from "../types";
+import { LiquidateMsg, ListenerConfig, TradeMsg, UpdateMarginAccountMsg, UpdateMarkPriceMsg } from "../types";
 import { chooseRPC, constructRedis, executeWithTimeout, sleep } from "../utils";
 import {
   IPerpetualOrder,
   LiquidateEvent,
   TradeEvent,
   UpdateMarginAccountEvent,
+  UpdateMarkPriceEvent,
 } from "@d8x/perpetuals-sdk/dist/esm/contracts/IPerpetualManager";
 import { TransferEvent } from "@d8x/perpetuals-sdk/dist/esm/contracts/ERC20";
 import { PerpetualLimitOrderCreatedEvent } from "@d8x/perpetuals-sdk/dist/esm/contracts/LimitOrderBook";
@@ -203,40 +204,40 @@ export default class BlockhainListener {
 
     const proxy = IPerpetualManager__factory.connect(this.md.getProxyAddress(), this.listeningProvider);
 
-    proxy.on(
-      "Trade",
-      (
-        perpetualId: number,
-        trader: string,
-        positionId: string,
-        order: IPerpetualOrder.OrderStructOutput,
-        orderDigest: string,
-        newPositionSizeBC: BigNumber,
-        price: BigNumber,
-        fFeeCC: BigNumber,
-        fPnlCC: BigNumber,
-        fB2C: BigNumber,
-        event: TradeEvent
-      ) => {
-        const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
-        const msg: TradeMsg = {
-          perpetualId: perpetualId,
-          symbol: symbol,
-          orderId: orderDigest,
-          traderAddr: trader,
-          tradeAmount: ABK64x64ToFloat(order.fAmount),
-          broker: order.brokerAddr,
-          pnl: ABK64x64ToFloat(fPnlCC),
-          fee: ABK64x64ToFloat(fFeeCC),
-          newPositionSizeBC: ABK64x64ToFloat(newPositionSizeBC),
-          block: event.blockNumber,
-          hash: event.transactionHash,
-          id: `${event.transactionHash}:${event.logIndex}`,
-        };
-        this.redisPubClient.publish("Trade", JSON.stringify(msg));
-        console.log(`${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, Trade:`, msg);
-      }
-    );
+    // proxy.on(
+    //   "Trade",
+    //   (
+    //     perpetualId: number,
+    //     trader: string,
+    //     positionId: string,
+    //     order: IPerpetualOrder.OrderStructOutput,
+    //     orderDigest: string,
+    //     newPositionSizeBC: BigNumber,
+    //     price: BigNumber,
+    //     fFeeCC: BigNumber,
+    //     fPnlCC: BigNumber,
+    //     fB2C: BigNumber,
+    //     event: TradeEvent
+    //   ) => {
+    //     const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+    //     const msg: TradeMsg = {
+    //       perpetualId: perpetualId,
+    //       symbol: symbol,
+    //       orderId: orderDigest,
+    //       traderAddr: trader,
+    //       tradeAmount: ABK64x64ToFloat(order.fAmount),
+    //       broker: order.brokerAddr,
+    //       pnl: ABK64x64ToFloat(fPnlCC),
+    //       fee: ABK64x64ToFloat(fFeeCC),
+    //       newPositionSizeBC: ABK64x64ToFloat(newPositionSizeBC),
+    //       block: event.blockNumber,
+    //       hash: event.transactionHash,
+    //       id: `${event.transactionHash}:${event.logIndex}`,
+    //     };
+    //     this.redisPubClient.publish("Trade", JSON.stringify(msg));
+    //     console.log(`${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, Trade:`, msg);
+    //   }
+    // );
 
     proxy.on(
       "Liquidate",
@@ -295,7 +296,7 @@ export default class BlockhainListener {
           positionBC: ABK64x64ToFloat(fPositionBC),
           cashCC: ABK64x64ToFloat(fCashCC),
           lockedInQC: ABK64x64ToFloat(fLockedInValueQC),
-          unpaidFundingCC: ABK64x64ToFloat(fFundingPaymentCC),
+          fundingPaymentCC: ABK64x64ToFloat(fFundingPaymentCC),
           block: event.blockNumber,
           hash: event.transactionHash,
           id: `${event.transactionHash}:${event.logIndex}`,
@@ -303,6 +304,34 @@ export default class BlockhainListener {
         this.redisPubClient.publish("UpdateMarginAccount", JSON.stringify(msg));
         console.log(
           `${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, UpdateMarginAccount:`,
+          msg
+        );
+      }
+    );
+
+    proxy.on(
+      "UpdateMarkPrice",
+      (
+        perpetualId: number,
+        fMidPricePremium: BigNumber,
+        fMarkPricePremium: BigNumber,
+        fSpotIndexPrice: BigNumber,
+        event: UpdateMarkPriceEvent
+      ) => {
+        const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+        const msg: UpdateMarkPriceMsg = {
+          perpetualId: perpetualId,
+          symbol: symbol,
+          midPremium: ABK64x64ToFloat(fMidPricePremium),
+          markPremium: ABK64x64ToFloat(fMarkPricePremium),
+          spotIndexPrice: ABK64x64ToFloat(fSpotIndexPrice),
+          block: event.blockNumber,
+          hash: event.transactionHash,
+          id: `${event.transactionHash}:${event.logIndex}`,
+        };
+        this.redisPubClient.publish("UpdateMarkPrice", JSON.stringify(msg));
+        console.log(
+          `${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, UpdateMarkPrice:`,
           msg
         );
       }
