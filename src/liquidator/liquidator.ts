@@ -117,6 +117,10 @@ export default class Liquidator {
       this.pxSubmission.set(symbol, await this.mktData.fetchPriceSubmissionInfoForPerpetual(symbol));
       const perpState = await this.mktData.getPerpetualState(symbol);
       this.markPremium.set(symbol, perpState.markPrice / perpState.indexPrice - 1);
+      this.openPositions.set(symbol, new Map());
+      this.addressAdd.set(symbol, new Set());
+      this.addressUpdate.set(symbol, new Set());
+      this.addressWatch.set(symbol, new Set());
     }
 
     // Subscribe to blockchain events
@@ -154,13 +158,13 @@ export default class Liquidator {
 
     return new Promise<void>((resolve, reject) => {
       // liquidate periodically
-      setInterval(async () => {
-        // should check if anyone can be liquidated every minute +- 10 sec
-        if (Date.now() - this.lastLiquidateCall < this.LIQUIDATE_INTERVAL_MS) {
-          return;
-        }
-        await this.liquidate();
-      }, 10_000);
+      // setInterval(async () => {
+      //   // should check if anyone can be liquidated every minute +- 10 sec
+      //   if (Date.now() - this.lastLiquidateCall < this.LIQUIDATE_INTERVAL_MS) {
+      //     return;
+      //   }
+      //   await this.liquidate();
+      // }, 10_000);
 
       setInterval(async () => {
         // checks that we refresh all orders every hour +- 10 sec
@@ -180,20 +184,20 @@ export default class Liquidator {
             const { perpetualId, traderAddr, fNewPositionBC, digest } = JSON.parse(msg);
             console.log(`${new Date(Date.now()).toISOString()}: Trade received: address: ${traderAddr}, id: ${digest}`);
             this.updateOnEvent(perpetualId, traderAddr, fNewPositionBC);
-            this.liquidate();
+            this.liquidate(perpetualId);
             break;
           }
           case "Liquidate": {
             const { perpetualId, traderAddr, fNewPositionBC } = JSON.parse(msg);
             console.log(`${new Date(Date.now()).toISOString()}: Liquidate caught, address: ${traderAddr}`);
             this.updateOnEvent(perpetualId, traderAddr, fNewPositionBC);
-            this.liquidate();
+            this.liquidate(perpetualId);
             break;
           }
           case "UpdateMarkPrice": {
             const { perpetualId, fMarkPremium } = JSON.parse(msg);
             this.markPremium.set(this.mktData?.getSymbolFromPerpId(perpetualId)!, ABK64x64ToFloat(fMarkPremium));
-            this.liquidate();
+            this.liquidate(perpetualId);
             break;
           }
         }
@@ -345,6 +349,53 @@ export default class Liquidator {
     );
     // console.log(this.openPositions);
     this.openPositions.map((p) => console.log(`${p.address} (${Math.round(p.account.leverage * 100) / 100}x)`));
+  }
+
+  private async checkPositions(perpetualId: number) {
+    const symbol = this.mktData!.getSymbolFromPerpId(perpetualId)!;
+    // 1) fetch new px submission
+    let newPxSubmission: {
+      submission: PriceFeedSubmission;
+      pxS2S3: [number, number];
+    };
+    try {
+      // await this._updateAccounts();
+      // we update our current submission data if not synced (it can't be used to submit liquidations anyways)
+      newPxSubmission = await this.mktData!.fetchPriceSubmissionInfoForPerpetual(symbol);
+      if (
+        !this.pxSubmission.has(symbol) ||
+        this.pxSubmission.get(symbol)!.submission.isMarketClosed.some((x) => x) ||
+        !this.checkSubmissionsInSync(this.pxSubmission.get(symbol)!.submission.timestamps)
+      ) {
+        this.pxSubmission.set(symbol, newPxSubmission);
+      }
+      // the new submission data may be out of sync or the market may be closed, in which case we stop here
+      if (
+        newPxSubmission.submission.isMarketClosed.some((x) => x) ||
+        !this.checkSubmissionsInSync(newPxSubmission.submission.timestamps)
+      ) {
+        return false;
+      }
+    } catch (e) {
+      console.log("error fetching from price service:");
+      console.log(e);
+      return false;
+    }
+    // 2) check leverages using new and old prices
+    let liquidateTraders: { trader: string; px: PriceFeedSubmission }[] = [];
+    this.openPositions.get(symbol)!.forEach((position, trader) => {
+      if (!this.isMarginSafe(position, this.pxSubmission.get(symbol)!.pxS2S3)) {
+        // make a list or send redis message immediately?
+        liquidateTraders.push({ trader, px: this.pxSubmission.get(symbol)!.submission });
+        // or
+        // this.redisSubClient.publish("liquidate", "trader addr and this.px submission to use");
+      } else if (!this.isMarginSafe(position, newPxSubmission.pxS2S3)) {
+        // make a list or send redis message immediately?
+        liquidateTraders.push({ trader, px: newPxSubmission.submission });
+        // or
+        // this.redisSubClient.publish("liquidate", "trader addr and new.px submission to use");
+      }
+    });
   }
 
   /**
