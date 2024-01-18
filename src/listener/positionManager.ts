@@ -14,68 +14,45 @@ import {
   MULTICALL_ADDRESS,
   Multicall3,
 } from "@d8x/perpetuals-sdk";
-import { BigNumber, ethers } from "ethers";
 import { providers } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis } from "../utils";
 import {
-  LiquidatorConfig,
   ListenerConfig,
   Position,
-  TradeMsg,
   UpdateMarginAccountMsg,
   UpdateMarkPriceMsg,
-  ZERO_POSITION,
+  UpdateUnitAccumulatedFundingMsg,
 } from "../types";
-import { Result } from "@ethersproject/abi/lib/interface";
 import { PerpStorage } from "@d8x/perpetuals-sdk/dist/esm/contracts/IPerpetualManager";
 
 export default class PositionManager {
   // objects
   private mktData: MarketData | undefined;
-  private liqTool: LiquidatorTool[] | undefined;
   private redisSubClient: Redis;
   private redisPubClient: Redis;
 
-  // parameters
+  // state
+  private blockNumber: number | undefined;
+  private lastRefreshTime: number = Infinity;
+  private openPositions: Map<string, Map<string, Position>> = new Map();
+  private pxSubmission: Map<string, { submission: PriceFeedSubmission; pxS2S3: [number, number] }> = new Map();
+  private markPremium: Map<string, number> = new Map();
+  private unitAccumulatedFunding: Map<string, number> = new Map();
+
+  // static info
+  private config: ListenerConfig;
+  private isQuote: Map<string, boolean> = new Map();
   private symbols: string[] = [];
   private maintenanceRate: Map<string, number> = new Map();
 
-  // state
-  private openPositions: Map<string, Map<string, Position>> = new Map();
-  private addressUpdate: Map<string, Set<string>> = new Map();
-  private addressWatch: Map<string, Set<string>> = new Map();
-  private addressAdd: Map<string, Set<string>> = new Map();
-
-  private config: ListenerConfig;
-  private pxSubmission: Map<string, { submission: PriceFeedSubmission; pxS2S3: [number, number] }> = new Map();
-  private markPremium: Map<string, number> = new Map();
-  private isQuote: Map<string, boolean> = new Map();
-  private lastRefreshTime: number = Infinity;
-
   // constants
-  private MIN_BLOCKTIME_SECONDS: number = 2;
-  private MAX_REFRESH_INTERVAL_MS: number = 60 * 60 * 1_000;
-  private MIN_REFRESH_INTERVAL_MS: number = 10_000;
-  private LIQUIDATE_TOPIC = ethers.utils.keccak256(
-    ethers.utils.toUtf8Bytes("Liquidate(uint24,address,address,bytes16,int128,int128,int128)")
-  );
-  // private treasuryAddr: string;
 
-  // private moduloTS: number;
-  // private residualTS: number;
-  // private LIQUIDATE_INTERVAL_MS: number;
-  // private peerNonExecutionTimestampMS: Map<string, number>;
-  private blockNumber: number | undefined;
-  // private lastLiquidateCall: number = 0;
-  // private hasQueue: boolean = false;
+  // publish times must be within 10 seconds of each other, or submission will fail on-chain
+  private MAX_OUTOFSYNC_SECONDS: number = 10;
 
   constructor(config: ListenerConfig) {
     this.config = config;
-    // this.LIQUIDATE_INTERVAL_MS = this.config.liquidateIntervalSeconds * 1_000;
-    // this.REFRESH_INTERVAL_MS = this.config.refreshAccountsSeconds * 1_000;
-    // this.MIN_REFRESH_INTERVAL_MS
-    // this.peerNonExecutionTimestampMS = new Map<string, number>();
     this.redisSubClient = constructRedis("LiquidatorListener");
     this.redisPubClient = constructRedis("LiquidatorStreamer");
   }
@@ -101,25 +78,28 @@ export default class PositionManager {
       .flat();
 
     for (const symbol of this.symbols) {
+      // static info
       this.maintenanceRate.set(symbol, md.getPerpetualStaticInfo(symbol).maintenanceMarginRate);
       this.isQuote.set(symbol, md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE);
+      // price info
       this.pxSubmission.set(symbol, await this.mktData.fetchPriceSubmissionInfoForPerpetual(symbol));
-      const perpState = await this.mktData.getPerpetualState(symbol);
-      this.markPremium.set(symbol, perpState.markPrice / perpState.indexPrice - 1);
+      // mark premium, accumulated funding per BC unit
+      const perpState = await this.mktData
+        .getReadOnlyProxyInstance()
+        .getPerpetual(this.mktData.getPerpIdFromSymbol(symbol));
+      this.markPremium.set(symbol, ABK64x64ToFloat(perpState.currentMarkPremiumRate.fPrice));
+      this.unitAccumulatedFunding.set(symbol, ABK64x64ToFloat(perpState.fUnitAccumulatedFunding));
+      // "preallocate" trader set
       this.openPositions.set(symbol, new Map());
-      this.addressAdd.set(symbol, new Set());
-      this.addressUpdate.set(symbol, new Set());
-      this.addressWatch.set(symbol, new Set());
     }
 
     // Subscribe to blockchain events
     console.log(`${new Date(Date.now()).toISOString()}: subscribing to blockchain event streamer...`);
     await this.redisSubClient.subscribe(
       "block",
-      "Liquidate",
-      "Trade",
       "UpdateMarkPrice",
       "UpdateMarginAccount",
+      "UpdateUnitAccumulatedFunding",
       (err, count) => {
         if (err) {
           console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
@@ -140,7 +120,7 @@ export default class PositionManager {
     return new Promise<void>((resolve, reject) => {
       // fetch all accounts
       setInterval(async () => {
-        if (Date.now() - this.lastRefreshTime < this.MAX_REFRESH_INTERVAL_MS) {
+        if (Date.now() - this.lastRefreshTime < this.config.maxRefreshAccountIntervalSeconds * 1_000) {
           return;
         }
         await Promise.allSettled(this.symbols.map((symbol) => this.refreshActiveAccounts(symbol)));
@@ -168,8 +148,14 @@ export default class PositionManager {
           }
 
           case "UpdateMarkPrice": {
-            const { perpetualId, markPremium }: UpdateMarkPriceMsg = JSON.parse(msg);
-            this.markPremium.set(this.mktData!.getSymbolFromPerpId(perpetualId)!, markPremium);
+            const { symbol, markPremium }: UpdateMarkPriceMsg = JSON.parse(msg);
+            this.markPremium.set(symbol, markPremium);
+            break;
+          }
+
+          case "UpdateUnitAccumulatedFunding": {
+            const { symbol, unitAccumulatedFundingCC }: UpdateUnitAccumulatedFundingMsg = JSON.parse(msg);
+            this.unitAccumulatedFunding.set(symbol, unitAccumulatedFundingCC);
             break;
           }
         }
@@ -193,7 +179,7 @@ export default class PositionManager {
    * Reset active accounts array
    */
   public async refreshActiveAccounts(symbol: string) {
-    if (Date.now() - this.lastRefreshTime < this.MIN_REFRESH_INTERVAL_MS) {
+    if (Date.now() - this.lastRefreshTime < this.config.minRefreshAccountIntervalSeconds * 1_000) {
       return;
     }
     const chunkSize1 = 5_000; // for addresses
@@ -264,8 +250,11 @@ export default class PositionManager {
                   positionBC: ABK64x64ToFloat(account.fPositionBC),
                   cashCC: ABK64x64ToFloat(account.fCashCC),
                   lockedInQC: ABK64x64ToFloat(account.fLockedInValueQC),
-                  unpaidFundingCC: ABK64x64ToFloat(account.fUnitAccumulatedFundingStart),
+                  unpaidFundingCC: 0,
                 };
+                position.unpaidFundingCC =
+                  position.positionBC *
+                  (this.unitAccumulatedFunding.get(symbol)! - ABK64x64ToFloat(account.fUnitAccumulatedFundingStart));
                 this.updatePosition(position);
               }
             });
@@ -370,10 +359,9 @@ export default class PositionManager {
    * @returns True if the timestamps are sufficiently close to each other
    */
   private checkSubmissionsInSync(timestamps: number[]): boolean {
-    let min = Math.min(...timestamps);
-    let gap = Math.max(...timestamps) - min;
-    if (gap > 2 * this.MIN_BLOCKTIME_SECONDS || min < Date.now() / 1_000 - 10) {
-      // console.log("feed submissions not synced:", timestamps, " gap =", gap);
+    let gap = Math.max(...timestamps) - Math.min(...timestamps);
+    if (gap > this.MAX_OUTOFSYNC_SECONDS) {
+      console.log(`feed submissions not synced: ${timestamps}, gap = ${gap}`);
       return false;
     }
     return true;

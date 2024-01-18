@@ -13,7 +13,14 @@ import { Log, Network, StaticJsonRpcProvider, WebSocketProvider } from "@ethersp
 import { Redis } from "ioredis";
 import SturdyWebSocket from "sturdy-websocket";
 import Websocket from "ws";
-import { LiquidateMsg, ListenerConfig, TradeMsg, UpdateMarginAccountMsg, UpdateMarkPriceMsg } from "../types";
+import {
+  LiquidateMsg,
+  ListenerConfig,
+  TradeMsg,
+  UpdateMarginAccountMsg,
+  UpdateMarkPriceMsg,
+  UpdateUnitAccumulatedFundingMsg,
+} from "../types";
 import { chooseRPC, constructRedis, executeWithTimeout, sleep } from "../utils";
 import {
   IPerpetualOrder,
@@ -21,6 +28,7 @@ import {
   TradeEvent,
   UpdateMarginAccountEvent,
   UpdateMarkPriceEvent,
+  UpdateUnitAccumulatedFundingEvent,
 } from "@d8x/perpetuals-sdk/dist/esm/contracts/IPerpetualManager";
 import { TransferEvent } from "@d8x/perpetuals-sdk/dist/esm/contracts/ERC20";
 import { PerpetualLimitOrderCreatedEvent } from "@d8x/perpetuals-sdk/dist/esm/contracts/LimitOrderBook";
@@ -332,6 +340,28 @@ export default class BlockhainListener {
         this.redisPubClient.publish("UpdateMarkPrice", JSON.stringify(msg));
         console.log(
           `${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, UpdateMarkPrice:`,
+          msg
+        );
+      }
+    );
+
+    proxy.on(
+      "UpdateUnitAccumulatedFunding",
+      (perpetualId: number, fUnitAccumulativeFundingCC: BigNumber, event: UpdateUnitAccumulatedFundingEvent) => {
+        const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+        const msg: UpdateUnitAccumulatedFundingMsg = {
+          perpetualId: perpetualId,
+          symbol: symbol,
+          unitAccumulatedFundingCC: ABK64x64ToFloat(fUnitAccumulativeFundingCC),
+          block: event.blockNumber,
+          hash: event.transactionHash,
+          id: `${event.transactionHash}:${event.logIndex}`,
+        };
+        this.redisPubClient.publish("UpdateUnitAccumulatedFunding", JSON.stringify(msg));
+        console.log(
+          `${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${
+            this.mode
+          } mode, UpdateUnitAccumulatedFunding:`,
           msg
         );
       }

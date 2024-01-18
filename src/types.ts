@@ -34,6 +34,8 @@ export interface ListenerConfig {
   wsRPC: string[];
   waitForBlockseconds: number;
   healthCheckSeconds: number;
+  maxRefreshAccountIntervalSeconds: number;
+  minRefreshAccountIntervalSeconds: number;
 }
 
 export interface RedisMsg {
@@ -80,4 +82,10 @@ export interface UpdateMarkPriceMsg extends RedisMsg {
   midPremium: number;
   markPremium: number;
   spotIndexPrice: number;
+}
+
+export interface UpdateUnitAccumulatedFundingMsg extends RedisMsg {
+  perpetualId: number;
+  symbol: string;
+  unitAccumulatedFundingCC: number;
 }
