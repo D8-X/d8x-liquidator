@@ -352,7 +352,7 @@ export default class Distributor {
           JSON.stringify({
             symbol: symbol,
             traderAddr: trader,
-            px: curPx.submission,
+            // px: curPx.submission,
           })
         );
         accountsSent.add(`${trader}:${symbol}`);

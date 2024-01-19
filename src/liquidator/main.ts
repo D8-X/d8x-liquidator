@@ -36,66 +36,10 @@ async function run() {
 
   // TODO: balance checks and transfers
 
-  const liquidator = new Liquidator(pk, cfg);
+  const liquidator = new Liquidator(treasuryPK, pk, cfg);
   await liquidator.initialize();
+  await liquidator.fundWallets(addr);
   liquidator.run();
-
-  // try {
-  //   const bots = new Liquidator(pk, cfg);
-  //   await bots.initialize();
-  //   bots.run();
-
-  //   const treasury = new ethers.Wallet(treasuryPK, provider);
-  //   // min balance should cover 1e7 gas
-  //   const minBalance = ethers.utils.parseUnits(`${config.maxGasPriceGWei * 1e7}`, "gwei");
-  //   for (let relayerAddr of addr) {
-  //     const relayerBalance = await provider.getBalance(relayerAddr);
-  //     console.log(
-  //       `Relayer (${relayerAddr}) balance: ${ethers.utils.formatUnits(relayerBalance)} ETH (or native token)`
-  //     );
-  //     const treasuryBalance = await provider.getBalance(treasuryAddr);
-  //     console.log(
-  //       `Treasury (${treasuryAddr}) balance: ${ethers.utils.formatUnits(treasuryBalance)} ETH (or native token)`
-  //     );
-  //     console.log(`Minimum balance: ${ethers.utils.formatUnits(minBalance)} ETH (or native token)`);
-  //     if (relayerBalance.lt(minBalance)) {
-  //       // transfer twice the min so it doesn't transfer every time
-  //       const transferAmount = minBalance.mul(2).sub(relayerBalance);
-  //       if (transferAmount.lt(treasuryBalance)) {
-  //         console.log(`Funding relayer with ${ethers.utils.formatUnits(transferAmount)} tokens...`);
-  //         const tx = await treasury.sendTransaction({
-  //           to: relayerAddr,
-  //           value: transferAmount,
-  //         });
-  //         console.log(`Transferring tokens - tx hash: ${tx.hash}`);
-  //         await tx.wait();
-  //         console.log(
-  //           `Successfully transferred ${ethers.utils.formatUnits(
-  //             transferAmount
-  //           )} ETH (or native token) from treasury to relayer ${relayerAddr}`
-  //         );
-  //       } else {
-  //         // TODO: notify a human
-  //         throw new Error(
-  //           `CRITICAL: insufficient balance in treasury ${ethers.utils.formatUnits(
-  //             treasuryBalance
-  //           )} ETH (or native token)`
-  //         );
-  //       }
-  //     }
-  //   }
-  //   await bot.initialize(provider);
-  //   runPromise = bot.run();
-  // } catch (error: any) {
-  //   // we are here if we couldn't create a liquidator (typically an RPC issue)
-  //   if (error?.reason) {
-  //     console.log(`error creating liquidator: ${error?.reason}`);
-  //   }
-  //   console.error(error);
-  //   // exit to restart
-  //   process.exit(1);
-  // }
-  // runPromise;
 }
 
 run();

@@ -90,7 +90,7 @@ export interface UpdateUnitAccumulatedFundingMsg extends RedisMsg {
 export interface LiquidateTraderMsg {
   symbol: string;
   traderAddr: string;
-  px: PriceFeedSubmission;
+  // px: PriceFeedSubmission;
 }
 
 export enum BotStatus {
