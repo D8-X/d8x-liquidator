@@ -1,6 +1,8 @@
 # sudo docker compose -f perpetuals-testnet.yml up --build -d
 version: "2"
 
+name: d8x
+
 services:
   # Redis for Pub/Sub between blockchain listener (pub) and liquidators (sub)
   redis:
@@ -29,18 +31,19 @@ services:
       - listener
     build:
       context: .
-      dockerfile: ./src/distributor/DockerFile
+      dockerfile: ./src/distributor/Dockerfile
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - SDK_CONFIG=${SDK_CONFIG}
     restart: on-failure
 
+  # liquidator: submits liquidate calls to the blockchain
   liquidator-1:
     depends_on:
       - distributor
     build:
       context: .
-      dockerfile: ./src/liquidator/DockerFile
+      dockerfile: ./src/liquidator/Dockerfile
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - SDK_CONFIG=${SDK_CONFIG}
