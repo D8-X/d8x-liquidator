@@ -28,7 +28,7 @@ export default class Distributor {
   private providers: providers.StaticJsonRpcProvider[];
 
   // state
-  private lastRefreshTime: number = Infinity;
+  private lastRefreshTime: Map<string, number> = new Map();
   private openPositions: Map<string, Map<string, Position>> = new Map();
   private pxSubmission: Map<string, { submission: PriceFeedSubmission; pxS2S3: [number, number] }> = new Map();
   private markPremium: Map<string, number> = new Map();
@@ -94,6 +94,8 @@ export default class Distributor {
       this.unitAccumulatedFunding.set(symbol, ABK64x64ToFloat(perpState.fUnitAccumulatedFunding));
       // "preallocate" trader set
       this.openPositions.set(symbol, new Map());
+      // dummy values
+      this.lastRefreshTime.set(symbol, 0);
     }
 
     // Subscribe to blockchain events
@@ -120,13 +122,16 @@ export default class Distributor {
    * @returns void
    */
   public async run(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<void>(async (resolve, reject) => {
       // fetch all accounts
       setInterval(async () => {
-        if (Date.now() - this.lastRefreshTime < this.config.refreshAccountsIntervalSecondsMax * 1_000) {
+        if (
+          Date.now() - Math.min(...this.lastRefreshTime.values()) <
+          this.config.refreshAccountsIntervalSecondsMax * 1_000
+        ) {
           return;
         }
-        await Promise.allSettled(this.symbols.map((symbol) => this.refreshActiveAccounts(symbol)));
+        await this.refreshAllAccounts();
       }, 10_000);
 
       this.redisSubClient.on("message", async (channel, msg) => {
@@ -163,6 +168,7 @@ export default class Distributor {
           }
         }
       });
+      await this.refreshAllAccounts();
     });
   }
 
@@ -178,20 +184,24 @@ export default class Distributor {
     }
   }
 
+  private async refreshAllAccounts() {
+    await Promise.allSettled(this.symbols.map((symbol) => this.refreshActiveAccounts(symbol)));
+  }
+
   /**
    * Reset active accounts array
    */
   public async refreshActiveAccounts(symbol: string) {
-    if (Date.now() - this.lastRefreshTime < this.config.refreshAccountsIntervalSecondsMin * 1_000) {
+    if (Date.now() - (this.lastRefreshTime.get(symbol) ?? 0) < this.config.refreshAccountsIntervalSecondsMin * 1_000) {
       return;
     }
-    const chunkSize1 = 5_000; // for addresses
-    const chunkSize2 = 500; // for margin accounts
+    const chunkSize1 = 4_096; // for addresses
+    const chunkSize2 = 256; // for margin accounts
     const perpId = this.md.getPerpIdFromSymbol(symbol)!;
     const proxy = this.md.getReadOnlyProxyInstance();
     const rpcProviders = this.config.rpcWatch.map((url) => new providers.StaticJsonRpcProvider(url));
     let providerIdx = Math.floor(Math.random() * rpcProviders.length);
-    this.lastRefreshTime = Date.now();
+    this.lastRefreshTime.set(symbol, Date.now());
 
     let tsStart: number;
     console.log(`${symbol}: fetching number of accounts ... `);
@@ -213,7 +223,7 @@ export default class Distributor {
     for (let i = 0; i < promises.length; i += rpcProviders.length) {
       try {
         console.log(
-          `${symbol} ${new Date(Date.now()).toISOString()}: fetching addresses ${i + 1} - ${Math.min(
+          `${symbol} ${new Date(Date.now()).toISOString()}: fetching address chunks ${i + 1} - ${Math.min(
             i + rpcProviders.length,
             promises.length
           )} ...`
@@ -253,7 +263,7 @@ export default class Distributor {
       try {
         const addressChunk = addressChunks.slice(i, i + rpcProviders.length).flat();
         console.log(
-          `${symbol} ${new Date(Date.now()).toISOString()}: fetching accounts ${i + 1} - ${Math.min(
+          `${symbol} ${new Date(Date.now()).toISOString()}: fetching account chunks ${i + 1} - ${Math.min(
             i + rpcProviders.length,
             promises2.length
           )} ...`
