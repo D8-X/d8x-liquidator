@@ -1,3 +1,4 @@
+# sudo docker compose -f perpetuals-testnet.yml up --build -d
 version: "2"
 
 services:
@@ -11,7 +12,7 @@ services:
     command: redis-server --requirepass ${REDIS_PASSWORD}
 
   # Listen to block and events, and stream on redis
-  blockchain-streamer:
+  listener:
     build:
       context: .
       dockerfile: ./src/listener/Dockerfile
@@ -19,88 +20,31 @@ services:
       - redis
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - CHAIN_ID=${CHAIN_ID}
+      - SDK_CONFIG=${SDK_CONFIG}
     restart: on-failure
 
-  # Liquidators
-  liquidator-1:
+  # Account manager: fetches and distributes data to liquidators
+  distributor:
     depends_on:
-      - blockchain-streamer
+      - listener
     build:
       context: .
-    extends:
-      file: base.yml
-      service: base
+      dockerfile: ./src/distributor/DockerFile
     environment:
-      - SYMBOL=ETH-USD-MATIC
-      - WALLET_INDEX=1
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - SDK_CONFIG=${SDK_CONFIG}
+    restart: on-failure
 
-  liquidator-2:
+  liquidator-1:
     depends_on:
-      - blockchain-streamer
-    extends:
-      file: base.yml
-      service: base
+      - distributor
+    build:
+      context: .
+      dockerfile: ./src/liquidator/DockerFile
     environment:
-      - SYMBOL=BTC-USD-MATIC
-      - WALLET_INDEX=2
-
-  liquidator-3:
-    depends_on:
-      - blockchain-streamer
-    extends:
-      file: base.yml
-      service: base
-    environment:
-      - SYMBOL=MATIC-USD-MATIC
-      - WALLET_INDEX=3
-
-  liquidator-4:
-    depends_on:
-      - blockchain-streamer
-    extends:
-      file: base.yml
-      service: base
-    environment:
-      - SYMBOL=ETH-USDC-USDC
-      - WALLET_INDEX=4
-
-  liquidator-5:
-    depends_on:
-      - blockchain-streamer
-    extends:
-      file: base.yml
-      service: base
-    environment:
-      - SYMBOL=MATIC-USDC-USDC
-      - WALLET_INDEX=5
-
-  liquidator-6:
-    depends_on:
-      - blockchain-streamer
-    extends:
-      file: base.yml
-      service: base
-    environment:
-      - SYMBOL=BTC-USDC-USDC
-      - WALLET_INDEX=6
-
-  liquidator-7:
-    depends_on:
-      - blockchain-streamer
-    extends:
-      file: base.yml
-      service: base
-    environment:
-      - SYMBOL=CHF-USDC-USDC
-      - WALLET_INDEX=7
-
-  liquidator-8:
-    depends_on:
-      - blockchain-streamer
-    extends:
-      file: base.yml
-      service: base
-    environment:
-      - SYMBOL=GBP-USDC-USDC
-      - WALLET_INDEX=8
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - SDK_CONFIG=${SDK_CONFIG}
+      - SEED_PHRASE=${SEED_PHRASE}
+      - FROM=1
+      - TO=2
+    restart: on-failure
