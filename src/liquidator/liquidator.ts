@@ -1,8 +1,8 @@
 import { PerpetualDataHandler, LiquidatorTool } from "@d8x/perpetuals-sdk";
-import { ContractReceipt, ContractTransaction } from "ethers";
+import { ContractReceipt, ContractTransaction, Wallet, utils } from "ethers";
 import { providers } from "ethers";
 import { Redis } from "ioredis";
-import { constructRedis } from "../utils";
+import { constructRedis, executeWithTimeout } from "../utils";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
 
 export default class Liquidator {
@@ -12,6 +12,7 @@ export default class Liquidator {
   private redisSubClient: Redis;
 
   // parameters
+  private treasury: string;
   private privateKey: string[];
   private config: LiquidatorConfig;
 
@@ -19,8 +20,9 @@ export default class Liquidator {
   private q: Set<string> = new Set();
   private lastLiquidateCall: number = 0;
 
-  constructor(privateKey: string[], config: LiquidatorConfig) {
-    this.privateKey = privateKey;
+  constructor(pkTreasury: string, pkLiquidators: string[], config: LiquidatorConfig) {
+    this.treasury = pkTreasury;
+    this.privateKey = pkLiquidators;
     this.config = config;
     this.redisSubClient = constructRedis("accountSubClient");
     this.providers = this.config.rpcExec.map((url) => new providers.StaticJsonRpcProvider(url));
@@ -75,10 +77,16 @@ export default class Liquidator {
     let [busy, errors, success, msgs] = [0, 0, 0, 0];
 
     return new Promise<void>((resolve, reject) => {
+      setInterval(async () => {
+        if (Date.now() - this.lastLiquidateCall > this.config.liquidateIntervalSecondsMax) {
+          await this.liquidate();
+        }
+      });
+
       this.redisSubClient.on("message", async (channel, msg) => {
         switch (channel) {
           case "block": {
-            if (msgs % 10 == 0) {
+            if (+msg % 1000 == 0) {
               console.log(
                 JSON.stringify({ busy: busy, errors: errors, success: success, msgs: msgs }, undefined, "  ")
               );
@@ -119,6 +127,11 @@ export default class Liquidator {
     let attempts = 0;
     let successes = 0;
     const q = [...this.q];
+
+    if (q.length == 0) {
+      return BotStatus.Ready;
+    }
+
     const txns: { tx: Promise<ContractTransaction>; botIdx: number }[] = [];
     for (const msg of q) {
       let assignedTx = false;
@@ -130,9 +143,16 @@ export default class Liquidator {
           this.q.delete(msg);
           liq.busy = true;
           assignedTx = true;
-          const { symbol, traderAddr, px }: LiquidateTraderMsg = JSON.parse(msg);
+          const { symbol, traderAddr }: LiquidateTraderMsg = JSON.parse(msg);
           console.log(`liquidator ${liq.api.getAddress()} attempts to liquidate ${symbol} trader ${traderAddr} ...`);
-          txns.push({ tx: liq.api.liquidateTrader(symbol, traderAddr, this.config.rewardsAddress, px), botIdx: i });
+          txns.push({
+            tx: executeWithTimeout(
+              liq.api.liquidateTrader(symbol, traderAddr, this.config.rewardsAddress),
+              30_000,
+              "timeout"
+            ),
+            botIdx: i,
+          });
         }
       }
       if (!assignedTx) {
@@ -143,12 +163,34 @@ export default class Liquidator {
     // send txns
     const results = await Promise.allSettled(txns.map(({ tx }) => tx));
 
-    const confirmations: { tx: Promise<ContractReceipt>; botIdx: number }[] = [];
+    const confirmations: Promise<void>[] = [];
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       if (result.status === "fulfilled") {
         successes++;
-        confirmations.push({ tx: result.value.wait(), botIdx: i });
+        confirmations.push(
+          executeWithTimeout(
+            result.value.wait().then(() => {
+              this.liqTool[txns[i].botIdx].busy = false;
+            }),
+            30_000,
+            "timeout"
+          )
+        );
+      } else {
+        const liq = this.liqTool[txns[i].botIdx].api.getAddress();
+        let prom: Promise<void>;
+        if ((result.reason?.body as string)?.includes("insufficient funds for intrinsic transaction cost")) {
+          prom = this.fundWallets([liq]);
+        } else {
+          console.log(`${liq} failed with reason ${result.reason}`);
+          prom = Promise.resolve();
+        }
+        confirmations.push(
+          prom.then(() => {
+            this.liqTool[txns[i].botIdx].busy = false;
+          })
+        );
       }
     }
 
@@ -158,11 +200,11 @@ export default class Liquidator {
       // all bots are down, either rpc or px service issue
       console.log(`critical -- all bots failed to submit liquidations`);
       res = BotStatus.Error;
-    } else if (attempts == 0) {
+    } else if (attempts == 0 && q.length > 0) {
       // did not try anything
       console.log(`all bots are busy`);
       res = BotStatus.Busy;
-    } else if (successes == 0) {
+    } else if (successes == 0 && attempts > 0) {
       // tried something but it didn't work
       console.log(`all attempts failed`);
       res = BotStatus.PartialError;
@@ -171,13 +213,55 @@ export default class Liquidator {
       console.log(`${attempts - successes} attempts failed`);
       res = BotStatus.PartialError;
     } else {
-      // everything worked
-      console.log(`all ${attempts} attempts succeeded`);
+      // everything worked or nothing happend
+      if (attempts > 0) {
+        console.log(`all ${attempts} attempts succeeded`);
+      }
       res = BotStatus.Ready;
     }
 
-    await Promise.allSettled(confirmations.map(({ tx }) => tx));
+    (await Promise.allSettled(confirmations)).map((_result, i) => {
+      this.liqTool[txns[i].botIdx].busy = false;
+    });
 
     return res;
+  }
+
+  public async fundWallets(addressArray: string[]) {
+    const provider = this.providers[Math.floor(Math.random() * this.providers.length)];
+    const treasury = new Wallet(this.treasury, provider);
+    // min balance should cover 1e7 gas
+    const minBalance = utils.parseUnits(`${this.config.maxGasPriceGWei * 1e7}`, "gwei");
+    for (let addr of addressArray) {
+      const botBalance = await provider.getBalance(addr);
+      console.log(`Wallet (${addr}) balance: ${utils.formatUnits(botBalance)} ETH (or native token)`);
+      const treasuryBalance = await provider.getBalance(treasury.address);
+      console.log(
+        `Treasury (${treasury.address}) balance: ${utils.formatUnits(treasuryBalance)} ETH (or native token)`
+      );
+      console.log(`Minimum balance: ${utils.formatUnits(minBalance)} ETH (or native token)`);
+      if (botBalance.lt(minBalance)) {
+        // transfer twice the min so it doesn't transfer every time
+        const transferAmount = minBalance.mul(2).sub(botBalance);
+        if (transferAmount.lt(treasuryBalance)) {
+          console.log(`Funding wallet with ${utils.formatUnits(transferAmount)} tokens...`);
+          const tx = await treasury.sendTransaction({
+            to: addr,
+            value: transferAmount,
+          });
+          console.log(`Transferring tokens - tx hash: ${tx.hash}`);
+          await tx.wait();
+          console.log(
+            `Successfully transferred ${utils.formatUnits(
+              transferAmount
+            )} ETH (or native token) from treasury to wallet ${addr}`
+          );
+        } else {
+          throw new Error(
+            `CRITICAL: insufficient balance in treasury ${utils.formatUnits(treasuryBalance)} ETH (or native token)`
+          );
+        }
+      }
+    }
   }
 }
