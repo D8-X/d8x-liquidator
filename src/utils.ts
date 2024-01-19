@@ -1,26 +1,14 @@
 import { Redis } from "ioredis";
-import { RedisConfig, ListenerConfig, LiquidatorConfig } from "./types";
+import { RedisConfig, LiquidatorConfig } from "./types";
 import { BigNumber, BigNumberish, ethers } from "ethers";
 
 require("dotenv").config();
 
-export function loadLiquidatorConfig(chainId: BigNumberish): LiquidatorConfig {
+export function loadConfig(sdkConfig: string): LiquidatorConfig {
   const configList = require("./config/live.liquidatorConfig.json") as LiquidatorConfig[];
-  const config = configList.find((config) => BigNumber.from(config.chainId).eq(BigNumber.from(chainId)));
+  const config = configList.find((config) => BigNumber.from(config.sdkConfig).eq(sdkConfig));
   if (!config) {
-    throw new Error(`Chain ID ${chainId} not found in config file.`);
-  }
-  return config;
-}
-
-export function loadListenerConfig(chainId: number): ListenerConfig {
-  const configList = require("./config/live.listenerConfig.json") as ListenerConfig[];
-  let config = configList.find((config) => config.chainId == chainId);
-  if (!config) {
-    throw new Error(`Chain ID ${chainId} not found in config file.`);
-  }
-  if (config.httpRPC.length < 1) {
-    throw new Error("no RPC defined");
+    throw new Error(`SDK Config ${sdkConfig} not found in config file.`);
   }
   return config;
 }
@@ -39,19 +27,6 @@ export function loadAccounts(mnemonicSeed: string, idxFrom: number, idxTo: numbe
   return { addr: addr, pk: pk };
 }
 
-export function chooseRPC(rpcArray: string[], lastRPC?: string): string {
-  if (lastRPC == undefined) {
-    lastRPC = "";
-  }
-  let currRPC;
-  do {
-    let idx = Math.floor(Math.random() * rpcArray.length);
-    currRPC = rpcArray[idx];
-  } while (currRPC == lastRPC && rpcArray.length > 1);
-  console.log({ RPC: currRPC });
-  return currRPC;
-}
-
 export function getPrivateKeyFromSeed(mnemonic: string, idx: number) {
   if (mnemonic == undefined) {
     throw Error("mnemonic seed phrase needed: export mnemonic='...");
@@ -67,13 +42,11 @@ export function getRedisConfig(): RedisConfig {
   if (originUrl == undefined) {
     throw new Error("REDIS_URL not defined");
   }
-  console.log("URL=", originUrl);
   let redisURL = new URL(originUrl);
   const host = redisURL.hostname;
   const port = parseInt(redisURL.port);
   const redisPassword = redisURL.password;
   let config = { host: host, port: port, password: redisPassword! };
-
   return config;
 }
 

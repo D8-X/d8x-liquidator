@@ -1,37 +1,23 @@
-import {
-  ABK64x64ToFloat,
-  ERC20__factory,
-  IPerpetualManager__factory,
-  LimitOrderBook__factory,
-  MarketData,
-  PerpetualDataHandler,
-  dec18ToFloat,
-  decNToFloat,
-} from "@d8x/perpetuals-sdk";
+import { ABK64x64ToFloat, IPerpetualManager__factory, MarketData, PerpetualDataHandler } from "@d8x/perpetuals-sdk";
 import { BigNumber } from "@ethersproject/bignumber";
-import { Log, Network, StaticJsonRpcProvider, WebSocketProvider } from "@ethersproject/providers";
+import { Network, StaticJsonRpcProvider, WebSocketProvider } from "@ethersproject/providers";
 import { Redis } from "ioredis";
 import SturdyWebSocket from "sturdy-websocket";
 import Websocket from "ws";
 import {
   LiquidateMsg,
-  ListenerConfig,
-  TradeMsg,
+  LiquidatorConfig,
   UpdateMarginAccountMsg,
   UpdateMarkPriceMsg,
   UpdateUnitAccumulatedFundingMsg,
 } from "../types";
-import { chooseRPC, constructRedis, executeWithTimeout, sleep } from "../utils";
+import { constructRedis, executeWithTimeout, sleep } from "../utils";
 import {
-  IPerpetualOrder,
   LiquidateEvent,
-  TradeEvent,
   UpdateMarginAccountEvent,
   UpdateMarkPriceEvent,
   UpdateUnitAccumulatedFundingEvent,
 } from "@d8x/perpetuals-sdk/dist/esm/contracts/IPerpetualManager";
-import { TransferEvent } from "@d8x/perpetuals-sdk/dist/esm/contracts/ERC20";
-import { PerpetualLimitOrderCreatedEvent } from "@d8x/perpetuals-sdk/dist/esm/contracts/LimitOrderBook";
 
 enum ListeningMode {
   Polling = "Polling",
@@ -39,7 +25,7 @@ enum ListeningMode {
 }
 
 export default class BlockhainListener {
-  private config: ListenerConfig;
+  private config: LiquidatorConfig;
   private network: Network;
 
   // objects
@@ -54,25 +40,25 @@ export default class BlockhainListener {
   private lastBlockReceivedAt: number;
   private lastRpcIndex = { http: -1, ws: -1 };
 
-  constructor(config: ListenerConfig) {
+  constructor(config: LiquidatorConfig) {
     this.config = config;
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig));
-    this.redisPubClient = constructRedis("BlockchainListener");
+    this.redisPubClient = constructRedis("listenerPubClient");
     this.httpProvider = new StaticJsonRpcProvider(this.chooseHttpRpc());
     this.lastBlockReceivedAt = Date.now();
     this.network = { name: "", chainId: 0 };
   }
 
   private chooseHttpRpc() {
-    const idx = (this.lastRpcIndex.http + 1) % this.config.httpRPC.length;
+    const idx = (this.lastRpcIndex.http + 1) % this.config.rpcListenHttp.length;
     this.lastRpcIndex.http = idx;
-    return this.config.httpRPC[idx];
+    return this.config.rpcListenHttp[idx];
   }
 
   private chooseWsRpc() {
-    const idx = (this.lastRpcIndex.ws + 1) % this.config.wsRPC.length;
+    const idx = (this.lastRpcIndex.ws + 1) % this.config.rpcListenWs.length;
     this.lastRpcIndex.ws = idx;
-    return this.config.wsRPC[idx];
+    return this.config.rpcListenWs[idx];
   }
 
   public unsubscribe() {
@@ -84,7 +70,7 @@ export default class BlockhainListener {
 
   public checkHeartbeat() {
     const blockTime = Math.floor((Date.now() - this.lastBlockReceivedAt) / 1_000);
-    if (blockTime > this.config.waitForBlockseconds) {
+    if (blockTime > this.config.waitForBlockSeconds) {
       console.log(
         `${new Date(Date.now()).toISOString()}: websocket connection block time is ${blockTime} - disconnecting`
       );
@@ -123,8 +109,8 @@ export default class BlockhainListener {
         console.log(`${new Date(Date.now()).toISOString()}: websocket connection could not be established`);
         await this.switchListeningMode();
       }
-    }, this.config.waitForBlockseconds * 1_000);
-    await sleep(this.config.waitForBlockseconds * 1_000);
+    }, this.config.waitForBlockSeconds * 1_000);
+    await sleep(this.config.waitForBlockSeconds * 1_000);
   }
 
   private resetHealthChecks() {
@@ -139,7 +125,7 @@ export default class BlockhainListener {
         // currently on HTTP - check if we can switch to WS by seeing if we get blocks
         let success = false;
         let wsProvider = new WebSocketProvider(
-          new SturdyWebSocket(chooseRPC(this.config.wsRPC), {
+          new SturdyWebSocket(this.chooseWsRpc(), {
             wsConstructor: Websocket,
           }),
           this.network
@@ -152,7 +138,7 @@ export default class BlockhainListener {
           if (success) {
             await this.switchListeningMode();
           }
-        }, this.config.waitForBlockseconds * 1_000);
+        }, this.config.waitForBlockSeconds * 1_000);
       }
     }, this.config.healthCheckSeconds * 1_000);
   }
@@ -167,23 +153,18 @@ export default class BlockhainListener {
       }, using HTTP provider`
     );
     // ws rpc
-    if (this.config.wsRPC.length > 0) {
+    if (this.config.rpcListenWs.length > 0) {
       this.listeningProvider = new WebSocketProvider(
-        new SturdyWebSocket(chooseRPC(this.config.wsRPC), {
+        new SturdyWebSocket(this.chooseWsRpc(), {
           wsConstructor: Websocket,
         }),
         this.network
       );
-    } else if (this.config.httpRPC.length > 0) {
-      this.listeningProvider = new StaticJsonRpcProvider(chooseRPC(this.config.httpRPC));
+    } else if (this.config.rpcListenHttp.length > 0) {
+      this.listeningProvider = new StaticJsonRpcProvider(this.chooseHttpRpc());
     } else {
-      throw new Error("Please specify your RPC URLs");
+      throw new Error("Please specify RPC URLs for listening to blockchain events");
     }
-
-    // // get perpetuals and order books
-    // this.perpIds = (
-    //   await this.md.getReadOnlyProxyInstance().getPoolStaticInfo(1, 255)
-    // )[0].flat();
 
     this.connectOrSwitch();
     this.addListeners();
@@ -211,41 +192,6 @@ export default class BlockhainListener {
     });
 
     const proxy = IPerpetualManager__factory.connect(this.md.getProxyAddress(), this.listeningProvider);
-
-    // proxy.on(
-    //   "Trade",
-    //   (
-    //     perpetualId: number,
-    //     trader: string,
-    //     positionId: string,
-    //     order: IPerpetualOrder.OrderStructOutput,
-    //     orderDigest: string,
-    //     newPositionSizeBC: BigNumber,
-    //     price: BigNumber,
-    //     fFeeCC: BigNumber,
-    //     fPnlCC: BigNumber,
-    //     fB2C: BigNumber,
-    //     event: TradeEvent
-    //   ) => {
-    //     const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
-    //     const msg: TradeMsg = {
-    //       perpetualId: perpetualId,
-    //       symbol: symbol,
-    //       orderId: orderDigest,
-    //       traderAddr: trader,
-    //       tradeAmount: ABK64x64ToFloat(order.fAmount),
-    //       broker: order.brokerAddr,
-    //       pnl: ABK64x64ToFloat(fPnlCC),
-    //       fee: ABK64x64ToFloat(fFeeCC),
-    //       newPositionSizeBC: ABK64x64ToFloat(newPositionSizeBC),
-    //       block: event.blockNumber,
-    //       hash: event.transactionHash,
-    //       id: `${event.transactionHash}:${event.logIndex}`,
-    //     };
-    //     this.redisPubClient.publish("Trade", JSON.stringify(msg));
-    //     console.log(`${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, Trade:`, msg);
-    //   }
-    // );
 
     proxy.on(
       "Liquidate",

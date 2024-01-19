@@ -1,4 +1,4 @@
-import { floatToABK64x64, MarginAccount } from "@d8x/perpetuals-sdk";
+import { floatToABK64x64, MarginAccount, PriceFeedSubmission } from "@d8x/perpetuals-sdk";
 
 export const ZERO_POSITION = floatToABK64x64(0);
 
@@ -18,24 +18,21 @@ export interface RedisConfig {
 }
 
 export interface LiquidatorConfig {
-  chainId: number;
-  RPC: string[];
-  gasStation: string;
-  liquidateIntervalSeconds: number;
-  refreshAccountsSeconds: number;
-  maxGasPriceGWei: number;
-  priceFeedEndpoints: Array<{ type: string; endpoints: string[] }>;
-}
-
-export interface ListenerConfig {
-  chainId: number;
   sdkConfig: string;
-  httpRPC: string[];
-  wsRPC: string[];
-  waitForBlockseconds: number;
+  rewardsAddress: string;
+  rpcExec: string[];
+  rpcWatch: string[];
+  rpcListenHttp: string[];
+  rpcListenWs: string[];
+  waitForBlockSeconds: number;
   healthCheckSeconds: number;
-  maxRefreshAccountIntervalSeconds: number;
-  minRefreshAccountIntervalSeconds: number;
+  refreshAccountsIntervalSecondsMax: number;
+  refreshAccountsIntervalSecondsMin: number;
+  liquidateIntervalSecondsMax: number;
+  liquidateIntervalSecondsMin: number;
+  refreshAccountsSecondsMax: number;
+  maxGasPriceGWei: 1;
+  priceFeedEndpoints: [{ type: "pyth" | "odin"; endpoints: string[] }];
 }
 
 export interface RedisMsg {
@@ -88,4 +85,17 @@ export interface UpdateUnitAccumulatedFundingMsg extends RedisMsg {
   perpetualId: number;
   symbol: string;
   unitAccumulatedFundingCC: number;
+}
+
+export interface LiquidateTraderMsg {
+  symbol: string;
+  traderAddr: string;
+  px: PriceFeedSubmission;
+}
+
+export enum BotStatus {
+  Ready = "Ready",
+  Busy = "Busy",
+  PartialError = "PartialError",
+  Error = "Error",
 }

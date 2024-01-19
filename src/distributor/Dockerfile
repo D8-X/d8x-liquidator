@@ -1,11 +1,9 @@
+
 FROM node:18-alpine
 
+# The arguments inherited from GitHub variables/.env file
 ARG SDK_CONFIG
-ARG SEED_PHRASE
 ARG REDIS_URL
-
-ARG FROM
-ARG TO
 
 WORKDIR /app
 
@@ -16,8 +14,8 @@ RUN yarn install
 COPY . .
 
 #Appended arguments need the below structure of the command to be work
-RUN echo -e "SDK_CONFIG=${SDK_CONFIG}\n" "SEED_PHRASE=${SEED_PHRASE}\n" > .env
+RUN echo -e "SDK_CONFIG=${SDK_CONFIG}\n""REDIS_URL=${REDIS_URL}\n" > .env
 
 RUN yarn build
 
-CMD yarn start-liquidator ${FROM} ${TO}
+CMD ["yarn", "start-distributor"]
