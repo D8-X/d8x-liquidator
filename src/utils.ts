@@ -6,7 +6,7 @@ require("dotenv").config();
 
 export function loadConfig(sdkConfig: string): LiquidatorConfig {
   const configList = require("./config/live.liquidatorConfig.json") as LiquidatorConfig[];
-  const config = configList.find((config) => BigNumber.from(config.sdkConfig).eq(sdkConfig));
+  const config = configList.find((config) => config.sdkConfig == sdkConfig);
   if (!config) {
     throw new Error(`SDK Config ${sdkConfig} not found in config file.`);
   }
