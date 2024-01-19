@@ -1,5 +1,5 @@
 import { loadConfig } from "../utils";
-import BlockhainListener from "./blockchainListener";
+import Distributor from "./distributor";
 
 require("dotenv").config();
 
@@ -9,8 +9,9 @@ async function start() {
     throw new Error(`Environment variable SDK_CONFIG not defined.`);
   }
   const cfg = loadConfig(sdkConfig);
-  const eventStreamer = new BlockhainListener(cfg);
-  eventStreamer.start();
+  const obj = new Distributor(cfg);
+  await obj.initialize();
+  obj.run();
 }
 
 start();

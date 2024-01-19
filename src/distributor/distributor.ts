@@ -1,15 +1,9 @@
 import {
   MarketData,
   PerpetualDataHandler,
-  LiquidatorTool,
-  MarginAccount,
   PriceFeedSubmission,
-  BUY_SIDE,
-  CLOSED_SIDE,
   ABK64x64ToFloat,
   COLLATERAL_CURRENCY_QUOTE,
-  GasInfo,
-  GasPriceV2,
   Multicall3__factory,
   MULTICALL_ADDRESS,
   Multicall3,
@@ -18,7 +12,7 @@ import { providers } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis } from "../utils";
 import {
-  ListenerConfig,
+  LiquidatorConfig,
   Position,
   UpdateMarginAccountMsg,
   UpdateMarkPriceMsg,
@@ -26,14 +20,14 @@ import {
 } from "../types";
 import { PerpStorage } from "@d8x/perpetuals-sdk/dist/esm/contracts/IPerpetualManager";
 
-export default class PositionManager {
+export default class Distributor {
   // objects
-  private mktData: MarketData | undefined;
+  private md: MarketData;
   private redisSubClient: Redis;
   private redisPubClient: Redis;
+  private providers: providers.StaticJsonRpcProvider[];
 
   // state
-  private blockNumber: number | undefined;
   private lastRefreshTime: number = Infinity;
   private openPositions: Map<string, Map<string, Position>> = new Map();
   private pxSubmission: Map<string, { submission: PriceFeedSubmission; pxS2S3: [number, number] }> = new Map();
@@ -41,7 +35,7 @@ export default class PositionManager {
   private unitAccumulatedFunding: Map<string, number> = new Map();
 
   // static info
-  private config: ListenerConfig;
+  private config: LiquidatorConfig;
   private isQuote: Map<string, boolean> = new Map();
   private symbols: string[] = [];
   private maintenanceRate: Map<string, number> = new Map();
@@ -51,25 +45,33 @@ export default class PositionManager {
   // publish times must be within 10 seconds of each other, or submission will fail on-chain
   private MAX_OUTOFSYNC_SECONDS: number = 10;
 
-  constructor(config: ListenerConfig) {
+  constructor(config: LiquidatorConfig) {
     this.config = config;
-    this.redisSubClient = constructRedis("LiquidatorListener");
-    this.redisPubClient = constructRedis("LiquidatorStreamer");
+    this.redisSubClient = constructRedis("listenerSubClient");
+    this.redisPubClient = constructRedis("accountPubClient");
+    this.providers = this.config.rpcWatch.map((url) => new providers.StaticJsonRpcProvider(url));
+    this.md = new MarketData(PerpetualDataHandler.readSDKConfig(config.sdkConfig));
   }
 
   /**
-   *
-   * @param provider Provider - used to query open positions and execute liquidations
+   * Connects to the blockchain choosing a random RPC.
+   * If none of the RPCs work, it sleeps before crashing.
    */
-  public async initialize(rpcUrl: string) {
-    const provider = new providers.StaticJsonRpcProvider(rpcUrl);
-    const config = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
-    const md = new MarketData(config);
-    this.mktData = md;
-
+  public async initialize() {
     // Create a proxy instance to access the blockchain
-    await this.mktData.createProxyInstance(provider);
-    const info = await this.mktData.exchangeInfo({ rpcURL: rpcUrl });
+    let success = false;
+    let i = 0;
+    this.providers = this.providers.sort(() => Math.random() - 0.5);
+    while (!success && i < this.providers.length) {
+      const results = (await Promise.allSettled([this.md.createProxyInstance(this.providers[i])]))[0];
+      success = results.status === "fulfilled";
+      i++;
+    }
+    if (!success) {
+      console.log(`${new Date(Date.now()).toISOString()}: all rpcs are down ${this.config.rpcWatch.join(", ")}`);
+    }
+
+    const info = await this.md.exchangeInfo();
 
     this.symbols = info.pools
       .map((pool) =>
@@ -79,14 +81,15 @@ export default class PositionManager {
 
     for (const symbol of this.symbols) {
       // static info
-      this.maintenanceRate.set(symbol, md.getPerpetualStaticInfo(symbol).maintenanceMarginRate);
-      this.isQuote.set(symbol, md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE);
+      this.maintenanceRate.set(symbol, this.md.getPerpetualStaticInfo(symbol).maintenanceMarginRate);
+      this.isQuote.set(
+        symbol,
+        this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE
+      );
       // price info
-      this.pxSubmission.set(symbol, await this.mktData.fetchPriceSubmissionInfoForPerpetual(symbol));
+      this.pxSubmission.set(symbol, await this.md.fetchPriceSubmissionInfoForPerpetual(symbol));
       // mark premium, accumulated funding per BC unit
-      const perpState = await this.mktData
-        .getReadOnlyProxyInstance()
-        .getPerpetual(this.mktData.getPerpIdFromSymbol(symbol));
+      const perpState = await this.md.getReadOnlyProxyInstance().getPerpetual(this.md.getPerpIdFromSymbol(symbol));
       this.markPremium.set(symbol, ABK64x64ToFloat(perpState.currentMarkPremiumRate.fPrice));
       this.unitAccumulatedFunding.set(symbol, ABK64x64ToFloat(perpState.fUnitAccumulatedFunding));
       // "preallocate" trader set
@@ -120,7 +123,7 @@ export default class PositionManager {
     return new Promise<void>((resolve, reject) => {
       // fetch all accounts
       setInterval(async () => {
-        if (Date.now() - this.lastRefreshTime < this.config.maxRefreshAccountIntervalSeconds * 1_000) {
+        if (Date.now() - this.lastRefreshTime < this.config.refreshAccountsIntervalSecondsMax * 1_000) {
           return;
         }
         await Promise.allSettled(this.symbols.map((symbol) => this.refreshActiveAccounts(symbol)));
@@ -164,7 +167,7 @@ export default class PositionManager {
   }
 
   private updatePosition(position: Position) {
-    const symbol = this.mktData?.getSymbolFromPerpId(position.perpetualId)!;
+    const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
     if (!this.openPositions.has(symbol)) {
       this.openPositions.set(symbol, new Map());
     }
@@ -179,21 +182,26 @@ export default class PositionManager {
    * Reset active accounts array
    */
   public async refreshActiveAccounts(symbol: string) {
-    if (Date.now() - this.lastRefreshTime < this.config.minRefreshAccountIntervalSeconds * 1_000) {
+    if (Date.now() - this.lastRefreshTime < this.config.refreshAccountsIntervalSecondsMin * 1_000) {
       return;
     }
     const chunkSize1 = 5_000; // for addresses
     const chunkSize2 = 500; // for margin accounts
-    const perpId = this.mktData!.getPerpIdFromSymbol(symbol)!;
-    const proxy = this.mktData!.getReadOnlyProxyInstance();
-
-    const rpcProviders = this.config.httpRPC.map((url) => new providers.StaticJsonRpcProvider(url));
+    const perpId = this.md.getPerpIdFromSymbol(symbol)!;
+    const proxy = this.md.getReadOnlyProxyInstance();
+    const rpcProviders = this.config.rpcWatch.map((url) => new providers.StaticJsonRpcProvider(url));
     let providerIdx = Math.floor(Math.random() * rpcProviders.length);
-
     this.lastRefreshTime = Date.now();
-    const numAccounts = (await proxy.countActivePerpAccounts(perpId)).toNumber();
 
-    console.log(`${symbol} ${new Date(Date.now()).toISOString()}: There are ${numAccounts} active accounts`);
+    let tsStart: number;
+    console.log(`${symbol}: fetching number of accounts ... `);
+    tsStart = Date.now();
+    const numAccounts = (await proxy.countActivePerpAccounts(perpId)).toNumber();
+    console.log(
+      `${symbol} ${new Date(Date.now()).toISOString()}: (${
+        Date.now() - tsStart
+      }) there are ${numAccounts} active accounts`
+    );
 
     // fetch addresses
     const promises: Promise<string[]>[] = [];
@@ -204,6 +212,13 @@ export default class PositionManager {
     let addresses: string[] = [];
     for (let i = 0; i < promises.length; i += rpcProviders.length) {
       try {
+        console.log(
+          `${symbol} ${new Date(Date.now()).toISOString()}: fetching addresses ${i + 1} - ${Math.min(
+            i + rpcProviders.length,
+            promises.length
+          )} ...`
+        );
+        tsStart = Date.now();
         const chunks = await Promise.allSettled(promises.slice(i, i + rpcProviders.length));
         for (const result of chunks) {
           if (result.status === "fulfilled") {
@@ -211,9 +226,12 @@ export default class PositionManager {
           }
         }
       } catch (e) {
-        console.log("Error fetching address chunk (RPC)");
+        console.log(`${symbol} ${new Date(Date.now()).toISOString()}: error`);
       }
     }
+    console.log(
+      `${symbol} ${new Date(Date.now()).toISOString()}: (${Date.now() - tsStart}) ${addresses.length} addresses fetched`
+    );
 
     // fech accounts
     const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];
@@ -234,6 +252,13 @@ export default class PositionManager {
     for (let i = 0; i < promises2.length; i += rpcProviders.length) {
       try {
         const addressChunk = addressChunks.slice(i, i + rpcProviders.length).flat();
+        console.log(
+          `${symbol} ${new Date(Date.now()).toISOString()}: fetching accounts ${i + 1} - ${Math.min(
+            i + rpcProviders.length,
+            promises2.length
+          )} ...`
+        );
+        tsStart = Date.now();
         const accountChunk = (await Promise.allSettled(promises2.slice(i, i + rpcProviders.length))).flat();
 
         accountChunk.map((results, j) => {
@@ -264,7 +289,11 @@ export default class PositionManager {
         console.log("Error fetching account chunk (RPC?)");
       }
     }
-    console.log(`${new Date(Date.now()).toISOString()}: Watching ${this.openPositions.get(symbol)!.size} positions:`);
+    console.log(
+      `${symbol} ${new Date(Date.now()).toISOString()}: (${Date.now() - tsStart}) ${
+        this.openPositions.size
+      } accounts fetched`
+    );
   }
 
   /**
@@ -282,7 +311,7 @@ export default class PositionManager {
     try {
       // await this._updateAccounts();
       // we update our current submission data if not synced (it can't be used to submit liquidations anyways)
-      newPxSubmission = await this.mktData!.fetchPriceSubmissionInfoForPerpetual(symbol);
+      newPxSubmission = await this.md.fetchPriceSubmissionInfoForPerpetual(symbol);
       if (
         !this.pxSubmission.has(symbol) ||
         this.pxSubmission.get(symbol)!.submission.isMarketClosed.some((x) => x) ||
@@ -311,7 +340,7 @@ export default class PositionManager {
         await this.redisPubClient.publish(
           "LiquidateTrader",
           JSON.stringify({
-            perpetualId: position.perpetualId,
+            symbol: symbol,
             traderAddr: trader,
             px: curPx.submission,
           })
@@ -340,7 +369,7 @@ export default class PositionManager {
     if (position.positionBC === 0) {
       return true;
     }
-    const symbol = this.mktData!.getSymbolFromPerpId(position.perpetualId)!;
+    const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
     let S2 = pxS2S3[0];
     let Sm = S2 * (1 + this.markPremium.get(symbol)!);
     // undefined -> either S3 = 1 (quote coll) or S3 = S2 (base coll)
