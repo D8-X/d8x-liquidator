@@ -33,6 +33,7 @@ export default class Distributor {
   private pxSubmission: Map<string, { submission: PriceFeedSubmission; pxS2S3: [number, number] }> = new Map();
   private markPremium: Map<string, number> = new Map();
   private unitAccumulatedFunding: Map<string, number> = new Map();
+  private messageSentAt: Map<string, number> = new Map();
 
   // static info
   private config: LiquidatorConfig;
@@ -219,7 +220,7 @@ export default class Distributor {
       promises.push(proxy.connect(rpcProviders[providerIdx]).getActivePerpAccountsByChunks(perpId, i, i + chunkSize1));
       providerIdx = (providerIdx + 1) % rpcProviders.length;
     }
-    let addresses: string[] = [];
+    let addresses: Set<string> = new Set();
     for (let i = 0; i < promises.length; i += rpcProviders.length) {
       try {
         console.log(
@@ -232,7 +233,7 @@ export default class Distributor {
         const chunks = await Promise.allSettled(promises.slice(i, i + rpcProviders.length));
         for (const result of chunks) {
           if (result.status === "fulfilled") {
-            addresses = addresses.concat(result.value);
+            result.value.map((addr) => addresses.add(addr));
           }
         }
       } catch (e) {
@@ -240,15 +241,16 @@ export default class Distributor {
       }
     }
     console.log(
-      `${symbol} ${new Date(Date.now()).toISOString()}: (${Date.now() - tsStart}) ${addresses.length} addresses fetched`
+      `${symbol} ${new Date(Date.now()).toISOString()}: (${Date.now() - tsStart}) ${addresses.size} addresses fetched`
     );
 
     // fech accounts
     const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];
     const addressChunks: string[][] = [];
     const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, rpcProviders[providerIdx]);
-    for (let i = 0; i < addresses.length; i += chunkSize2) {
-      const addressChunk = addresses.slice(i, i + chunkSize2);
+    const traderList = [...addresses];
+    for (let i = 0; i < traderList.length; i += chunkSize2) {
+      const addressChunk = traderList.slice(i, i + chunkSize2);
       const calls: Multicall3.Call3Struct[] = addressChunk.map((addr) => ({
         allowFailure: true,
         target: proxy.address,
@@ -261,7 +263,7 @@ export default class Distributor {
 
     for (let i = 0; i < promises2.length; i += rpcProviders.length) {
       try {
-        const addressChunk = addressChunks.slice(i, i + rpcProviders.length).flat();
+        const addressChunkBin = addressChunks.slice(i, i + rpcProviders.length);
         console.log(
           `${symbol} ${new Date(Date.now()).toISOString()}: fetching account chunks ${i + 1} - ${Math.min(
             i + rpcProviders.length,
@@ -269,11 +271,12 @@ export default class Distributor {
           )} ...`
         );
         tsStart = Date.now();
-        const accountChunk = (await Promise.allSettled(promises2.slice(i, i + rpcProviders.length))).flat();
+        const accountChunk = await Promise.allSettled(promises2.slice(i, i + rpcProviders.length));
 
         accountChunk.map((results, j) => {
           if (results.status === "fulfilled") {
-            results.value.map((result) => {
+            const addressChunk = addressChunkBin[j];
+            results.value.map((result, k) => {
               if (result.success) {
                 const account = proxy.interface.decodeFunctionResult(
                   "getMarginAccount",
@@ -281,7 +284,7 @@ export default class Distributor {
                 )[0] as PerpStorage.MarginAccountStructOutput;
                 const position: Position = {
                   perpetualId: perpId,
-                  address: addressChunk[j],
+                  address: addressChunk[k],
                   positionBC: ABK64x64ToFloat(account.fPositionBC),
                   cashCC: ABK64x64ToFloat(account.fCashCC),
                   lockedInQC: ABK64x64ToFloat(account.fLockedInValueQC),
@@ -313,29 +316,9 @@ export default class Distributor {
    * @returns number of accounts that can be liquidated
    */
   private async checkPositions(symbol: string) {
-    // 1) fetch new px submission
-    let newPxSubmission: {
-      submission: PriceFeedSubmission;
-      pxS2S3: [number, number];
-    };
     try {
-      // await this._updateAccounts();
-      // we update our current submission data if not synced (it can't be used to submit liquidations anyways)
-      newPxSubmission = await this.md.fetchPriceSubmissionInfoForPerpetual(symbol);
-      if (
-        !this.pxSubmission.has(symbol) ||
-        this.pxSubmission.get(symbol)!.submission.isMarketClosed.some((x) => x) ||
-        !this.checkSubmissionsInSync(this.pxSubmission.get(symbol)!.submission.timestamps)
-      ) {
-        this.pxSubmission.set(symbol, newPxSubmission);
-      }
-      // the new submission data may be out of sync or the market may be closed, in which case we stop here
-      if (
-        newPxSubmission.submission.isMarketClosed.some((x) => x) ||
-        !this.checkSubmissionsInSync(newPxSubmission.submission.timestamps)
-      ) {
-        return false;
-      }
+      const newPxSubmission = await this.md.fetchPriceSubmissionInfoForPerpetual(symbol);
+      this.pxSubmission.set(symbol, newPxSubmission);
     } catch (e) {
       console.log("error fetching from price service:");
       console.log(e);
@@ -344,39 +327,28 @@ export default class Distributor {
     const positions = this.openPositions.get(symbol)!;
     const curPx = this.pxSubmission.get(symbol)!;
     const accountsSent: Set<string> = new Set();
-    // 2) check accounts using current prices
+
     for (const [trader, position] of positions) {
       if (!this.isMarginSafe(position, curPx.pxS2S3)) {
-        await this.redisPubClient.publish(
-          "LiquidateTrader",
-          JSON.stringify({
-            symbol: symbol,
-            traderAddr: trader,
-            // px: curPx.submission,
-          })
-        );
-        accountsSent.add(`${trader}:${symbol}`);
-      }
-    }
-    // 3) check accounts using new prices
-    for (const [trader, position] of positions) {
-      if (!this.isMarginSafe(position, newPxSubmission.pxS2S3) && !accountsSent.has(`${trader}:${symbol}`)) {
-        await this.redisPubClient.publish(
-          "LiquidateTrader",
-          JSON.stringify({
-            perpetualId: position.perpetualId,
-            traderAddr: trader,
-            px: newPxSubmission.submission,
-          })
-        );
-        accountsSent.add(`${trader}:${symbol}`);
+        const msg = JSON.stringify({
+          symbol: symbol,
+          traderAddr: trader,
+        });
+        if (Date.now() - (this.messageSentAt.get(msg) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
+          await this.redisPubClient.publish("LiquidateTrader", msg);
+          // console.log(position);
+          // console.log(curPx.pxS2S3);
+          // console.log(this.unitAccumulatedFunding.get(symbol)!);
+          this.messageSentAt.set(msg, Date.now());
+        }
+        accountsSent.add(msg);
       }
     }
     return accountsSent.size > 0;
   }
 
   private isMarginSafe(position: Position, pxS2S3: [number, number | undefined]) {
-    if (position.positionBC === 0) {
+    if (position.positionBC == 0) {
       return true;
     }
     const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;

@@ -168,6 +168,14 @@ export default class Liquidator {
       const result = results[i];
       if (result.status === "fulfilled") {
         successes++;
+        console.log(
+          JSON.stringify({
+            liquidator: result.value.from,
+            orderBook: result.value.to,
+            txn: result.value.hash,
+            // block: result.value.blockNumber,
+          })
+        );
         confirmations.push(
           executeWithTimeout(
             result.value.wait().then(() => {
@@ -180,10 +188,13 @@ export default class Liquidator {
       } else {
         const liq = this.liqTool[txns[i].botIdx].api.getAddress();
         let prom: Promise<void>;
-        if ((result.reason?.body as string)?.includes("insufficient funds for intrinsic transaction cost")) {
+        const error = result.reason.toString();
+        if (error.includes("insufficient funds for intrinsic transaction cost")) {
           prom = this.fundWallets([liq]);
         } else {
-          console.log(`${liq} failed with reason ${result.reason}`);
+          if (!error.includes("gas price too low")) {
+            console.log(`${liq} failed with reason ${result.reason}`);
+          }
           prom = Promise.resolve();
         }
         confirmations.push(
@@ -198,24 +209,24 @@ export default class Liquidator {
     let res: BotStatus;
     if (successes == 0 && attempts == this.liqTool.length) {
       // all bots are down, either rpc or px service issue
-      console.log(`critical -- all bots failed to submit liquidations`);
+      // console.log(`critical -- all bots failed to submit liquidations`);
       res = BotStatus.Error;
     } else if (attempts == 0 && q.length > 0) {
       // did not try anything
-      console.log(`all bots are busy`);
+      // console.log(`all bots are busy`);
       res = BotStatus.Busy;
     } else if (successes == 0 && attempts > 0) {
       // tried something but it didn't work
-      console.log(`all attempts failed`);
+      // console.log(`all attempts failed`);
       res = BotStatus.PartialError;
     } else if (successes < attempts) {
       // some attempts worked, others failed
-      console.log(`${attempts - successes} attempts failed`);
+      // console.log(`${attempts - successes} attempts failed`);
       res = BotStatus.PartialError;
     } else {
       // everything worked or nothing happend
       if (attempts > 0) {
-        console.log(`all ${attempts} attempts succeeded`);
+        // console.log(`all ${attempts} attempts succeeded`);
       }
       res = BotStatus.Ready;
     }
