@@ -1,5 +1,5 @@
 import Liquidator from "./liquidator";
-import { loadAccounts, loadConfig } from "../utils";
+import { loadAccounts, loadConfig, sleep } from "../utils";
 
 require("dotenv").config();
 
@@ -28,8 +28,13 @@ async function run() {
 
   const liquidator = new Liquidator(treasuryPK, pk, cfg);
 
+  try {
+    await liquidator.fundWallets(addr);
+  } catch (e) {
+    await sleep(60_000);
+    process.exit(1);
+  }
   await liquidator.initialize();
-  await liquidator.fundWallets(addr);
 
   liquidator.run();
 }

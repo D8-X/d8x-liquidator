@@ -38,23 +38,13 @@ export function getPrivateKeyFromSeed(mnemonic: string, idx: number) {
 }
 
 export function getRedisConfig(): RedisConfig {
-  let originUrl = process.env.REDIS_URL;
-  if (originUrl == undefined) {
-    throw new Error("REDIS_URL not defined");
-  }
-  let redisURL = new URL(originUrl);
-  const host = redisURL.hostname;
-  const port = parseInt(redisURL.port);
-  const redisPassword = redisURL.password;
-  let config = { host: host, port: port, password: redisPassword! };
+  let config = { host: process.env.REDIS_HOST!, port: +process.env.REDIS_PORT!, password: process.env.REDIS_PASSWORD };
   return config;
 }
 
 export function constructRedis(name: string): Redis {
   let client;
   let redisConfig = getRedisConfig();
-  //console.log(redisConfig);
-  console.log(`${name} connecting to redis: ${redisConfig.host}`);
   client = new Redis(redisConfig);
   client.on("error", (err) => console.log(`${name} Redis Client Error:` + err));
   return client;
