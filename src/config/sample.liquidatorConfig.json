@@ -1,19 +1,30 @@
 [
   {
-    "chainId": 1101,
-    "RPC": ["https://zkevm-rpc.com"],
-    "gasStation": "https://gasstation.polygon.technology/zkevm",
-    "liquidateIntervalSeconds": 60,
-    "refreshAccountsSeconds": 28800,
-    "maxGasPriceGWei": 0.1,
-    "priceFeedEndpoints": [{ "type": "pyth", "endpoints": ["https://hermes.pyth.network/api"] }]
-  },
-  {
-    "chainId": 1442,
-    "RPC": ["https://rpc.public.zkevm-test.net"],
-    "gasStation": "https://gasstation-testnet.polygon.technology/zkevm",
-    "liquidateIntervalSeconds": 60,
-    "refreshAccountsSeconds": 28800,
+    "sdkConfig": "zkevmTestnet",
+    "rewardsAddress": "",
+    "bots": 2,
+    "rpcExec": [
+      "https://rpc.public.zkevm-test.net",
+      "https://floral-green-butterfly.zkevm-testnet.quiknode.pro/b8bc691efee3d846926f29a8dee18a1168d91fc5/",
+      "https://powerful-sly-shadow.zkevm-testnet.discover.quiknode.pro/26fe51651b26744153e4ef4f78038edd616fad5e/"
+    ],
+    "rpcWatch": [
+      "https://floral-green-butterfly.zkevm-testnet.quiknode.pro/b8bc691efee3d846926f29a8dee18a1168d91fc5/",
+      "https://powerful-sly-shadow.zkevm-testnet.discover.quiknode.pro/26fe51651b26744153e4ef4f78038edd616fad5e/"
+    ],
+    "rpcListenHttp": ["https://rpc.public.zkevm-test.net"],
+    "rpcListenWs": [
+      "wss://floral-green-butterfly.zkevm-testnet.quiknode.pro/b8bc691efee3d846926f29a8dee18a1168d91fc5/",
+      "wss://powerful-sly-shadow.zkevm-testnet.discover.quiknode.pro/26fe51651b26744153e4ef4f78038edd616fad5e/"
+    ],
+    "waitForBlockSeconds": 30,
+    "healthCheckSeconds": 2000,
+    "refreshAccountsIntervalSecondsMax": 2000,
+    "refreshAccountsIntervalSecondsMin": 10,
+    "liquidateIntervalSecondsMax": 60,
+    "liquidateIntervalSecondsMin": 5,
+    "refreshAccountsSecondsMax": 28800,
+    "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 1,
     "priceFeedEndpoints": [{ "type": "pyth", "endpoints": ["https://hermes-beta.pyth.network/api"] }]
   }
