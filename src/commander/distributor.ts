@@ -251,12 +251,12 @@ export default class Distributor {
         console.log(`${symbol} ${new Date(Date.now()).toISOString()}: error`);
       }
     }
-    console.log({
-      symbol: symbol,
-      time: new Date(Date.now()).toISOString(),
-      addresses: addresses.size,
-      waited: `${Date.now() - tsStart} ms`,
-    });
+    // console.log({
+    //   symbol: symbol,
+    //   time: new Date(Date.now()).toISOString(),
+    //   addresses: addresses.size,
+    //   waited: `${Date.now() - tsStart} ms`,
+    // });
 
     // fech accounts
     const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];

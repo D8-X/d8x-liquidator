@@ -1,17 +1,16 @@
 # sudo docker compose up --build -d
-version: "2"
+version: "3.8"
 
 name: d8x
 
 services:
   # Redis for Pub/Sub between blockchain listener (pub) and liquidators (sub)
-  redis:
-    image: redis
-    environment:
-      - REDIS_ARGS=--requirepass ${REDIS_PASSWORD}
+  cache:
+    image: redis:6.2-alpine
+    restart: always
     ports:
-      - "127.0.0.1:6379:6379"
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+      - "${REDIS_PORT}:${REDIS_PORT}"
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
 
   # Listen to block and events, and stream on redis
   sentinel:
@@ -19,33 +18,40 @@ services:
       context: .
       dockerfile: ./src/sentinel/Dockerfile
     depends_on:
-      - redis
+      - cache
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - SDK_CONFIG=${SDK_CONFIG}
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SDK_CONFIG: ${SDK_CONFIG}
     restart: on-failure
 
   # Account manager: fetches and distributes data to liquidators
   commander:
     depends_on:
-      - sentinel
+      - cache
     build:
       context: .
       dockerfile: ./src/commander/Dockerfile
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - SDK_CONFIG=${SDK_CONFIG}
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SDK_CONFIG: ${SDK_CONFIG}
     restart: on-failure
 
   # liquidator: submits liquidate calls to the blockchain
   executor:
     depends_on:
+      - cache
       - commander
     build:
       context: .
       dockerfile: ./src/executor/Dockerfile
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - SDK_CONFIG=${SDK_CONFIG}
-      - SEED_PHRASE=${SEED_PHRASE}
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SDK_CONFIG: ${SDK_CONFIG}
+      SEED_PHRASE: ${SEED_PHRASE}
     restart: on-failure
