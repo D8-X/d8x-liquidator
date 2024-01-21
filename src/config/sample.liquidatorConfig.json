@@ -2,6 +2,7 @@
   {
     "sdkConfig": "zkevmTestnet",
     "rewardsAddress": "",
+    "bots": 2,
     "rpcExec": [
       "https://rpc.public.zkevm-test.net",
       "https://floral-green-butterfly.zkevm-testnet.quiknode.pro/b8bc691efee3d846926f29a8dee18a1168d91fc5/",

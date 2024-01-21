@@ -48,6 +48,4 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - SDK_CONFIG=${SDK_CONFIG}
       - SEED_PHRASE=${SEED_PHRASE}
-      - FROM=1
-      - TO=2
     restart: on-failure

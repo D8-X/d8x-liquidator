@@ -3,10 +3,6 @@ FROM node:18-alpine
 ARG SDK_CONFIG
 ARG SEED_PHRASE
 ARG REDIS_URL
-
-ARG FROM
-ARG TO
-
 WORKDIR /app
 
 COPY . .
@@ -19,4 +15,4 @@ RUN echo -e "SDK_CONFIG=${SDK_CONFIG}\n" "SEED_PHRASE=${SEED_PHRASE}\n" > .env
 
 RUN yarn build
 
-CMD yarn start-executor ${FROM} ${TO}
+CMD yarn start-executor

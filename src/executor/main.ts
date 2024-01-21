@@ -1,6 +1,5 @@
-import { BigNumber, ethers } from "ethers";
 import Liquidator from "./liquidator";
-import { loadAccounts, loadConfig, sleep } from "../utils";
+import { loadAccounts, loadConfig } from "../utils";
 
 require("dotenv").config();
 
@@ -18,27 +17,20 @@ async function run() {
   // config
   const cfg = loadConfig(sdkConfig);
 
-  // args: from-to
-  const args = process.argv.slice(2);
-
-  const from = Number(args[0] ?? 1);
-  const to = Number(args[1] ?? 2);
-
   // bot treasury
   const {
-    addr: [treasuryAddr],
     pk: [treasuryPK],
   } = loadAccounts(seedPhrase, 0, 0);
 
   // bot wallets
-  const { addr, pk } = loadAccounts(seedPhrase, from, to);
+  const { addr, pk } = loadAccounts(seedPhrase, 1, cfg.bots);
   console.log(`\nStarting ${addr.length} bots with addresses ${addr.join("\n")}`);
 
-  // TODO: balance checks and transfers
-
   const liquidator = new Liquidator(treasuryPK, pk, cfg);
+
   await liquidator.initialize();
   await liquidator.fundWallets(addr);
+
   liquidator.run();
 }
 

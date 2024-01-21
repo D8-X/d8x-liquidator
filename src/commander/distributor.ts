@@ -35,6 +35,7 @@ export default class Distributor {
   private unitAccumulatedFunding: Map<string, number> = new Map();
   private messageSentAt: Map<string, number> = new Map();
   private pricesFetchedAt: Map<string, number> = new Map();
+  public ready: boolean = false;
 
   // static info
   private config: LiquidatorConfig;
@@ -101,21 +102,30 @@ export default class Distributor {
     }
 
     // Subscribe to blockchain events
-    console.log(`${new Date(Date.now()).toISOString()}: subscribing to blockchain event streamer...`);
+    // console.log(`${new Date(Date.now()).toISOString()}: subscribing to blockchain event streamer...`);
     await this.redisSubClient.subscribe(
       "block",
-      "UpdateMarkPrice",
-      "UpdateMarginAccount",
-      "UpdateUnitAccumulatedFunding",
+      "UpdateMarkPriceEvent",
+      "UpdateMarginAccountEvent",
+      "UpdateUnitAccumulatedFundingEvent",
       (err, count) => {
         if (err) {
           console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
           process.exit(1);
-        } else {
-          console.log(`${new Date(Date.now()).toISOString()}: redis subscription success - ${count} active channels`);
         }
+        // else {
+        //   console.log(`${new Date(Date.now()).toISOString()}: redis subscription success - ${count} active channels`);
+        // }
       }
     );
+
+    this.ready = true;
+  }
+
+  private requireReady() {
+    if (!this.ready) {
+      throw new Error("not ready: await distributor.initialize()");
+    }
   }
 
   /**
@@ -124,6 +134,7 @@ export default class Distributor {
    * @returns void
    */
   public async run(): Promise<void> {
+    this.requireReady();
     return new Promise<void>(async (resolve, reject) => {
       // fetch all accounts
       setInterval(async () => {
@@ -142,10 +153,17 @@ export default class Distributor {
             for (const symbol of this.symbols) {
               this.checkPositions(symbol);
             }
+            if (
+              Date.now() - Math.min(...this.lastRefreshTime.values()) <
+              this.config.refreshAccountsIntervalSecondsMax * 1_000
+            ) {
+              return;
+            }
+            await this.refreshAllAccounts();
             break;
           }
 
-          case "UpdateMarginAccount": {
+          case "UpdateMarginAccountEvent": {
             const account: UpdateMarginAccountMsg = JSON.parse(msg);
             this.updatePosition({
               address: account.traderAddr,
@@ -157,13 +175,13 @@ export default class Distributor {
             });
           }
 
-          case "UpdateMarkPrice": {
+          case "UpdateMarkPriceEvent": {
             const { symbol, markPremium }: UpdateMarkPriceMsg = JSON.parse(msg);
             this.markPremium.set(symbol, markPremium);
             break;
           }
 
-          case "UpdateUnitAccumulatedFunding": {
+          case "UpdateUnitAccumulatedFundingEvent": {
             const { symbol, unitAccumulatedFundingCC }: UpdateUnitAccumulatedFundingMsg = JSON.parse(msg);
             this.unitAccumulatedFunding.set(symbol, unitAccumulatedFundingCC);
             break;
@@ -194,11 +212,12 @@ export default class Distributor {
    * Reset active accounts array
    */
   public async refreshActiveAccounts(symbol: string) {
+    this.requireReady();
     if (Date.now() - (this.lastRefreshTime.get(symbol) ?? 0) < this.config.refreshAccountsIntervalSecondsMin * 1_000) {
       return;
     }
-    const chunkSize1 = 4_096; // for addresses
-    const chunkSize2 = 256; // for margin accounts
+    const chunkSize1 = 2 ** 16; // for addresses
+    const chunkSize2 = 2 ** 8; // for margin accounts
     const perpId = this.md.getPerpIdFromSymbol(symbol)!;
     const proxy = this.md.getReadOnlyProxyInstance();
     const rpcProviders = this.config.rpcWatch.map((url) => new providers.StaticJsonRpcProvider(url));
@@ -208,12 +227,9 @@ export default class Distributor {
     let tsStart: number;
     console.log(`${symbol}: fetching number of accounts ... `);
     tsStart = Date.now();
+
     const numAccounts = (await proxy.countActivePerpAccounts(perpId)).toNumber();
-    console.log(
-      `${symbol} ${new Date(Date.now()).toISOString()}: (${
-        Date.now() - tsStart
-      }) there are ${numAccounts} active accounts`
-    );
+    console.log({ symbol: symbol, time: new Date(Date.now()).toISOString(), activeAccounts: numAccounts });
 
     // fetch addresses
     const promises: Promise<string[]>[] = [];
@@ -224,12 +240,6 @@ export default class Distributor {
     let addresses: Set<string> = new Set();
     for (let i = 0; i < promises.length; i += rpcProviders.length) {
       try {
-        console.log(
-          `${symbol} ${new Date(Date.now()).toISOString()}: fetching address chunks ${i + 1} - ${Math.min(
-            i + rpcProviders.length,
-            promises.length
-          )} ...`
-        );
         tsStart = Date.now();
         const chunks = await Promise.allSettled(promises.slice(i, i + rpcProviders.length));
         for (const result of chunks) {
@@ -241,9 +251,12 @@ export default class Distributor {
         console.log(`${symbol} ${new Date(Date.now()).toISOString()}: error`);
       }
     }
-    console.log(
-      `${symbol} ${new Date(Date.now()).toISOString()}: (${Date.now() - tsStart}) ${addresses.size} addresses fetched`
-    );
+    console.log({
+      symbol: symbol,
+      time: new Date(Date.now()).toISOString(),
+      addresses: addresses.size,
+      waited: `${Date.now() - tsStart} ms`,
+    });
 
     // fech accounts
     const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];
@@ -262,16 +275,10 @@ export default class Distributor {
       providerIdx = (providerIdx + 1) % rpcProviders.length;
     }
 
+    tsStart = Date.now();
     for (let i = 0; i < promises2.length; i += rpcProviders.length) {
       try {
         const addressChunkBin = addressChunks.slice(i, i + rpcProviders.length);
-        console.log(
-          `${symbol} ${new Date(Date.now()).toISOString()}: fetching account chunks ${i + 1} - ${Math.min(
-            i + rpcProviders.length,
-            promises2.length
-          )} ...`
-        );
-        tsStart = Date.now();
         const accountChunk = await Promise.allSettled(promises2.slice(i, i + rpcProviders.length));
 
         accountChunk.map((results, j) => {
@@ -303,11 +310,12 @@ export default class Distributor {
         console.log("Error fetching account chunk (RPC?)");
       }
     }
-    console.log(
-      `${symbol} ${new Date(Date.now()).toISOString()}: (${Date.now() - tsStart}) ${
-        this.openPositions.size
-      } accounts fetched`
-    );
+    console.log({
+      symbol: symbol,
+      time: new Date(Date.now()).toISOString(),
+      accounts: this.openPositions.get(symbol)!.size,
+      waited: `${Date.now() - tsStart} ms`,
+    });
   }
 
   /**
@@ -317,11 +325,15 @@ export default class Distributor {
    * @returns number of accounts that can be liquidated
    */
   private async checkPositions(symbol: string) {
+    this.requireReady();
     if (Date.now() - (this.pricesFetchedAt.get(symbol) ?? 0) < this.config.fetchPricesIntervalSecondsMin * 1_000) {
       return undefined;
     }
     try {
       const newPxSubmission = await this.md.fetchPriceSubmissionInfoForPerpetual(symbol);
+      if (!this.checkSubmissionsInSync(newPxSubmission.submission.timestamps)) {
+        return false;
+      }
       this.pxSubmission.set(symbol, newPxSubmission);
     } catch (e) {
       console.log("error fetching from price service:");
@@ -340,14 +352,6 @@ export default class Distributor {
           traderAddr: trader,
         });
         if (Date.now() - (this.messageSentAt.get(msg) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
-          console.log(
-            "Liquidate trader:",
-            msg,
-            trader,
-            position,
-            curPx.pxS2S3,
-            this.unitAccumulatedFunding.get(symbol)!
-          );
           await this.redisPubClient.publish("LiquidateTrader", msg);
           this.messageSentAt.set(msg, Date.now());
         }
@@ -382,7 +386,6 @@ export default class Distributor {
   private checkSubmissionsInSync(timestamps: number[]): boolean {
     let gap = Math.max(...timestamps) - Math.min(...timestamps);
     if (gap > this.MAX_OUTOFSYNC_SECONDS) {
-      console.log(`feed submissions not synced: ${timestamps}, gap = ${gap}`);
       return false;
     }
     return true;
