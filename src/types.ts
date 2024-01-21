@@ -19,6 +19,7 @@ export interface RedisConfig {
 
 export interface LiquidatorConfig {
   sdkConfig: string;
+  bots: number;
   rewardsAddress: string;
   rpcExec: string[];
   rpcWatch: string[];

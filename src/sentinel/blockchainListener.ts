@@ -221,11 +221,8 @@ export default class BlockhainListener {
           hash: event.transactionHash,
           id: `${event.transactionHash}:${event.logIndex}`,
         };
-        this.redisPubClient.publish("Liquidate", JSON.stringify(msg));
-        console.log(
-          `${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, Liquidate:`,
-          msg
-        );
+        this.redisPubClient.publish("LiquidateEvent", JSON.stringify(msg));
+        console.log({ event: "Liquidate", time: new Date(Date.now()).toISOString(), mode: ListeningMode, ...msg });
       }
     );
 
@@ -255,11 +252,7 @@ export default class BlockhainListener {
           hash: event.transactionHash,
           id: `${event.transactionHash}:${event.logIndex}`,
         };
-        this.redisPubClient.publish("UpdateMarginAccount", JSON.stringify(msg));
-        console.log(
-          `${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, UpdateMarginAccount:`,
-          msg
-        );
+        this.redisPubClient.publish("UpdateMarginAccountEvent", JSON.stringify(msg));
       }
     );
 
@@ -283,11 +276,7 @@ export default class BlockhainListener {
           hash: event.transactionHash,
           id: `${event.transactionHash}:${event.logIndex}`,
         };
-        this.redisPubClient.publish("UpdateMarkPrice", JSON.stringify(msg));
-        console.log(
-          `${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${this.mode} mode, UpdateMarkPrice:`,
-          msg
-        );
+        this.redisPubClient.publish("UpdateMarkPriceEvent", JSON.stringify(msg));
       }
     );
 
@@ -303,13 +292,7 @@ export default class BlockhainListener {
           hash: event.transactionHash,
           id: `${event.transactionHash}:${event.logIndex}`,
         };
-        this.redisPubClient.publish("UpdateUnitAccumulatedFunding", JSON.stringify(msg));
-        console.log(
-          `${new Date(Date.now()).toISOString()} Block: ${this.blockNumber}, ${
-            this.mode
-          } mode, UpdateUnitAccumulatedFunding:`,
-          msg
-        );
+        this.redisPubClient.publish("UpdateUnitAccumulatedFundingEvent", JSON.stringify(msg));
       }
     );
   }
