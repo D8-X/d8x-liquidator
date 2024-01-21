@@ -1,0 +1,57 @@
+# sudo docker compose up --build -d
+version: "3.8"
+
+name: d8x
+
+services:
+  # Redis for Pub/Sub between blockchain listener (pub) and liquidators (sub)
+  cache:
+    image: redis:6.2-alpine
+    restart: always
+    ports:
+      - "${REDIS_PORT}:${REDIS_PORT}"
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
+
+  # Listen to block and events, and stream on redis
+  sentinel:
+    build:
+      context: .
+      dockerfile: ./src/sentinel/Dockerfile
+    depends_on:
+      - cache
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SDK_CONFIG: ${SDK_CONFIG}
+    restart: on-failure
+
+  # Account manager: fetches and distributes data to liquidators
+  commander:
+    depends_on:
+      - cache
+    build:
+      context: .
+      dockerfile: ./src/commander/Dockerfile
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SDK_CONFIG: ${SDK_CONFIG}
+    restart: on-failure
+
+  # liquidator: submits liquidate calls to the blockchain
+  executor:
+    depends_on:
+      - cache
+      - commander
+    build:
+      context: .
+      dockerfile: ./src/executor/Dockerfile
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SDK_CONFIG: ${SDK_CONFIG}
+      SEED_PHRASE: ${SEED_PHRASE}
+    restart: on-failure
