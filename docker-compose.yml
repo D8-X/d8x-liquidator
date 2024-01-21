@@ -17,7 +17,7 @@ services:
   sentinel:
     build:
       context: .
-      dockerfile: ./src/listener/Dockerfile
+      dockerfile: ./src/sentinel/Dockerfile
     depends_on:
       - redis
     environment:
@@ -31,7 +31,7 @@ services:
       - sentinel
     build:
       context: .
-      dockerfile: ./src/distributor/Dockerfile
+      dockerfile: ./src/commander/Dockerfile
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - SDK_CONFIG=${SDK_CONFIG}
@@ -43,7 +43,7 @@ services:
       - commander
     build:
       context: .
-      dockerfile: ./src/liquidator/Dockerfile
+      dockerfile: ./src/executor/Dockerfile
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - SDK_CONFIG=${SDK_CONFIG}

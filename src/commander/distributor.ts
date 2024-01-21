@@ -34,6 +34,7 @@ export default class Distributor {
   private markPremium: Map<string, number> = new Map();
   private unitAccumulatedFunding: Map<string, number> = new Map();
   private messageSentAt: Map<string, number> = new Map();
+  private pricesFetchedAt: Map<string, number> = new Map();
 
   // static info
   private config: LiquidatorConfig;
@@ -48,8 +49,8 @@ export default class Distributor {
 
   constructor(config: LiquidatorConfig) {
     this.config = config;
-    this.redisSubClient = constructRedis("listenerSubClient");
-    this.redisPubClient = constructRedis("accountPubClient");
+    this.redisSubClient = constructRedis("commanderSubClient");
+    this.redisPubClient = constructRedis("commanderPubClient");
     this.providers = this.config.rpcWatch.map((url) => new providers.StaticJsonRpcProvider(url));
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(config.sdkConfig));
   }
@@ -316,6 +317,9 @@ export default class Distributor {
    * @returns number of accounts that can be liquidated
    */
   private async checkPositions(symbol: string) {
+    if (Date.now() - (this.pricesFetchedAt.get(symbol) ?? 0) < this.config.fetchPricesIntervalSecondsMin * 1_000) {
+      return undefined;
+    }
     try {
       const newPxSubmission = await this.md.fetchPriceSubmissionInfoForPerpetual(symbol);
       this.pxSubmission.set(symbol, newPxSubmission);
@@ -328,17 +332,23 @@ export default class Distributor {
     const curPx = this.pxSubmission.get(symbol)!;
     const accountsSent: Set<string> = new Set();
 
-    for (const [trader, position] of positions) {
+    for (const trader of positions.keys()) {
+      const position = positions.get(trader)!;
       if (!this.isMarginSafe(position, curPx.pxS2S3)) {
         const msg = JSON.stringify({
           symbol: symbol,
           traderAddr: trader,
         });
         if (Date.now() - (this.messageSentAt.get(msg) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
+          console.log(
+            "Liquidate trader:",
+            msg,
+            trader,
+            position,
+            curPx.pxS2S3,
+            this.unitAccumulatedFunding.get(symbol)!
+          );
           await this.redisPubClient.publish("LiquidateTrader", msg);
-          // console.log(position);
-          // console.log(curPx.pxS2S3);
-          // console.log(this.unitAccumulatedFunding.get(symbol)!);
           this.messageSentAt.set(msg, Date.now());
         }
         accountsSent.add(msg);
@@ -358,7 +368,7 @@ export default class Distributor {
     let S3 = pxS2S3[1] ?? (this.isQuote! ? 1 : S2);
     let pos = position.positionBC;
     let lockedIn = position.lockedInQC;
-    let cash = position.cashCC + position.unpaidFundingCC;
+    let cash = position.cashCC - position.unpaidFundingCC;
     let maintenanceMargin = ((Math.abs(pos) * Sm) / S3) * this.maintenanceRate.get(symbol)!;
     let balance = cash + (pos * Sm - lockedIn) / S3;
     return balance >= maintenanceMargin;

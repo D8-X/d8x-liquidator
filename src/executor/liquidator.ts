@@ -24,7 +24,7 @@ export default class Liquidator {
     this.treasury = pkTreasury;
     this.privateKey = pkLiquidators;
     this.config = config;
-    this.redisSubClient = constructRedis("accountSubClient");
+    this.redisSubClient = constructRedis("executorSubClient");
     this.providers = this.config.rpcExec.map((url) => new providers.StaticJsonRpcProvider(url));
     this.liqTool = this.privateKey.map((pk) => ({
       api: new LiquidatorTool(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig), pk),
@@ -143,7 +143,9 @@ export default class Liquidator {
           this.q.delete(msg);
           liq.busy = true;
           assignedTx = true;
+          console.log(msg);
           const { symbol, traderAddr }: LiquidateTraderMsg = JSON.parse(msg);
+          console.log();
           console.log(`liquidator ${liq.api.getAddress()} attempts to liquidate ${symbol} trader ${traderAddr} ...`);
           txns.push({
             tx: executeWithTimeout(

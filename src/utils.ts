@@ -1,6 +1,6 @@
 import { Redis } from "ioredis";
 import { RedisConfig, LiquidatorConfig } from "./types";
-import { BigNumber, BigNumberish, ethers } from "ethers";
+import { ethers } from "ethers";
 
 require("dotenv").config();
 
