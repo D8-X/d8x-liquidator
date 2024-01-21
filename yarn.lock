@@ -2,10 +2,10 @@
 # yarn lockfile v1
 
 
-"@d8x/perpetuals-sdk@^0.9.13":
-  version "0.9.13"
-  resolved "https://registry.yarnpkg.com/@d8x/perpetuals-sdk/-/perpetuals-sdk-0.9.13.tgz#dd784fe8eeac700f85a07926d423ad5ac30f3d2d"
-  integrity sha512-W7S2qd/5uGp2BYX2H/nfALp/YRh4TRXlalJthNWWS8PuCxD7Vf18gawcMA0dN4ND1eYJsq2mco7n+tv1Gh/OWw==
+"@d8x/perpetuals-sdk@^1.0.9":
+  version "1.0.9"
+  resolved "https://registry.yarnpkg.com/@d8x/perpetuals-sdk/-/perpetuals-sdk-1.0.9.tgz#ee9661fe6bc234b561a5247b46a14d1d44db9262"
+  integrity sha512-CWb55yWnaS2JM6qnA+qeceTWfZSWvgLCA+tkqBwEWdvrySZ6ucyeKR+Y0EjohSJb8qJPGtZwXXolsp9n9ASuEQ==
   dependencies:
     "@ethersproject/abi" "^5.7.0"
     "@ethersproject/abstract-signer" "^5.7.0"
