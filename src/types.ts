@@ -1,4 +1,4 @@
-import { floatToABK64x64, MarginAccount, PriceFeedSubmission } from "@d8x/perpetuals-sdk";
+import { floatToABK64x64 } from "@d8x/perpetuals-sdk";
 
 export const ZERO_POSITION = floatToABK64x64(0);
 
@@ -31,6 +31,7 @@ export interface LiquidatorConfig {
   liquidateIntervalSecondsMax: number;
   liquidateIntervalSecondsMin: number;
   refreshAccountsSecondsMax: number;
+  fetchPricesIntervalSecondsMin: number;
   maxGasPriceGWei: 1;
   priceFeedEndpoints: [{ type: "pyth" | "odin"; endpoints: string[] }];
 }

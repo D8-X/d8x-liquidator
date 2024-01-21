@@ -16,9 +16,9 @@
   },
   "scripts": {
     "build": "npx tsc",
-    "start-listener": "node dist/src/listener/main.js",
-    "start-distributor": "node dist/src/distributor/main.js",
-    "start-liquidator": "node dist/src/liquidator/main.js",
+    "start-sentinel": "node dist/src/sentinel/main.js",
+    "start-commander": "node dist/src/commander/main.js",
+    "start-executor": "node dist/src/executor/main.js",
     "postinstall": "patch-package"
   }
 }

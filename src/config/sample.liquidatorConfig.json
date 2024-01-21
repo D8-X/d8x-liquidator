@@ -23,6 +23,7 @@
     "liquidateIntervalSecondsMax": 60,
     "liquidateIntervalSecondsMin": 5,
     "refreshAccountsSecondsMax": 28800,
+    "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 1,
     "priceFeedEndpoints": [{ "type": "pyth", "endpoints": ["https://hermes-beta.pyth.network/api"] }]
   }

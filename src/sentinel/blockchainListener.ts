@@ -43,7 +43,7 @@ export default class BlockhainListener {
   constructor(config: LiquidatorConfig) {
     this.config = config;
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig));
-    this.redisPubClient = constructRedis("listenerPubClient");
+    this.redisPubClient = constructRedis("sentinelPubClient");
     this.httpProvider = new StaticJsonRpcProvider(this.chooseHttpRpc());
     this.lastBlockReceivedAt = Date.now();
     this.network = { name: "", chainId: 0 };
