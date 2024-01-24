@@ -369,7 +369,7 @@ export default class Distributor {
     let S2 = pxS2S3[0];
     let Sm = S2 * (1 + this.markPremium.get(symbol)!);
     // undefined -> either S3 = 1 (quote coll) or S3 = S2 (base coll)
-    let S3 = pxS2S3[1] ?? (this.isQuote! ? 1 : S2);
+    let S3 = pxS2S3[1] ?? (this.isQuote.get(symbol) ? 1 : S2);
     let pos = position.positionBC;
     let lockedIn = position.lockedInQC;
     let cash = position.cashCC - position.unpaidFundingCC;
