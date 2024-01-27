@@ -15,6 +15,7 @@ export default class Liquidator {
   private treasury: string;
   private privateKey: string[];
   private config: LiquidatorConfig;
+  private earnings: string | undefined;
 
   // state
   private q: Set<string> = new Set();
@@ -30,6 +31,11 @@ export default class Liquidator {
       api: new LiquidatorTool(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig), pk),
       busy: false,
     }));
+    if (this.config.rewardsAddress != "" && this.config.rewardsAddress.startsWith("0x")) {
+      this.earnings = this.config.rewardsAddress;
+    } else {
+      this.earnings = undefined;
+    }
   }
 
   /**
@@ -147,7 +153,7 @@ export default class Liquidator {
           const { symbol, traderAddr }: LiquidateTraderMsg = JSON.parse(msg);
           txns.push({
             tx: executeWithTimeout(
-              liq.api.liquidateTrader(symbol, traderAddr, this.config.rewardsAddress, undefined, {
+              liq.api.liquidateTrader(symbol, traderAddr, this.earnings, undefined, {
                 gasLimit: 1_000_000,
               }),
               30_000,
