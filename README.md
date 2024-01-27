@@ -14,7 +14,7 @@ In addition, you will need:
 
 The first address along the seed phrase's derivation path must be funded with with sufficient native tokens to execute liquidatons on-chain. For instance, if running on Polygon zkEVM, the first address needs to have sufficient ETH to pay for gas.
 
-Note that your proceeds are sent to an address of your choice, which need not be associated with the mnemonic seed provided. Hence your earnings are not at risk even if the server is compromised. Nevertheless we strongly encourage you to use a sufficiently secure network configuration when choosing a server.
+Note that your proceeds are sent to an address of your choice, which need not be associated with the mnemonic seed provided. Hence your earnings are not at risk even if the mnemonic seed is compromised. Nevertheless we strongly encourage you to use a sufficiently secure network configuration when choosing a server.
 
 ## 2 - Configuration
 
@@ -33,7 +33,7 @@ Navigate to src/config, where you will find the files `sample.liquidatorConfig.j
 
 ## 3 - Starting the bots
 
-Start all the liquidator bots on testnet by running
+Start all the liquidator bots by running
 
 ```
 $ sudo docker compose up --build -d
