@@ -31,7 +31,6 @@ export interface LiquidatorConfig {
   refreshAccountsIntervalSecondsMin: number;
   liquidateIntervalSecondsMax: number;
   liquidateIntervalSecondsMin: number;
-  refreshAccountsSecondsMax: number;
   fetchPricesIntervalSecondsMin: number;
   maxGasPriceGWei: 1;
   priceFeedEndpoints: [{ type: "pyth" | "odin"; endpoints: string[] }];

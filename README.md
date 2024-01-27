@@ -23,16 +23,13 @@ Note that your proceeds are sent to an address of your choice, which need not be
 Rename the file `sample.env` as `.env` and edit as necessary:
 
 - SDK_CONFIG: The D8X Perpetuals SDK confgi name of the network where traders are liquidated, e.g. "zkevm"
-- EARNINGS_WALLET: Address of the wallet that will collect all earnings from liquidations
 - SEED_PHRASE: Your mnemonic seed phrase.
   - Remember to fund the first address along the derivation path.
   - You can create a seed phrase e.g. by creating a new Metamask wallet, exporting the seed phrase, and funding the first account in this wallet with sufficient native tokens.
 
 ### Parameter file
 
-Navigate to src/config, where you will find the files `sample.liquidatorConfig.json`. Rename it replacing `sample` by `live` and use these files to enter your own RPCs.
-
-All other values can be left unchanged.
+Navigate to src/config, where you will find the files `sample.liquidatorConfig.json`. Rename it replacing `sample` by `live`, and enter the address where rewards will be credited in the field called _rewardsAddress_. All other values can be left unchanged, though we strongly recommend you use additional RPCs, especially for Websockets.
 
 ## 3 - Starting the bots
 

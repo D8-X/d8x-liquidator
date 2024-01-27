@@ -1,31 +1,56 @@
 [
   {
-    "sdkConfig": "zkevmTestnet",
+    "sdkConfig": "zkevm",
     "rewardsAddress": "",
     "bots": 2,
-    "rpcExec": [
-      "https://rpc.public.zkevm-test.net",
-      "https://floral-green-butterfly.zkevm-testnet.quiknode.pro/b8bc691efee3d846926f29a8dee18a1168d91fc5/",
-      "https://powerful-sly-shadow.zkevm-testnet.discover.quiknode.pro/26fe51651b26744153e4ef4f78038edd616fad5e/"
-    ],
-    "rpcWatch": [
-      "https://floral-green-butterfly.zkevm-testnet.quiknode.pro/b8bc691efee3d846926f29a8dee18a1168d91fc5/",
-      "https://powerful-sly-shadow.zkevm-testnet.discover.quiknode.pro/26fe51651b26744153e4ef4f78038edd616fad5e/"
-    ],
-    "rpcListenHttp": ["https://rpc.public.zkevm-test.net"],
-    "rpcListenWs": [
-      "wss://floral-green-butterfly.zkevm-testnet.quiknode.pro/b8bc691efee3d846926f29a8dee18a1168d91fc5/",
-      "wss://powerful-sly-shadow.zkevm-testnet.discover.quiknode.pro/26fe51651b26744153e4ef4f78038edd616fad5e/"
-    ],
+    "rpcExec": ["https://zkevm-rpc.com"],
+    "rpcWatch": ["https://zkevm-rpc.com"],
+    "rpcListenHttp": ["https://zkevm-rpc.com"],
+    "rpcListenWs": [],
     "waitForBlockSeconds": 30,
-    "healthCheckSeconds": 2000,
-    "refreshAccountsIntervalSecondsMax": 2000,
+    "healthCheckSeconds": 3600,
+    "refreshAccountsIntervalSecondsMax": 3600,
     "refreshAccountsIntervalSecondsMin": 10,
     "liquidateIntervalSecondsMax": 60,
     "liquidateIntervalSecondsMin": 5,
-    "refreshAccountsSecondsMax": 28800,
+    "fetchPricesIntervalSecondsMin": 10,
+    "maxGasPriceGWei": 1,
+    "priceFeedEndpoints": [{ "type": "pyth", "endpoints": ["https://hermes.pyth.network/api"] }]
+  },
+  {
+    "sdkConfig": "zkevmTestnet",
+    "rewardsAddress": "",
+    "bots": 2,
+    "rpcExec": ["https://rpc.public.zkevm-test.net"],
+    "rpcWatch": ["https://rpc.public.zkevm-test.net"],
+    "rpcListenHttp": ["https://rpc.public.zkevm-test.net"],
+    "rpcListenWs": [],
+    "waitForBlockSeconds": 30,
+    "healthCheckSeconds": 3600,
+    "refreshAccountsIntervalSecondsMax": 3600,
+    "refreshAccountsIntervalSecondsMin": 10,
+    "liquidateIntervalSecondsMax": 60,
+    "liquidateIntervalSecondsMin": 5,
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 1,
     "priceFeedEndpoints": [{ "type": "pyth", "endpoints": ["https://hermes-beta.pyth.network/api"] }]
+  },
+  {
+    "sdkConfig": "x1",
+    "bots": 2,
+    "rewardsAddress": "",
+    "rpcExec": ["https://x1testrpc.okx.com", "https://testrpc.x1.tech"],
+    "rpcWatch": ["https://x1testrpc.okx.com", "https://testrpc.x1.tech"],
+    "rpcListenHttp": ["https://x1testrpc.okx.com", "https://testrpc.x1.tech"],
+    "rpcListenWs": ["wss://x1testws.okx.com", "wss://testws.x1.tech"],
+    "waitForBlockSeconds": 30,
+    "healthCheckSeconds": 3600,
+    "refreshAccountsIntervalSecondsMax": 3600,
+    "refreshAccountsIntervalSecondsMin": 10,
+    "liquidateIntervalSecondsMax": 60,
+    "liquidateIntervalSecondsMin": 5,
+    "fetchPricesIntervalSecondsMin": 10,
+    "maxGasPriceGWei": 100,
+    "priceFeedEndpoints": [{ "type": "odin", "endpoints": ["https://odin.quantena.tech/api"] }]
   }
 ]
