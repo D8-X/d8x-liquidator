@@ -99,6 +99,11 @@ export default class Distributor {
       this.openPositions.set(symbol, new Map());
       // dummy values
       this.lastRefreshTime.set(symbol, 0);
+      console.log({
+        symbol: symbol,
+        markPremium: this.markPremium.get(symbol),
+        unitAccumulatedFunding: this.unitAccumulatedFunding.get(symbol),
+      });
     }
 
     // Subscribe to blockchain events
@@ -365,15 +370,16 @@ export default class Distributor {
   private logPosition(position: Position, pxS2S3: [number, number | undefined]) {
     const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
     let S2 = pxS2S3[0];
-    let Sm = S2 * (1 + this.markPremium.get(symbol)!);
+    let Sm = S2 * (1 + (this.markPremium.get(symbol) ?? 0));
     // undefined -> either S3 = 1 (quote coll) or S3 = S2 (base coll)
-    let S3 = pxS2S3[1] ?? (this.isQuote.get(symbol) ? 1 : S2);
+    let S3 = pxS2S3[1] && !isNaN(pxS2S3[1]) ? pxS2S3[1] : this.isQuote.get(symbol) ? 1 : S2;
     let pos = position.positionBC;
     let lockedIn = position.lockedInQC;
     let cash = position.cashCC - position.unpaidFundingCC;
     let balance = cash + (pos * Sm - lockedIn) / S3;
     let leverage = (Math.abs(pos) * (Sm / S3)) / balance;
     console.log({
+      pxS2SmS3: [S2, Sm, S3],
       symbol: symbol,
       balance: balance,
       leverage: leverage,
@@ -387,9 +393,9 @@ export default class Distributor {
     }
     const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
     let S2 = pxS2S3[0];
-    let Sm = S2 * (1 + this.markPremium.get(symbol)!);
+    let Sm = S2 * (1 + (this.markPremium.get(symbol) ?? 0));
     // undefined -> either S3 = 1 (quote coll) or S3 = S2 (base coll)
-    let S3 = pxS2S3[1] ?? (this.isQuote.get(symbol) ? 1 : S2);
+    let S3 = pxS2S3[1] && !isNaN(pxS2S3[1]) ? pxS2S3[1] : this.isQuote.get(symbol) ? 1 : S2;
     let pos = position.positionBC;
     let lockedIn = position.lockedInQC;
     let cash = position.cashCC - position.unpaidFundingCC;
