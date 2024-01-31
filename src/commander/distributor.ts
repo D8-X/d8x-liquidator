@@ -170,6 +170,9 @@ export default class Distributor {
 
           case "UpdateMarginAccountEvent": {
             const account: UpdateMarginAccountMsg = JSON.parse(msg);
+            if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
+              return;
+            }
             this.updatePosition({
               address: account.traderAddr,
               perpetualId: account.perpetualId,
@@ -178,6 +181,7 @@ export default class Distributor {
               lockedInQC: account.lockedInQC,
               unpaidFundingCC: 0,
             });
+            break;
           }
 
           case "UpdateMarkPriceEvent": {
