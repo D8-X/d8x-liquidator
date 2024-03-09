@@ -29,6 +29,7 @@ export default class Distributor {
 
   // state
   private lastRefreshTime: Map<string, number> = new Map();
+  private lastFundingFetchTime: Map<string, number> = new Map();
   private openPositions: Map<string, Map<string, Position>> = new Map();
   private pxSubmission: Map<string, { submission: PriceFeedSubmission; pxS2S3: [number, number] }> = new Map();
   private markPremium: Map<string, number> = new Map();
@@ -108,21 +109,15 @@ export default class Distributor {
 
     // Subscribe to blockchain events
     // console.log(`${new Date(Date.now()).toISOString()}: subscribing to blockchain event streamer...`);
-    await this.redisSubClient.subscribe(
-      "block",
-      "UpdateMarkPriceEvent",
-      "UpdateMarginAccountEvent",
-      "UpdateUnitAccumulatedFundingEvent",
-      (err, count) => {
-        if (err) {
-          console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
-          process.exit(1);
-        }
-        // else {
-        //   console.log(`${new Date(Date.now()).toISOString()}: redis subscription success - ${count} active channels`);
-        // }
+    await this.redisSubClient.subscribe("block", "UpdateMarkPriceEvent", "UpdateMarginAccountEvent", (err, count) => {
+      if (err) {
+        console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
+        process.exit(1);
       }
-    );
+      // else {
+      //   console.log(`${new Date(Date.now()).toISOString()}: redis subscription success - ${count} active channels`);
+      // }
+    });
 
     this.ready = true;
   }
@@ -152,6 +147,11 @@ export default class Distributor {
         await this.refreshAllAccounts();
       }, 10_000);
 
+      // fetch accumulated funding so that it's fresh often enough
+      setInterval(async () => {
+        await this.refreshUnitAccumulatedFunding();
+      }, 10_000);
+
       this.redisSubClient.on("message", async (channel, msg) => {
         switch (channel) {
           case "block": {
@@ -173,13 +173,8 @@ export default class Distributor {
             if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
               return;
             }
-            this.updatePosition({
-              address: account.traderAddr,
-              perpetualId: account.perpetualId,
-              positionBC: account.positionBC,
-              cashCC: account.cashCC,
-              lockedInQC: account.lockedInQC,
-              unpaidFundingCC: 0,
+            await this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
+              this.updatePosition(pos);
             });
             break;
           }
@@ -201,7 +196,7 @@ export default class Distributor {
     });
   }
 
-  private updatePosition(position: Position) {
+  private async updatePosition(position: Position) {
     const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
     if (!this.openPositions.has(symbol)) {
       this.openPositions.set(symbol, new Map());
@@ -210,6 +205,34 @@ export default class Distributor {
       this.openPositions.get(symbol)!.set(position.address, position);
     } else {
       this.openPositions.get(symbol)!.delete(position.address);
+    }
+  }
+
+  private async fetchPosition(perpetualId: number, address: string) {
+    const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+    const account = await this.md.getReadOnlyProxyInstance().getMarginAccount(perpetualId, address);
+    const position: Position = {
+      perpetualId: perpetualId,
+      address: address,
+      positionBC: ABK64x64ToFloat(account.fPositionBC),
+      cashCC: ABK64x64ToFloat(account.fCashCC),
+      lockedInQC: ABK64x64ToFloat(account.fLockedInValueQC),
+      unpaidFundingCC: 0,
+    };
+    position.unpaidFundingCC =
+      position.positionBC *
+      (this.unitAccumulatedFunding.get(symbol)! - ABK64x64ToFloat(account.fUnitAccumulatedFundingStart));
+    return position;
+  }
+
+  private async refreshUnitAccumulatedFunding() {
+    for (const symbol of this.symbols) {
+      if (Date.now() - (this.lastFundingFetchTime.get(symbol) ?? 0) < this.config.liquidateIntervalSecondsMax * 1_000) {
+        return;
+      }
+      this.lastFundingFetchTime.set(symbol, Date.now());
+      const perp = await this.md.getReadOnlyProxyInstance().getPerpetual(this.md.getPerpIdFromSymbol(symbol)!);
+      this.unitAccumulatedFunding.set(symbol, ABK64x64ToFloat(perp.fUnitAccumulatedFunding));
     }
   }
 

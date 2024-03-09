@@ -2,10 +2,10 @@
 # yarn lockfile v1
 
 
-"@d8x/perpetuals-sdk@^1.0.9":
-  version "1.0.9"
-  resolved "https://registry.yarnpkg.com/@d8x/perpetuals-sdk/-/perpetuals-sdk-1.0.9.tgz#ee9661fe6bc234b561a5247b46a14d1d44db9262"
-  integrity sha512-CWb55yWnaS2JM6qnA+qeceTWfZSWvgLCA+tkqBwEWdvrySZ6ucyeKR+Y0EjohSJb8qJPGtZwXXolsp9n9ASuEQ==
+"@d8x/perpetuals-sdk@^1.0.17":
+  version "1.0.17"
+  resolved "https://registry.yarnpkg.com/@d8x/perpetuals-sdk/-/perpetuals-sdk-1.0.17.tgz#8af6174ea19ee670d7322a28ad0d17861e0d23e6"
+  integrity sha512-w1WPyXz9E4+s4XEHn0tKMgtY3di7vkBsMWy7tjxKBHvMMb2h0lpyrBirOPbRV4YH+ApJGb3f0lwLTpzgBMmS1g==
   dependencies:
     "@ethersproject/abi" "^5.7.0"
     "@ethersproject/abstract-signer" "^5.7.0"
@@ -371,9 +371,9 @@
   integrity sha512-Sx1pU8EM64o2BrqNpEO1CNLtKQwyhuXuqyfH7oGKCk+1a33d2r5saW8zNwm3j6BTExtjrv2BxTgzzkMwts6vGg==
 
 "@typechain/ethers-v5@^11.1.1":
-  version "11.1.1"
-  resolved "https://registry.yarnpkg.com/@typechain/ethers-v5/-/ethers-v5-11.1.1.tgz#23a358135a302140cf89a186592464dd6bbf1f98"
-  integrity sha512-D9WyUrCJ4Z5Gg8T00HWLpuqn1CqSDXlCiUOOpLaWoCbnZrE2jSIOUwR9blBZNo6LE5058e3niVu6xk205Et7tg==
+  version "11.1.2"
+  resolved "https://registry.yarnpkg.com/@typechain/ethers-v5/-/ethers-v5-11.1.2.tgz#82510c1744f37a2f906b9e0532ac18c0b74ffe69"
+  integrity sha512-ID6pqWkao54EuUQa0P5RgjvfA3MYqxUQKpbGKERbsjBW5Ra7EIXvbMlPp2pcP5IAdUkyMCFYsP2SN5q7mPdLDQ==
   dependencies:
     lodash "^4.17.15"
     ts-essentials "^7.0.1"
@@ -1096,9 +1096,9 @@ ts-essentials@^7.0.1:
   integrity sha512-8+gr5+lqO3G84KdiTSMRLtuyJ+nTBVRKuCrK4lidMPdVeEp0uqC875uE5NMcaA7YYMN7XsNiFQuMvasF8HT/xQ==
 
 typechain@^8.2.0:
-  version "8.3.1"
-  resolved "https://registry.yarnpkg.com/typechain/-/typechain-8.3.1.tgz#dccbc839b94877997536c356380eff7325395cfb"
-  integrity sha512-fA7clol2IP/56yq6vkMTR+4URF1nGjV82Wx6Rf09EsqD4tkzMAvEaqYxVFCavJm/1xaRga/oD55K+4FtuXwQOQ==
+  version "8.3.2"
+  resolved "https://registry.yarnpkg.com/typechain/-/typechain-8.3.2.tgz#1090dd8d9c57b6ef2aed3640a516bdbf01b00d73"
+  integrity sha512-x/sQYr5w9K7yv3es7jo4KTX05CLxOf7TRWwoHlrjRh8H82G64g+k7VuWPJlgMo6qrjfCulOdfBjiaDtmhFYD/Q==
   dependencies:
     "@types/prettier" "^2.1.1"
     debug "^4.3.1"
