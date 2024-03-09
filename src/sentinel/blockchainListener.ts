@@ -16,7 +16,6 @@ import {
   LiquidateEvent,
   UpdateMarginAccountEvent,
   UpdateMarkPriceEvent,
-  UpdateUnitAccumulatedFundingEvent,
 } from "@d8x/perpetuals-sdk/dist/esm/contracts/IPerpetualManager";
 
 enum ListeningMode {
@@ -228,25 +227,12 @@ export default class BlockhainListener {
 
     proxy.on(
       "UpdateMarginAccount",
-      (
-        perpetualId: number,
-        trader: string,
-        positionId: string,
-        fPositionBC: BigNumber,
-        fCashCC: BigNumber,
-        fLockedInValueQC: BigNumber,
-        fFundingPaymentCC: BigNumber,
-        fOpenInterestBC: BigNumber,
-        event: UpdateMarginAccountEvent
-      ) => {
+      (perpetualId: number, trader: string, fFundingPaymentCC: BigNumber, event: UpdateMarginAccountEvent) => {
         const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
         const msg: UpdateMarginAccountMsg = {
           perpetualId: perpetualId,
           symbol: symbol,
           traderAddr: trader,
-          positionBC: ABK64x64ToFloat(fPositionBC),
-          cashCC: ABK64x64ToFloat(fCashCC),
-          lockedInQC: ABK64x64ToFloat(fLockedInValueQC),
           fundingPaymentCC: ABK64x64ToFloat(fFundingPaymentCC),
           block: event.blockNumber,
           hash: event.transactionHash,
@@ -280,20 +266,20 @@ export default class BlockhainListener {
       }
     );
 
-    proxy.on(
-      "UpdateUnitAccumulatedFunding",
-      (perpetualId: number, fUnitAccumulativeFundingCC: BigNumber, event: UpdateUnitAccumulatedFundingEvent) => {
-        const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
-        const msg: UpdateUnitAccumulatedFundingMsg = {
-          perpetualId: perpetualId,
-          symbol: symbol,
-          unitAccumulatedFundingCC: ABK64x64ToFloat(fUnitAccumulativeFundingCC),
-          block: event.blockNumber,
-          hash: event.transactionHash,
-          id: `${event.transactionHash}:${event.logIndex}`,
-        };
-        this.redisPubClient.publish("UpdateUnitAccumulatedFundingEvent", JSON.stringify(msg));
-      }
-    );
+    // proxy.on(
+    //   "UpdateUnitAccumulatedFunding",
+    //   (perpetualId: number, fUnitAccumulativeFundingCC: BigNumber, event: UpdateUnitAccumulatedFundingEvent) => {
+    //     const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+    //     const msg: UpdateUnitAccumulatedFundingMsg = {
+    //       perpetualId: perpetualId,
+    //       symbol: symbol,
+    //       unitAccumulatedFundingCC: ABK64x64ToFloat(fUnitAccumulativeFundingCC),
+    //       block: event.blockNumber,
+    //       hash: event.transactionHash,
+    //       id: `${event.transactionHash}:${event.logIndex}`,
+    //     };
+    //     this.redisPubClient.publish("UpdateUnitAccumulatedFundingEvent", JSON.stringify(msg));
+    //   }
+    // );
   }
 }

@@ -1,13 +1,13 @@
 {
   "dependencies": {
-    "@d8x/perpetuals-sdk": "^1.0.9",
+    "@d8x/perpetuals-sdk": "^1.0.17",
     "dotenv": "^16.0.3",
     "ethers": "^5.7.2",
     "ioredis": "^5.3.2",
-    "sturdy-websocket": "^0.2.1",
-    "typescript": "^5.0.4",
     "patch-package": "^7.0.2",
     "postinstall-postinstall": "^2.1.0",
+    "sturdy-websocket": "^0.2.1",
+    "typescript": "^5.0.4",
     "ws": "^8.13.0"
   },
   "devDependencies": {

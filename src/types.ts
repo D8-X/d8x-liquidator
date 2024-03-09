@@ -68,9 +68,6 @@ export interface UpdateMarginAccountMsg extends RedisMsg {
   perpetualId: number;
   symbol: string;
   traderAddr: string;
-  positionBC: number;
-  cashCC: number;
-  lockedInQC: number;
   fundingPaymentCC: number;
 }
 
