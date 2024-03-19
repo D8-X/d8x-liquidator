@@ -7,18 +7,21 @@ import {
   Multicall3__factory,
   MULTICALL_ADDRESS,
   Multicall3,
+  IPerpetualManager,
+  floatToABK64x64,
 } from "@d8x/perpetuals-sdk";
-import { providers } from "ethers";
+import { BigNumber, providers } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis } from "../utils";
 import {
+  LiquidateMsg,
+  LiquidateTraderMsg,
   LiquidatorConfig,
   Position,
   UpdateMarginAccountMsg,
   UpdateMarkPriceMsg,
   UpdateUnitAccumulatedFundingMsg,
 } from "../types";
-import { PerpStorage } from "@d8x/perpetuals-sdk/dist/esm/contracts/IPerpetualManager";
 
 export default class Distributor {
   // objects
@@ -190,6 +193,13 @@ export default class Distributor {
             this.unitAccumulatedFunding.set(symbol, unitAccumulatedFundingCC);
             break;
           }
+
+          case "Liquidate": {
+            const { perpetualId, traderAddr }: LiquidateMsg = JSON.parse(msg);
+            await this.fetchPosition(perpetualId, traderAddr).then((pos) => {
+              this.updatePosition(pos);
+            });
+          }
         }
       });
       await this.refreshAllAccounts();
@@ -210,18 +220,21 @@ export default class Distributor {
 
   private async fetchPosition(perpetualId: number, address: string) {
     const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
-    const account = await this.md.getReadOnlyProxyInstance().getMarginAccount(perpetualId, address);
+    const pxS2S3 = this.pxSubmission.get(symbol)!.pxS2S3;
+    const account = await (this.md.getReadOnlyProxyInstance() as IPerpetualManager).getTraderState(
+      perpetualId,
+      address,
+      [floatToABK64x64(pxS2S3[0]), floatToABK64x64(pxS2S3[1] ?? 0)]
+    );
+
     const position: Position = {
       perpetualId: perpetualId,
       address: address,
-      positionBC: ABK64x64ToFloat(account.fPositionBC),
-      cashCC: ABK64x64ToFloat(account.fCashCC),
-      lockedInQC: ABK64x64ToFloat(account.fLockedInValueQC),
-      unpaidFundingCC: 0,
+      positionBC: ABK64x64ToFloat(account[4]),
+      cashCC: ABK64x64ToFloat(account[3]),
+      lockedInQC: ABK64x64ToFloat(account[5]),
+      unpaidFundingCC: ABK64x64ToFloat(account[3].sub(account[2])),
     };
-    position.unpaidFundingCC =
-      position.positionBC *
-      (this.unitAccumulatedFunding.get(symbol)! - ABK64x64ToFloat(account.fUnitAccumulatedFundingStart));
     return position;
   }
 
@@ -251,7 +264,7 @@ export default class Distributor {
     const chunkSize1 = 2 ** 16; // for addresses
     const chunkSize2 = 2 ** 8; // for margin accounts
     const perpId = this.md.getPerpIdFromSymbol(symbol)!;
-    const proxy = this.md.getReadOnlyProxyInstance();
+    const proxy = this.md.getReadOnlyProxyInstance() as IPerpetualManager;
     const rpcProviders = this.config.rpcWatch.map((url) => new providers.StaticJsonRpcProvider(url));
     let providerIdx = Math.floor(Math.random() * rpcProviders.length);
     this.lastRefreshTime.set(symbol, Date.now());
@@ -295,12 +308,17 @@ export default class Distributor {
     const addressChunks: string[][] = [];
     const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, rpcProviders[providerIdx]);
     const traderList = [...addresses];
+    const pxS2S3 = this.pxSubmission.get(symbol)!.pxS2S3;
     for (let i = 0; i < traderList.length; i += chunkSize2) {
       const addressChunk = traderList.slice(i, i + chunkSize2);
       const calls: Multicall3.Call3Struct[] = addressChunk.map((addr) => ({
         allowFailure: true,
         target: proxy.address,
-        callData: proxy.interface.encodeFunctionData("getMarginAccount", [perpId, addr]),
+        callData: proxy.interface.encodeFunctionData("getTraderState", [
+          perpId,
+          addr,
+          [floatToABK64x64(pxS2S3[0]), floatToABK64x64(pxS2S3[1] ?? 0)],
+        ]),
       }));
       promises2.push(multicall.connect(rpcProviders[providerIdx]).callStatic.aggregate3(calls));
       addressChunks.push(addressChunk);
@@ -319,27 +337,37 @@ export default class Distributor {
             results.value.map((result, k) => {
               if (result.success) {
                 const account = proxy.interface.decodeFunctionResult(
-                  "getMarginAccount",
+                  "getTraderState",
                   result.returnData
-                )[0] as PerpStorage.MarginAccountStructOutput;
+                )[0] as BigNumber[];
+                /**
+                 * 0 marginBalance : number; // current margin balance
+                 * 1 availableMargin : number; // amount over initial margin
+                 * 2 availableCashCC : number; // cash minus unpaid funding
+                 * 3 marginAccountCashCC : number;
+                 * 4 marginAccountPositionBC : number;
+                 * 5 marginAccountLockedInValueQC : number;
+                 * 6 fUnitAccumulatedFundingStart
+                 * 7 leverage
+                 * 8 fMarkPrice
+                 * 9 CollateralToQuoteConversion
+                 * 10 maintenance margin rate
+                 */
                 const position: Position = {
                   perpetualId: perpId,
                   address: addressChunk[k],
-                  positionBC: ABK64x64ToFloat(account.fPositionBC),
-                  cashCC: ABK64x64ToFloat(account.fCashCC),
-                  lockedInQC: ABK64x64ToFloat(account.fLockedInValueQC),
-                  unpaidFundingCC: 0,
+                  positionBC: ABK64x64ToFloat(account[4]),
+                  cashCC: ABK64x64ToFloat(account[3]),
+                  lockedInQC: ABK64x64ToFloat(account[5]),
+                  unpaidFundingCC: ABK64x64ToFloat(account[3].sub(account[2])),
                 };
-                position.unpaidFundingCC =
-                  position.positionBC *
-                  (this.unitAccumulatedFunding.get(symbol)! - ABK64x64ToFloat(account.fUnitAccumulatedFundingStart));
                 this.updatePosition(position);
               }
             });
           }
         });
       } catch (e) {
-        console.log("Error fetching account chunk (RPC?)");
+        console.log("Error fetching account chunk (RPC?)", e);
       }
     }
     console.log({
@@ -350,17 +378,11 @@ export default class Distributor {
     });
   }
 
-  /**
-   * Checks if any accounts can be liquidated and publishes them via redis.
-   * No RPC calls are made here, only price service
-   * @param symbol Perpetual symbol
-   * @returns number of accounts that can be liquidated
-   */
-  private async checkPositions(symbol: string) {
-    this.requireReady();
+  private async refreshPrices(symbol: string) {
     if (Date.now() - (this.pricesFetchedAt.get(symbol) ?? 0) < this.config.fetchPricesIntervalSecondsMin * 1_000) {
-      return undefined;
+      return true;
     }
+    this.pricesFetchedAt.set(symbol, Date.now());
     try {
       const newPxSubmission = await this.md.fetchPriceSubmissionInfoForPerpetual(symbol);
       if (!this.checkSubmissionsInSync(newPxSubmission.submission.timestamps)) {
@@ -370,6 +392,21 @@ export default class Distributor {
     } catch (e) {
       console.log("error fetching from price service:");
       console.log(e);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Checks if any accounts can be liquidated and publishes them via redis.
+   * No RPC calls are made here, only price service
+   * @param symbol Perpetual symbol
+   * @returns number of accounts that can be liquidated
+   */
+  private async checkPositions(symbol: string) {
+    this.requireReady();
+
+    if (!(await this.refreshPrices(symbol))) {
       return false;
     }
     const positions = this.openPositions.get(symbol)!;
@@ -428,6 +465,15 @@ export default class Distributor {
     let cash = position.cashCC - position.unpaidFundingCC;
     let maintenanceMargin = ((Math.abs(pos) * Sm) / S3) * this.maintenanceRate.get(symbol)!;
     let balance = cash + (pos * Sm - lockedIn) / S3;
+    // if (balance < maintenanceMargin) {
+    //   console.log({
+    //     trader: position.address,
+    //     symbol: symbol,
+    //     cash: cash,
+    //     balance: balance,
+    //     leverage: Math.abs(balance) > 1e-12 ? (Math.abs(pos) * Sm) / S3 / balance : -Infinity,
+    //   });
+    // }
     return balance >= maintenanceMargin;
   }
 
