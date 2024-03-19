@@ -157,7 +157,7 @@ export default class Liquidator {
     let tx: ContractTransaction;
     try {
       tx = await this.bots[botIdx].api.liquidateTrader(symbol, trader, this.config.rewardsAddress, undefined, {
-        gasLimit: 1_000_000,
+        gasLimit: this.config.gasLimit,
       });
     } catch (e: any) {
       console.log({
@@ -282,8 +282,9 @@ export default class Liquidator {
   public async fundWallets(addressArray: string[]) {
     const provider = this.providers[Math.floor(Math.random() * this.providers.length)];
     const treasury = new Wallet(this.treasury, provider);
+    const gasPriceWei = await provider.getGasPrice();
     // min balance should cover 1e7 gas
-    const minBalance = utils.parseUnits(`${this.config.maxGasPriceGWei * 1e7}`, "gwei");
+    const minBalance = gasPriceWei.mul(this.config.gasLimit * 5);
     for (let addr of addressArray) {
       const botBalance = await provider.getBalance(addr);
       const treasuryBalance = await provider.getBalance(treasury.address);
@@ -293,20 +294,31 @@ export default class Liquidator {
         botAddress: addr,
         botBalance: utils.formatUnits(botBalance),
         minBalance: utils.formatUnits(minBalance),
+        needsFunding: botBalance.lt(minBalance),
       });
       if (botBalance.lt(minBalance)) {
         // transfer twice the min so it doesn't transfer every time
         const transferAmount = minBalance.mul(2).sub(botBalance);
         if (transferAmount.lt(treasuryBalance)) {
+          console.log({
+            info: "transferring funds...",
+            to: addr,
+            transferAmount: utils.formatUnits(transferAmount),
+          });
           const tx = await treasury.sendTransaction({
             to: addr,
             value: transferAmount,
           });
           await tx.wait();
-          console.log({ transferAmount: utils.formatUnits(transferAmount), txn: tx.hash });
+          console.log({
+            transferAmount: utils.formatUnits(transferAmount),
+            txn: tx.hash,
+          });
         } else {
           throw new Error(
-            `insufficient balance in treasury ${utils.formatUnits(treasuryBalance)}; send funds to ${treasury.address}`
+            `insufficient balance in treasury (${utils.formatUnits(
+              treasuryBalance
+            )}); send at least ${utils.formatUnits(transferAmount)} to ${treasury.address}`
           );
         }
       }

@@ -15,6 +15,7 @@
     "liquidateIntervalSecondsMin": 5,
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 1,
+    "gasLimit": 2000000,
     "priceFeedEndpoints": [{ "type": "pyth", "endpoints": ["https://hermes.pyth.network/api"] }]
   },
   {
@@ -33,6 +34,7 @@
     "liquidateIntervalSecondsMin": 5,
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 1,
+    "gasLimit": 2000000,
     "priceFeedEndpoints": [{ "type": "pyth", "endpoints": ["https://hermes-beta.pyth.network/api"] }]
   },
   {
@@ -51,6 +53,7 @@
     "liquidateIntervalSecondsMin": 5,
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 100,
+    "gasLimit": 2000000,
     "priceFeedEndpoints": [{ "type": "odin", "endpoints": ["https://odin.quantena.tech/api"] }]
   }
 ]

@@ -51,6 +51,7 @@ export default class BlockhainListener {
   private chooseHttpRpc() {
     const idx = (this.lastRpcIndex.http + 1) % this.config.rpcListenHttp.length;
     this.lastRpcIndex.http = idx;
+    console.log(idx, this.config.rpcListenHttp[idx]);
     return this.config.rpcListenHttp[idx];
   }
 
@@ -87,11 +88,11 @@ export default class BlockhainListener {
     this.unsubscribe();
     this.blockNumber = undefined;
     this.listeningProvider?.removeAllListeners();
-    if (this.mode == ListeningMode.Events) {
+    if (this.mode == ListeningMode.Events || this.config.rpcListenWs.length < 1) {
       console.log(`${new Date(Date.now()).toISOString()}: switching from WS to HTTP`);
       this.mode = ListeningMode.Polling;
       this.listeningProvider = new StaticJsonRpcProvider(this.chooseHttpRpc(), this.network);
-    } else {
+    } else if (this.config.rpcListenWs.length > 0) {
       console.log(`${new Date(Date.now()).toISOString()}: switching from HTTP to WS`);
       this.mode = ListeningMode.Events;
       this.listeningProvider = new WebSocketProvider(this.chooseWsRpc(), this.network);
@@ -120,7 +121,7 @@ export default class BlockhainListener {
         if (!this.checkHeartbeat()) {
           this.switchListeningMode();
         }
-      } else {
+      } else if (this.config.rpcListenWs.length > 0) {
         // currently on HTTP - check if we can switch to WS by seeing if we get blocks
         let success = false;
         let wsProvider = new WebSocketProvider(
@@ -198,7 +199,6 @@ export default class BlockhainListener {
         perpetualId: number,
         liquidator: string,
         trader: string,
-        positionId: string,
         amountLiquidatedBC: BigNumber,
         liquidationPrice: BigNumber,
         newPositionSizeBC: BigNumber,

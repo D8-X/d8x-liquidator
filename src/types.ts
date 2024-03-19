@@ -32,7 +32,8 @@ export interface LiquidatorConfig {
   liquidateIntervalSecondsMax: number;
   liquidateIntervalSecondsMin: number;
   fetchPricesIntervalSecondsMin: number;
-  maxGasPriceGWei: 1;
+  maxGasPriceGWei: number;
+  gasLimit: number;
   priceFeedEndpoints: [{ type: "pyth" | "odin"; endpoints: string[] }];
 }
 
