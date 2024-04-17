@@ -34,7 +34,7 @@ export default class Distributor {
   private lastRefreshTime: Map<string, number> = new Map();
   private lastFundingFetchTime: Map<string, number> = new Map();
   private openPositions: Map<string, Map<string, Position>> = new Map();
-  private pxSubmission: Map<string, { submission: PriceFeedSubmission; pxS2S3: [number, number] }> = new Map();
+  private pxSubmission: Map<string, { idxPrices: number[] }> = new Map();
   private markPremium: Map<string, number> = new Map();
   private unitAccumulatedFunding: Map<string, number> = new Map();
   private messageSentAt: Map<string, number> = new Map();
@@ -94,7 +94,7 @@ export default class Distributor {
         this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE
       );
       // price info
-      this.pxSubmission.set(symbol, await this.md.fetchPriceSubmissionInfoForPerpetual(symbol));
+      this.pxSubmission.set(symbol, await this.md.fetchPricesForPerpetual(symbol));
       // mark premium, accumulated funding per BC unit
       const perpState = await this.md.getReadOnlyProxyInstance().getPerpetual(this.md.getPerpIdFromSymbol(symbol));
       this.markPremium.set(symbol, ABK64x64ToFloat(perpState.currentMarkPremiumRate.fPrice));
@@ -112,15 +112,21 @@ export default class Distributor {
 
     // Subscribe to blockchain events
     // console.log(`${new Date(Date.now()).toISOString()}: subscribing to blockchain event streamer...`);
-    await this.redisSubClient.subscribe("block", "UpdateMarkPriceEvent", "UpdateMarginAccountEvent", (err, count) => {
-      if (err) {
-        console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
-        process.exit(1);
+    await this.redisSubClient.subscribe(
+      "block",
+      "UpdateMarkPriceEvent",
+      "UpdateMarginAccountEvent",
+      "LiquidateEvent",
+      (err, count) => {
+        if (err) {
+          console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
+          process.exit(1);
+        }
+        // else {
+        //   console.log(`${new Date(Date.now()).toISOString()}: redis subscription success - ${count} active channels`);
+        // }
       }
-      // else {
-      //   console.log(`${new Date(Date.now()).toISOString()}: redis subscription success - ${count} active channels`);
-      // }
-    });
+    );
 
     this.ready = true;
   }
@@ -194,7 +200,7 @@ export default class Distributor {
             break;
           }
 
-          case "Liquidate": {
+          case "LiquidateEvent": {
             const { perpetualId, traderAddr }: LiquidateMsg = JSON.parse(msg);
             await this.fetchPosition(perpetualId, traderAddr).then((pos) => {
               this.updatePosition(pos);
@@ -220,7 +226,7 @@ export default class Distributor {
 
   private async fetchPosition(perpetualId: number, address: string) {
     const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
-    const pxS2S3 = this.pxSubmission.get(symbol)!.pxS2S3;
+    const pxS2S3 = this.pxSubmission.get(symbol)!.idxPrices;
     const account = await (this.md.getReadOnlyProxyInstance() as IPerpetualManager).getTraderState(
       perpetualId,
       address,
@@ -308,7 +314,7 @@ export default class Distributor {
     const addressChunks: string[][] = [];
     const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, rpcProviders[providerIdx]);
     const traderList = [...addresses];
-    const pxS2S3 = this.pxSubmission.get(symbol)!.pxS2S3;
+    const pxS2S3 = this.pxSubmission.get(symbol)!.idxPrices;
     for (let i = 0; i < traderList.length; i += chunkSize2) {
       const addressChunk = traderList.slice(i, i + chunkSize2);
       const calls: Multicall3.Call3Struct[] = addressChunk.map((addr) => ({
@@ -384,10 +390,10 @@ export default class Distributor {
     }
     this.pricesFetchedAt.set(symbol, Date.now());
     try {
-      const newPxSubmission = await this.md.fetchPriceSubmissionInfoForPerpetual(symbol);
-      if (!this.checkSubmissionsInSync(newPxSubmission.submission.timestamps)) {
-        return false;
-      }
+      const newPxSubmission = await this.md.fetchPricesForPerpetual(symbol);
+      // if (!this.checkSubmissionsInSync(newPxSubmission.submission.timestamps)) {
+      //   return false;
+      // }
       this.pxSubmission.set(symbol, newPxSubmission);
     } catch (e) {
       console.log("error fetching from price service:");
@@ -415,13 +421,13 @@ export default class Distributor {
 
     for (const trader of positions.keys()) {
       const position = positions.get(trader)!;
-      if (!this.isMarginSafe(position, curPx.pxS2S3)) {
+      if (!this.isMarginSafe(position, [curPx.idxPrices[0], curPx.idxPrices[1]])) {
         const msg = JSON.stringify({
           symbol: symbol,
           traderAddr: trader,
         });
         if (Date.now() - (this.messageSentAt.get(msg) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
-          this.logPosition(position, curPx.pxS2S3);
+          this.logPosition(position, [curPx.idxPrices[0], curPx.idxPrices[1]]);
           await this.redisPubClient.publish("LiquidateTrader", msg);
           this.messageSentAt.set(msg, Date.now());
         }
