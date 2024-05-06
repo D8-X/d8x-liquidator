@@ -44,10 +44,6 @@ export class Metrics {
    * Start the metrics endpoint
    */
   public async start() {
-    setInterval(() => {
-      this.incFundingFailure();
-    }, 100);
-
     this.metricsEndpoint(this.port, this.endpoint);
   }
 
