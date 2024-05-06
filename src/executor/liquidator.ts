@@ -4,6 +4,7 @@ import { providers } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis, executeWithTimeout } from "../utils";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
+import { Metrics } from "./metrics";
 
 export default class Liquidator {
   // objects
@@ -22,7 +23,12 @@ export default class Liquidator {
   private lastLiquidateCall: number = 0;
   private locked: Set<string> = new Set();
 
+  protected metrics: Metrics;
+
   constructor(pkTreasury: string, pkLiquidators: string[], config: LiquidatorConfig) {
+    this.metrics = new Metrics();
+    this.metrics.start();
+
     this.treasury = pkTreasury;
     this.privateKey = pkLiquidators;
     this.config = config;
@@ -156,6 +162,7 @@ export default class Liquidator {
     });
     let tx: ContractTransaction;
     try {
+      this.metrics.incrTxSubmissions();
       tx = await this.bots[botIdx].api.liquidateTrader(symbol, trader, this.config.rewardsAddress, undefined, {
         gasLimit: this.config.gasLimit,
       });
@@ -167,6 +174,7 @@ export default class Liquidator {
         executor: this.bots[botIdx].api.getAddress(),
         trader: trader,
       });
+      this.metrics.incrTxRejects();
       this.bots[botIdx].busy = false;
       this.locked.delete(`${symbol}:${trader}`);
       return false;
@@ -184,6 +192,7 @@ export default class Liquidator {
     // confirm execution
     try {
       const receipt = await tx.wait();
+      this.metrics.incrTxConfirmations();
       console.log({
         info: "txn confirmed",
         symbol: symbol,
@@ -197,6 +206,7 @@ export default class Liquidator {
       this.locked.delete(`${symbol}:${trader}`);
     } catch (e: any) {
       let error = e?.toString() || "";
+      this.metrics.incrTxFailures();
       console.log({
         info: "txn reverted",
         reason: error,
@@ -315,6 +325,7 @@ export default class Liquidator {
             txn: tx.hash,
           });
         } else {
+          this.metrics.incFundingFailure();
           throw new Error(
             `insufficient balance in treasury (${utils.formatUnits(
               treasuryBalance
