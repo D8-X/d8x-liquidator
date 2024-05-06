@@ -1,0 +1,29 @@
+# Default prometheus config used to scrape the executor service and send alerts
+# to alertmanager. Note that hostnames are used as defined in
+# docker-compose.yml, therfore any change in compose file must be reflected here
+# too.
+
+global:
+  scrape_interval: "30s"
+  external_labels:
+    deployment_name: "${PROMETHEUS_DEPLOYMENT_NAME}"
+    server_ip: "${PROMETHEUS_SERVER_IP}"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - /etc/prometheus/rules/*.rules.yaml
+
+scrape_configs:
+  - job_name: "Liquidator service"
+    static_configs:
+      - targets:
+          - executor:9001
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
