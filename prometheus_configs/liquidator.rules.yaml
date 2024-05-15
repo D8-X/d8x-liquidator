@@ -1,0 +1,32 @@
+groups:
+  - name: executor_alerts
+    rules:
+      - alert: TxFailures
+        expr: increase(liquidation_transaction_failures{}[1m]) > 1
+        # Do not wait to fire the alert when the condition is met
+        # for: 1m
+        labels:
+          severity: warning
+        annotations:
+          title: "Liquidation transaction failed (Liquidator)"
+          server_info: "Deployment {{ $externalLabels.deployment_name }} | Server IP {{ $externalLabels.server_ip }}"
+
+      - alert: TxRejections
+        expr: increase(liquidation_transaction_rejections{}[1m]) > 1
+        # Do not wait to fire the alert when the condition is met
+        # for: 1m
+        labels:
+          severity: warning
+        annotations:
+          title: "Liquidation transaction rejected (Liquidator)"
+          server_info: "Deployment {{ $externalLabels.deployment_name }} | Server IP {{ $externalLabels.server_ip }}"
+
+      - alert: FundingFailure
+        expr: increase(funding_failures{}[1m]) > 1
+        # Do not wait to fire the alert when the condition is met
+        # for: 1m
+        labels:
+          severity: warning
+        annotations:
+          title: "Funding bot failed (Liquidator)"
+          server_info: "Deployment {{ $externalLabels.deployment_name }} | Server IP {{ $externalLabels.server_ip }}"
