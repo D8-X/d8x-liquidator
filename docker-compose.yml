@@ -9,7 +9,7 @@ services:
     image: redis:6.2-alpine
     restart: always
     ports:
-      - "${REDIS_PORT}:${REDIS_PORT}"
+      - "127.0.0.1:${REDIS_PORT}:${REDIS_PORT}"
     command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
 
   # Listen to block and events, and stream on redis
