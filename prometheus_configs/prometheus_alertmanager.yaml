@@ -11,9 +11,9 @@ route:
 receivers:
   - name: "slack"
     slack_configs:
-      - send_resolved: true
+      - send_resolved: false
         username: "Prometheus"
-        channel: "#prometheus-alerts"
+        channel: "#zbot-prometheus-alerts"
         # Slack ur file should be mounted at this specified path
         api_url_file: /etc/alertmanager/slack_api_url.txt
         title: "{{ .CommonAnnotations.title }}"
