@@ -35,7 +35,7 @@
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 1,
     "gasLimit": 2000000,
-    "priceFeedEndpoints": [{ "type": "pyth", "endpoints": ["https://hermes-beta.pyth.network/api"] }]
+    "priceFeedEndpoints": [{ "type": "pyth", "endpoints": ["https://hermes-beta.pyth.network"] }]
   },
   {
     "sdkConfig": "x1",
@@ -54,6 +54,6 @@
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 100,
     "gasLimit": 2000000,
-    "priceFeedEndpoints": [{ "type": "odin", "endpoints": ["https://odin.quantena.tech/api"] }]
+    "priceFeedEndpoints": [{ "type": "odin", "endpoints": ["https://odin.d8x.xyz"] }]
   }
 ]
