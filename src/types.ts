@@ -1,4 +1,4 @@
-import { floatToABK64x64 } from "@d8x/perpetuals-sdk";
+import { PriceFeedEndpointsItem, floatToABK64x64 } from "@d8x/perpetuals-sdk";
 
 export const ZERO_POSITION = floatToABK64x64(0);
 
@@ -34,7 +34,7 @@ export interface LiquidatorConfig {
   fetchPricesIntervalSecondsMin: number;
   maxGasPriceGWei: number;
   gasLimit: number;
-  priceFeedEndpoints: [{ type: "pyth" | "odin"; endpoints: string[] }];
+  priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
 }
 
 export interface RedisMsg {
