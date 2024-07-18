@@ -1,6 +1,6 @@
 import { Redis } from "ioredis";
 import { RedisConfig, LiquidatorConfig } from "./types";
-import { ethers } from "ethers";
+import { HDNodeWallet, Mnemonic } from "ethers";
 
 require("dotenv").config();
 
@@ -33,7 +33,7 @@ export function getPrivateKeyFromSeed(mnemonic: string, idx: number) {
   }
   const baseDerivationPath = "m/44'/60'/0'/0";
   const path = `${baseDerivationPath}/${idx}`;
-  const mnemonicWallet = ethers.Wallet.fromMnemonic(mnemonic, path);
+  const mnemonicWallet = HDNodeWallet.fromMnemonic(Mnemonic.fromPhrase(mnemonic), path);
   return [mnemonicWallet.address, mnemonicWallet.privateKey];
 }
 

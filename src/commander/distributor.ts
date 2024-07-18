@@ -10,7 +10,7 @@ import {
   IPerpetualManager,
   floatToABK64x64,
 } from "@d8x/perpetuals-sdk";
-import { BigNumber, providers } from "ethers";
+import { BigNumberish, JsonRpcProvider } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis } from "../utils";
 import {
@@ -28,7 +28,7 @@ export default class Distributor {
   private md: MarketData;
   private redisSubClient: Redis;
   private redisPubClient: Redis;
-  private providers: providers.StaticJsonRpcProvider[];
+  private providers: JsonRpcProvider[];
 
   // state
   private lastRefreshTime: Map<string, number> = new Map();
@@ -56,7 +56,7 @@ export default class Distributor {
     this.config = config;
     this.redisSubClient = constructRedis("commanderSubClient");
     this.redisPubClient = constructRedis("commanderPubClient");
-    this.providers = this.config.rpcWatch.map((url) => new providers.StaticJsonRpcProvider(url));
+    this.providers = this.config.rpcWatch.map((url) => new JsonRpcProvider(url));
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(config.sdkConfig));
   }
 
@@ -227,19 +227,17 @@ export default class Distributor {
   private async fetchPosition(perpetualId: number, address: string) {
     const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
     const pxS2S3 = this.pxSubmission.get(symbol)!.idxPrices;
-    const account = await (this.md.getReadOnlyProxyInstance() as IPerpetualManager).getTraderState(
-      perpetualId,
-      address,
-      [floatToABK64x64(pxS2S3[0]), floatToABK64x64(pxS2S3[1] ?? 0)]
-    );
+    const account = await this.md
+      .getReadOnlyProxyInstance()
+      .getTraderState(perpetualId, address, [floatToABK64x64(pxS2S3[0]), floatToABK64x64(pxS2S3[1] ?? 0)]);
 
     const position: Position = {
       perpetualId: perpetualId,
       address: address,
-      positionBC: ABK64x64ToFloat(account[4]),
-      cashCC: ABK64x64ToFloat(account[3]),
-      lockedInQC: ABK64x64ToFloat(account[5]),
-      unpaidFundingCC: ABK64x64ToFloat(account[3].sub(account[2])),
+      positionBC: ABK64x64ToFloat(BigInt(account[4])),
+      cashCC: ABK64x64ToFloat(BigInt(account[3])),
+      lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
+      unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
     };
     return position;
   }
@@ -270,8 +268,8 @@ export default class Distributor {
     const chunkSize1 = 2 ** 16; // for addresses
     const chunkSize2 = 2 ** 8; // for margin accounts
     const perpId = this.md.getPerpIdFromSymbol(symbol)!;
-    const proxy = this.md.getReadOnlyProxyInstance() as IPerpetualManager;
-    const rpcProviders = this.config.rpcWatch.map((url) => new providers.StaticJsonRpcProvider(url));
+    const proxy = this.md.getReadOnlyProxyInstance() as any as IPerpetualManager;
+    const rpcProviders = this.config.rpcWatch.map((url) => new JsonRpcProvider(url));
     let providerIdx = Math.floor(Math.random() * rpcProviders.length);
     this.lastRefreshTime.set(symbol, Date.now());
 
@@ -279,7 +277,7 @@ export default class Distributor {
     console.log(`${symbol}: fetching number of accounts ... `);
     tsStart = Date.now();
 
-    const numAccounts = (await proxy.countActivePerpAccounts(perpId)).toNumber();
+    const numAccounts = Number(await proxy.countActivePerpAccounts(perpId));
     console.log({ symbol: symbol, time: new Date(Date.now()).toISOString(), activeAccounts: numAccounts });
 
     // fetch addresses
@@ -302,12 +300,6 @@ export default class Distributor {
         console.log(`${symbol} ${new Date(Date.now()).toISOString()}: error`);
       }
     }
-    // console.log({
-    //   symbol: symbol,
-    //   time: new Date(Date.now()).toISOString(),
-    //   addresses: addresses.size,
-    //   waited: `${Date.now() - tsStart} ms`,
-    // });
 
     // fech accounts
     const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];
@@ -319,14 +311,14 @@ export default class Distributor {
       const addressChunk = traderList.slice(i, i + chunkSize2);
       const calls: Multicall3.Call3Struct[] = addressChunk.map((addr) => ({
         allowFailure: true,
-        target: proxy.address,
+        target: proxy.getAddress(),
         callData: proxy.interface.encodeFunctionData("getTraderState", [
           perpId,
           addr,
           [floatToABK64x64(pxS2S3[0]), floatToABK64x64(pxS2S3[1] ?? 0)],
         ]),
       }));
-      promises2.push(multicall.connect(rpcProviders[providerIdx]).callStatic.aggregate3(calls));
+      promises2.push(multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls));
       addressChunks.push(addressChunk);
       providerIdx = (providerIdx + 1) % rpcProviders.length;
     }
@@ -345,7 +337,7 @@ export default class Distributor {
                 const account = proxy.interface.decodeFunctionResult(
                   "getTraderState",
                   result.returnData
-                )[0] as BigNumber[];
+                )[0] as BigNumberish[];
                 /**
                  * 0 marginBalance : number; // current margin balance
                  * 1 availableMargin : number; // amount over initial margin
@@ -362,10 +354,10 @@ export default class Distributor {
                 const position: Position = {
                   perpetualId: perpId,
                   address: addressChunk[k],
-                  positionBC: ABK64x64ToFloat(account[4]),
-                  cashCC: ABK64x64ToFloat(account[3]),
-                  lockedInQC: ABK64x64ToFloat(account[5]),
-                  unpaidFundingCC: ABK64x64ToFloat(account[3].sub(account[2])),
+                  positionBC: ABK64x64ToFloat(BigInt(account[4])),
+                  cashCC: ABK64x64ToFloat(BigInt(account[3])),
+                  lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
+                  unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
                 };
                 this.updatePosition(position);
               }
