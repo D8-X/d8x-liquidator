@@ -188,6 +188,10 @@ export default class BlockhainListener {
         `${new Date(Date.now()).toISOString()} BlockchainListener received error msg in ${this.mode} mode:`,
         e
       );
+      // Submit last block received ts to executor/distributor to take action if
+      // needed.
+      this.redisPubClient.publish("listener-error", this.lastBlockReceivedAt.toString());
+
       this.unsubscribe();
       this.switchListeningMode();
     });

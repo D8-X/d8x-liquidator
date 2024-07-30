@@ -47,10 +47,11 @@ export default class Distributor {
   private symbols: string[] = [];
   private maintenanceRate: Map<string, number> = new Map();
 
-  // constants
-
   // publish times must be within 10 seconds of each other, or submission will fail on-chain
   private MAX_OUTOFSYNC_SECONDS: number = 10;
+
+  // Last time refreshAllActiveAccounts was called
+  public lastRefreshOfAllActiveAccounts: Date = new Date(0);
 
   constructor(config: LiquidatorConfig) {
     this.config = config;
@@ -117,6 +118,8 @@ export default class Distributor {
       "UpdateMarkPriceEvent",
       "UpdateMarginAccountEvent",
       "LiquidateEvent",
+      "listener-error",
+      "switch-mode",
       (err, count) => {
         if (err) {
           console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
@@ -206,6 +209,24 @@ export default class Distributor {
               this.updatePosition(pos);
             });
           }
+
+          case "listener-error":
+          case "switch-mode":
+            // Whenever something wrong happens on sentinel, refresh orders if
+            // they were not refreshed recently in the last 30 (should be more
+            // than refreshOrdersIntervalSecondsMin) seconds. Sentinel might
+            // have missed events and executed orders might still be held in
+            // memory in distributor.
+            if (new Date(Date.now() - 30_000) > this.lastRefreshOfAllActiveAccounts) {
+              console.log({
+                message: "Refreshing all active accounts due to sentinel error",
+                time: new Date(Date.now()).toISOString(),
+                lastRefreshOfAllOpenOrders: this.lastRefreshOfAllActiveAccounts.toISOString(),
+                sentinelReason: channel,
+              });
+              this.refreshAllAccounts();
+            }
+            break;
         }
       });
       await this.refreshAllAccounts();
@@ -254,6 +275,7 @@ export default class Distributor {
   }
 
   private async refreshAllAccounts() {
+    this.lastRefreshOfAllActiveAccounts = new Date();
     await Promise.allSettled(this.symbols.map((symbol) => this.refreshActiveAccounts(symbol)));
   }
 
@@ -263,6 +285,11 @@ export default class Distributor {
   public async refreshActiveAccounts(symbol: string) {
     this.requireReady();
     if (Date.now() - (this.lastRefreshTime.get(symbol) ?? 0) < this.config.refreshAccountsIntervalSecondsMin * 1_000) {
+      console.log("[refreshActiveAccounts] called too soon", {
+        symbol: symbol,
+        time: new Date(Date.now()).toISOString(),
+        lastRefresh: new Date(this.lastRefreshTime.get(symbol) ?? 0),
+      });
       return;
     }
     const chunkSize1 = 2 ** 16; // for addresses
