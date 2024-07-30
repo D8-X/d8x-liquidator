@@ -34,8 +34,22 @@ export default class Liquidator {
     this.config = config;
     this.redisSubClient = constructRedis("executorSubClient");
     this.providers = this.config.rpcExec.map((url) => new providers.StaticJsonRpcProvider(url));
+
+    const sdkConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
+
+    // Use price feed endpoints from user specified config
+    if (this.config.priceFeedEndpoints.length > 0) {
+      sdkConfig.priceFeedEndpoints = this.config.priceFeedEndpoints;
+      console.log("Using user specified price feed endpoints", sdkConfig.priceFeedEndpoints);
+    } else {
+      console.warn(
+        "No price feed endpoints specified in config. Using default endpoints from SDK.",
+        sdkConfig.priceFeedEndpoints
+      );
+    }
+
     this.bots = this.privateKey.map((pk) => ({
-      api: new LiquidatorTool(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig), pk),
+      api: new LiquidatorTool(sdkConfig, pk),
       busy: false,
     }));
     if (this.config.rewardsAddress != "" && this.config.rewardsAddress.startsWith("0x")) {
