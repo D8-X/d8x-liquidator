@@ -1,6 +1,6 @@
 import { PerpetualDataHandler, LiquidatorTool } from "@d8x/perpetuals-sdk";
-import { ContractReceipt, ContractTransaction, Wallet, utils } from "ethers";
-import { providers } from "ethers";
+import { TransactionResponse, Wallet, formatUnits } from "ethers";
+import { JsonRpcProvider } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis, executeWithTimeout } from "../utils";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
@@ -8,7 +8,7 @@ import { Metrics } from "./metrics";
 
 export default class Liquidator {
   // objects
-  private providers: providers.StaticJsonRpcProvider[];
+  private providers: JsonRpcProvider[];
   private bots: { api: LiquidatorTool; busy: boolean }[];
   private redisSubClient: Redis;
 
@@ -33,7 +33,7 @@ export default class Liquidator {
     this.privateKey = pkLiquidators;
     this.config = config;
     this.redisSubClient = constructRedis("executorSubClient");
-    this.providers = this.config.rpcExec.map((url) => new providers.StaticJsonRpcProvider(url));
+    this.providers = this.config.rpcExec.map((url) => new JsonRpcProvider(url));
 
     const sdkConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
 
@@ -47,7 +47,6 @@ export default class Liquidator {
         sdkConfig.priceFeedEndpoints
       );
     }
-
     this.bots = this.privateKey.map((pk) => ({
       api: new LiquidatorTool(sdkConfig, pk),
       busy: false,
@@ -91,10 +90,8 @@ export default class Liquidator {
         console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
         process.exit(1);
       }
-      //  else {
-      //   console.log(`${new Date(Date.now()).toISOString()}: redis subscription success - ${count} active channels`);
-      // }
     });
+    console.log("initialized");
   }
 
   /**
@@ -113,14 +110,6 @@ export default class Liquidator {
 
       this.redisSubClient.on("message", async (channel, msg) => {
         switch (channel) {
-          // case "block": {
-          //   if (+msg % 1000 == 0) {
-          //     console.log(
-          //       JSON.stringify({ busy: busy, errors: errors, success: success, msgs: msgs }, undefined, "  ")
-          //     );
-          //   }
-          //   break;
-          // }
           case "LiquidateTrader": {
             const prevCount = this.q.size;
             this.q.add(msg);
@@ -174,7 +163,7 @@ export default class Liquidator {
       executor: this.bots[botIdx].api.getAddress(),
       trader: trader,
     });
-    let tx: ContractTransaction;
+    let tx: TransactionResponse;
     try {
       this.metrics.incrTxSubmissions();
       tx = await this.bots[botIdx].api.liquidateTrader(symbol, trader, this.config.rewardsAddress, undefined, {
@@ -199,13 +188,16 @@ export default class Liquidator {
       orderBook: tx.to,
       executor: tx.from,
       trader: trader,
-      gasLimit: `${utils.formatUnits(tx.gasLimit, "wei")} wei`,
+      gasLimit: `${formatUnits(tx.gasLimit, "wei")} wei`,
       hash: tx.hash,
     });
 
     // confirm execution
     try {
       const receipt = await tx.wait();
+      if (receipt === null) {
+        throw new Error("tx confirmation receipt is null");
+      }
       this.metrics.incrTxConfirmations();
       console.log({
         info: "txn confirmed",
@@ -214,8 +206,8 @@ export default class Liquidator {
         executor: receipt.from,
         trader: trader,
         block: receipt.blockNumber,
-        gasUsed: `${utils.formatUnits(receipt.cumulativeGasUsed, "wei")} wei`,
-        hash: receipt.transactionHash,
+        gasUsed: `${formatUnits(receipt.cumulativeGasUsed, "wei")} wei`,
+        hash: receipt.hash,
       });
       this.locked.delete(`${symbol}:${trader}`);
     } catch (e: any) {
@@ -306,28 +298,28 @@ export default class Liquidator {
   public async fundWallets(addressArray: string[]) {
     const provider = this.providers[Math.floor(Math.random() * this.providers.length)];
     const treasury = new Wallet(this.treasury, provider);
-    const gasPriceWei = await provider.getGasPrice();
+    const { gasPrice: gasPriceWei } = await provider.getFeeData();
     // min balance should cover 1e7 gas
-    const minBalance = gasPriceWei.mul(this.config.gasLimit * 5);
+    const minBalance = gasPriceWei! * BigInt(this.config.gasLimit * 5);
     for (let addr of addressArray) {
       const botBalance = await provider.getBalance(addr);
       const treasuryBalance = await provider.getBalance(treasury.address);
       console.log({
         treasuryAddr: treasury.address,
-        treasuryBalance: utils.formatUnits(treasuryBalance),
+        treasuryBalance: formatUnits(treasuryBalance),
         botAddress: addr,
-        botBalance: utils.formatUnits(botBalance),
-        minBalance: utils.formatUnits(minBalance),
-        needsFunding: botBalance.lt(minBalance),
+        botBalance: formatUnits(botBalance),
+        minBalance: formatUnits(minBalance),
+        needsFunding: botBalance < minBalance,
       });
-      if (botBalance.lt(minBalance)) {
+      if (botBalance < minBalance) {
         // transfer twice the min so it doesn't transfer every time
-        const transferAmount = minBalance.mul(2).sub(botBalance);
-        if (transferAmount.lt(treasuryBalance)) {
+        const transferAmount = minBalance * BigInt(2) - botBalance;
+        if (transferAmount < treasuryBalance) {
           console.log({
             info: "transferring funds...",
             to: addr,
-            transferAmount: utils.formatUnits(transferAmount),
+            transferAmount: formatUnits(transferAmount),
           });
           const tx = await treasury.sendTransaction({
             to: addr,
@@ -335,15 +327,15 @@ export default class Liquidator {
           });
           await tx.wait();
           console.log({
-            transferAmount: utils.formatUnits(transferAmount),
+            transferAmount: formatUnits(transferAmount),
             txn: tx.hash,
           });
         } else {
           this.metrics.incFundingFailure();
           throw new Error(
-            `insufficient balance in treasury (${utils.formatUnits(
-              treasuryBalance
-            )}); send at least ${utils.formatUnits(transferAmount)} to ${treasury.address}`
+            `insufficient balance in treasury (${formatUnits(treasuryBalance)}); send at least ${formatUnits(
+              transferAmount
+            )} to ${treasury.address}`
           );
         }
       }

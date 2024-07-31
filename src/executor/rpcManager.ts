@@ -1,4 +1,4 @@
-import { JsonRpcProvider } from "@ethersproject/providers";
+import { JsonRpcProvider } from "ethers";
 import { executeWithTimeout } from "../utils";
 
 export default class RPCManager {
@@ -53,7 +53,7 @@ export default class RPCManager {
     if (this.healthy.get(rpc) === undefined || (this.lastCheck.get(rpc) ?? 0) + this.CHECK_INTERVAL_MS < Date.now()) {
       const provider = new JsonRpcProvider(rpc);
       try {
-        await executeWithTimeout(provider.detectNetwork(), this.NETWORK_READY_MS);
+        await executeWithTimeout(provider._detectNetwork(), this.NETWORK_READY_MS);
         this.healthy.set(rpc, true);
       } catch (_e) {
         this.healthy.set(rpc, false);
