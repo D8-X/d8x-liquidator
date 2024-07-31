@@ -33,7 +33,7 @@ export default class BlockhainListener {
     this.config = config;
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig));
     this.redisPubClient = constructRedis("sentinelPubClient");
-    this.httpProvider = new JsonRpcProvider(this.chooseHttpRpc());
+    this.httpProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.md.network, { staticNetwork: true });
     this.lastBlockReceivedAt = Date.now();
   }
 
@@ -90,11 +90,16 @@ export default class BlockhainListener {
     if (this.mode == ListeningMode.Events || this.config.rpcListenWs.length < 1) {
       console.log(`${new Date(Date.now()).toISOString()}: switching from WS to HTTP`);
       this.mode = ListeningMode.Polling;
-      this.listeningProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.network);
+      this.listeningProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.network, {
+        staticNetwork: true,
+        polling: true,
+      });
     } else if (this.config.rpcListenWs.length > 0) {
       console.log(`${new Date(Date.now()).toISOString()}: switching from HTTP to WS`);
       this.mode = ListeningMode.Events;
-      this.listeningProvider = new WebSocketProvider(this.chooseWsRpc(), this.network);
+      this.listeningProvider = new WebSocketProvider(this.chooseWsRpc(), this.network, {
+        staticNetwork: true,
+      });
     }
     await this.addListeners();
     this.redisPubClient.publish("switch-mode", this.mode);
@@ -165,10 +170,14 @@ export default class BlockhainListener {
         new SturdyWebSocket(this.chooseWsRpc(), {
           wsConstructor: Websocket,
         }),
-        this.network
+        this.network,
+        { staticNetwork: true }
       );
     } else if (this.config.rpcListenHttp.length > 0) {
-      this.listeningProvider = new JsonRpcProvider(this.chooseHttpRpc());
+      this.listeningProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.network, {
+        staticNetwork: true,
+        polling: true,
+      });
     } else {
       throw new Error("Please specify RPC URLs for listening to blockchain events");
     }
