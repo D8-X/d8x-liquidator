@@ -1,22 +1,11 @@
 import { ABK64x64ToFloat, IPerpetualManager__factory, MarketData, PerpetualDataHandler } from "@d8x/perpetuals-sdk";
-import { BigNumber } from "@ethersproject/bignumber";
-import { Network, StaticJsonRpcProvider, WebSocketProvider } from "@ethersproject/providers";
 import { Redis } from "ioredis";
 import SturdyWebSocket from "sturdy-websocket";
 import Websocket from "ws";
-import {
-  LiquidateMsg,
-  LiquidatorConfig,
-  UpdateMarginAccountMsg,
-  UpdateMarkPriceMsg,
-  UpdateUnitAccumulatedFundingMsg,
-} from "../types";
+import { LiquidateMsg, LiquidatorConfig, UpdateMarginAccountMsg, UpdateMarkPriceMsg } from "../types";
 import { constructRedis, executeWithTimeout, sleep } from "../utils";
-import {
-  LiquidateEvent,
-  UpdateMarginAccountEvent,
-  UpdateMarkPriceEvent,
-} from "@d8x/perpetuals-sdk/dist/esm/contracts/IPerpetualManager";
+
+import { JsonRpcProvider, Network, WebSocketProvider } from "ethers";
 
 enum ListeningMode {
   Polling = "Polling",
@@ -25,11 +14,12 @@ enum ListeningMode {
 
 export default class BlockhainListener {
   private config: LiquidatorConfig;
-  private network: Network;
+  // Network is initialized in start() method
+  private network!: Network;
 
   // objects
-  private httpProvider: StaticJsonRpcProvider;
-  private listeningProvider: StaticJsonRpcProvider | WebSocketProvider | undefined;
+  private httpProvider: JsonRpcProvider;
+  private listeningProvider: JsonRpcProvider | WebSocketProvider | undefined;
   private redisPubClient: Redis;
   private md: MarketData;
 
@@ -43,9 +33,8 @@ export default class BlockhainListener {
     this.config = config;
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig));
     this.redisPubClient = constructRedis("sentinelPubClient");
-    this.httpProvider = new StaticJsonRpcProvider(this.chooseHttpRpc());
+    this.httpProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.md.network, { staticNetwork: true });
     this.lastBlockReceivedAt = Date.now();
-    this.network = { name: "", chainId: 0 };
   }
 
   private chooseHttpRpc() {
@@ -101,11 +90,16 @@ export default class BlockhainListener {
     if (this.mode == ListeningMode.Events || this.config.rpcListenWs.length < 1) {
       console.log(`${new Date(Date.now()).toISOString()}: switching from WS to HTTP`);
       this.mode = ListeningMode.Polling;
-      this.listeningProvider = new StaticJsonRpcProvider(this.chooseHttpRpc(), this.network);
+      this.listeningProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.network, {
+        staticNetwork: true,
+        polling: true,
+      });
     } else if (this.config.rpcListenWs.length > 0) {
       console.log(`${new Date(Date.now()).toISOString()}: switching from HTTP to WS`);
       this.mode = ListeningMode.Events;
-      this.listeningProvider = new WebSocketProvider(this.chooseWsRpc(), this.network);
+      this.listeningProvider = new WebSocketProvider(this.chooseWsRpc(), this.network, {
+        staticNetwork: true,
+      });
     }
     await this.addListeners();
     this.redisPubClient.publish("switch-mode", this.mode);
@@ -159,7 +153,11 @@ export default class BlockhainListener {
 
   public async start() {
     // http rpc
-    this.network = await executeWithTimeout(this.httpProvider.ready, 10_000, "could not establish http connection");
+    this.network = await executeWithTimeout(
+      this.httpProvider.getNetwork(),
+      10_000,
+      "could not establish http connection"
+    );
     await this.md.createProxyInstance(this.httpProvider);
     console.log(
       `${new Date(Date.now()).toISOString()}: connected to ${this.network.name}, chain id ${
@@ -172,10 +170,14 @@ export default class BlockhainListener {
         new SturdyWebSocket(this.chooseWsRpc(), {
           wsConstructor: Websocket,
         }),
-        this.network
+        this.network,
+        { staticNetwork: true }
       );
     } else if (this.config.rpcListenHttp.length > 0) {
-      this.listeningProvider = new StaticJsonRpcProvider(this.chooseHttpRpc());
+      this.listeningProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.network, {
+        staticNetwork: true,
+        polling: true,
+      });
     } else {
       throw new Error("Please specify RPC URLs for listening to blockchain events");
     }
@@ -195,6 +197,10 @@ export default class BlockhainListener {
         `${new Date(Date.now()).toISOString()} BlockchainListener received error msg in ${this.mode} mode:`,
         e
       );
+      // Submit last block received ts to executor/distributor to take action if
+      // needed.
+      this.redisPubClient.publish("listener-error", this.lastBlockReceivedAt.toString());
+
       this.unsubscribe();
       this.switchListeningMode();
     });
@@ -208,21 +214,22 @@ export default class BlockhainListener {
     const proxy = IPerpetualManager__factory.connect(this.md.getProxyAddress(), this.listeningProvider);
 
     proxy.on(
-      "Liquidate",
+      proxy.filters.Liquidate,
       (
-        perpetualId: number,
+        perpetualId: bigint,
         liquidator: string,
         trader: string,
-        amountLiquidatedBC: BigNumber,
-        liquidationPrice: BigNumber,
-        newPositionSizeBC: BigNumber,
-        fFeeCC: BigNumber,
-        fPnlCC: BigNumber,
-        event: LiquidateEvent
+        amountLiquidatedBC: bigint,
+        liquidationPrice: bigint,
+        newPositionSizeBC: bigint,
+        fFeeCC: bigint,
+        fPnlCC: bigint,
+        event
       ) => {
-        const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+        const perpId = Number(perpetualId);
+        const symbol = this.md.getSymbolFromPerpId(perpId)!;
         const msg: LiquidateMsg = {
-          perpetualId: perpetualId,
+          perpetualId: perpId,
           symbol: symbol,
           traderAddr: trader,
           tradeAmount: ABK64x64ToFloat(amountLiquidatedBC),
@@ -232,7 +239,7 @@ export default class BlockhainListener {
           newPositionSizeBC: ABK64x64ToFloat(newPositionSizeBC),
           block: event.blockNumber,
           hash: event.transactionHash,
-          id: `${event.transactionHash}:${event.logIndex}`,
+          id: `${event.transactionHash}:${event.index}`,
         };
         this.redisPubClient.publish("LiquidateEvent", JSON.stringify(msg));
         console.log({ event: "Liquidate", time: new Date(Date.now()).toISOString(), mode: ListeningMode, ...msg });
@@ -240,43 +247,53 @@ export default class BlockhainListener {
     );
 
     proxy.on(
-      "UpdateMarginAccount",
-      (perpetualId: number, trader: string, fFundingPaymentCC: BigNumber, event: UpdateMarginAccountEvent) => {
-        const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+      proxy.filters.UpdateMarginAccount,
+      (perpetualId: bigint, trader: string, fFundingPaymentCC: bigint, event) => {
+        const perpId = Number(perpetualId);
+        const symbol = this.md.getSymbolFromPerpId(perpId)!;
         const msg: UpdateMarginAccountMsg = {
-          perpetualId: perpetualId,
+          perpetualId: perpId,
           symbol: symbol,
           traderAddr: trader,
           fundingPaymentCC: ABK64x64ToFloat(fFundingPaymentCC),
           block: event.blockNumber,
           hash: event.transactionHash,
-          id: `${event.transactionHash}:${event.logIndex}`,
+          id: `${event.transactionHash}:${event.index}`,
         };
         this.redisPubClient.publish("UpdateMarginAccountEvent", JSON.stringify(msg));
+
+        console.log({
+          event: "UpdateMarginAccount",
+          time: new Date(Date.now()).toISOString(),
+          mode: ListeningMode,
+          ...msg,
+        });
       }
     );
 
     proxy.on(
-      "UpdateMarkPrice",
-      (
-        perpetualId: number,
-        fMidPricePremium: BigNumber,
-        fMarkPricePremium: BigNumber,
-        fSpotIndexPrice: BigNumber,
-        event: UpdateMarkPriceEvent
-      ) => {
-        const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+      proxy.filters.UpdateMarkPrice,
+      (perpetualId: bigint, fMidPricePremium: bigint, fMarkPricePremium: bigint, fSpotIndexPrice: bigint, event) => {
+        const perpId = Number(perpetualId);
+        const symbol = this.md.getSymbolFromPerpId(perpId)!;
         const msg: UpdateMarkPriceMsg = {
-          perpetualId: perpetualId,
+          perpetualId: perpId,
           symbol: symbol,
           midPremium: ABK64x64ToFloat(fMidPricePremium),
           markPremium: ABK64x64ToFloat(fMarkPricePremium),
           spotIndexPrice: ABK64x64ToFloat(fSpotIndexPrice),
           block: event.blockNumber,
           hash: event.transactionHash,
-          id: `${event.transactionHash}:${event.logIndex}`,
+          id: `${event.transactionHash}:${event.index}`,
         };
         this.redisPubClient.publish("UpdateMarkPriceEvent", JSON.stringify(msg));
+
+        console.log({
+          event: "UpdateMarkPrice",
+          time: new Date(Date.now()).toISOString(),
+          mode: ListeningMode,
+          ...msg,
+        });
       }
     );
 
