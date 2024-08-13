@@ -7,30 +7,34 @@ import {
   Multicall3__factory,
   MULTICALL_ADDRESS,
   Multicall3,
+  IPerpetualManager,
+  floatToABK64x64,
 } from "@d8x/perpetuals-sdk";
-import { providers } from "ethers";
+import { BigNumberish, JsonRpcProvider } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis } from "../utils";
 import {
+  LiquidateMsg,
+  LiquidateTraderMsg,
   LiquidatorConfig,
   Position,
   UpdateMarginAccountMsg,
   UpdateMarkPriceMsg,
   UpdateUnitAccumulatedFundingMsg,
 } from "../types";
-import { PerpStorage } from "@d8x/perpetuals-sdk/dist/esm/contracts/IPerpetualManager";
 
 export default class Distributor {
   // objects
   private md: MarketData;
   private redisSubClient: Redis;
   private redisPubClient: Redis;
-  private providers: providers.StaticJsonRpcProvider[];
+  private providers: JsonRpcProvider[];
 
   // state
   private lastRefreshTime: Map<string, number> = new Map();
+  private lastFundingFetchTime: Map<string, number> = new Map();
   private openPositions: Map<string, Map<string, Position>> = new Map();
-  private pxSubmission: Map<string, { submission: PriceFeedSubmission; pxS2S3: [number, number] }> = new Map();
+  private pxSubmission: Map<string, { idxPrices: number[] }> = new Map();
   private markPremium: Map<string, number> = new Map();
   private unitAccumulatedFunding: Map<string, number> = new Map();
   private messageSentAt: Map<string, number> = new Map();
@@ -43,16 +47,17 @@ export default class Distributor {
   private symbols: string[] = [];
   private maintenanceRate: Map<string, number> = new Map();
 
-  // constants
-
   // publish times must be within 10 seconds of each other, or submission will fail on-chain
   private MAX_OUTOFSYNC_SECONDS: number = 10;
+
+  // Last time refreshAllActiveAccounts was called
+  public lastRefreshOfAllActiveAccounts: Date = new Date(0);
 
   constructor(config: LiquidatorConfig) {
     this.config = config;
     this.redisSubClient = constructRedis("commanderSubClient");
     this.redisPubClient = constructRedis("commanderPubClient");
-    this.providers = this.config.rpcWatch.map((url) => new providers.StaticJsonRpcProvider(url));
+    this.providers = this.config.rpcWatch.map((url) => new JsonRpcProvider(url));
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(config.sdkConfig));
   }
 
@@ -90,7 +95,7 @@ export default class Distributor {
         this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE
       );
       // price info
-      this.pxSubmission.set(symbol, await this.md.fetchPriceSubmissionInfoForPerpetual(symbol));
+      this.pxSubmission.set(symbol, await this.md.fetchPricesForPerpetual(symbol));
       // mark premium, accumulated funding per BC unit
       const perpState = await this.md.getReadOnlyProxyInstance().getPerpetual(this.md.getPerpIdFromSymbol(symbol));
       this.markPremium.set(symbol, ABK64x64ToFloat(perpState.currentMarkPremiumRate.fPrice));
@@ -99,6 +104,11 @@ export default class Distributor {
       this.openPositions.set(symbol, new Map());
       // dummy values
       this.lastRefreshTime.set(symbol, 0);
+      console.log({
+        symbol: symbol,
+        markPremium: this.markPremium.get(symbol),
+        unitAccumulatedFunding: this.unitAccumulatedFunding.get(symbol),
+      });
     }
 
     // Subscribe to blockchain events
@@ -107,7 +117,9 @@ export default class Distributor {
       "block",
       "UpdateMarkPriceEvent",
       "UpdateMarginAccountEvent",
-      "UpdateUnitAccumulatedFundingEvent",
+      "LiquidateEvent",
+      "listener-error",
+      "switch-mode",
       (err, count) => {
         if (err) {
           console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
@@ -147,6 +159,11 @@ export default class Distributor {
         await this.refreshAllAccounts();
       }, 10_000);
 
+      // fetch accumulated funding so that it's fresh often enough
+      setInterval(async () => {
+        await this.refreshUnitAccumulatedFunding();
+      }, 10_000);
+
       this.redisSubClient.on("message", async (channel, msg) => {
         switch (channel) {
           case "block": {
@@ -165,14 +182,13 @@ export default class Distributor {
 
           case "UpdateMarginAccountEvent": {
             const account: UpdateMarginAccountMsg = JSON.parse(msg);
-            this.updatePosition({
-              address: account.traderAddr,
-              perpetualId: account.perpetualId,
-              positionBC: account.positionBC,
-              cashCC: account.cashCC,
-              lockedInQC: account.lockedInQC,
-              unpaidFundingCC: 0,
+            if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
+              return;
+            }
+            await this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
+              this.updatePosition(pos);
             });
+            break;
           }
 
           case "UpdateMarkPriceEvent": {
@@ -186,13 +202,38 @@ export default class Distributor {
             this.unitAccumulatedFunding.set(symbol, unitAccumulatedFundingCC);
             break;
           }
+
+          case "LiquidateEvent": {
+            const { perpetualId, traderAddr }: LiquidateMsg = JSON.parse(msg);
+            await this.fetchPosition(perpetualId, traderAddr).then((pos) => {
+              this.updatePosition(pos);
+            });
+          }
+
+          case "listener-error":
+          case "switch-mode":
+            // Whenever something wrong happens on sentinel, refresh orders if
+            // they were not refreshed recently in the last 30 (should be more
+            // than refreshOrdersIntervalSecondsMin) seconds. Sentinel might
+            // have missed events and executed orders might still be held in
+            // memory in distributor.
+            if (new Date(Date.now() - 30_000) > this.lastRefreshOfAllActiveAccounts) {
+              console.log({
+                message: "Refreshing all active accounts due to sentinel error",
+                time: new Date(Date.now()).toISOString(),
+                lastRefreshOfAllOpenOrders: this.lastRefreshOfAllActiveAccounts.toISOString(),
+                sentinelReason: channel,
+              });
+              this.refreshAllAccounts();
+            }
+            break;
         }
       });
       await this.refreshAllAccounts();
     });
   }
 
-  private updatePosition(position: Position) {
+  private async updatePosition(position: Position) {
     const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
     if (!this.openPositions.has(symbol)) {
       this.openPositions.set(symbol, new Map());
@@ -204,7 +245,37 @@ export default class Distributor {
     }
   }
 
+  private async fetchPosition(perpetualId: number, address: string) {
+    const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
+    const pxS2S3 = this.pxSubmission.get(symbol)!.idxPrices;
+    const account = await this.md
+      .getReadOnlyProxyInstance()
+      .getTraderState(perpetualId, address, [floatToABK64x64(pxS2S3[0]), floatToABK64x64(pxS2S3[1] ?? 0)]);
+
+    const position: Position = {
+      perpetualId: perpetualId,
+      address: address,
+      positionBC: ABK64x64ToFloat(BigInt(account[4])),
+      cashCC: ABK64x64ToFloat(BigInt(account[3])),
+      lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
+      unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
+    };
+    return position;
+  }
+
+  private async refreshUnitAccumulatedFunding() {
+    for (const symbol of this.symbols) {
+      if (Date.now() - (this.lastFundingFetchTime.get(symbol) ?? 0) < this.config.liquidateIntervalSecondsMax * 1_000) {
+        return;
+      }
+      this.lastFundingFetchTime.set(symbol, Date.now());
+      const perp = await this.md.getReadOnlyProxyInstance().getPerpetual(this.md.getPerpIdFromSymbol(symbol)!);
+      this.unitAccumulatedFunding.set(symbol, ABK64x64ToFloat(perp.fUnitAccumulatedFunding));
+    }
+  }
+
   private async refreshAllAccounts() {
+    this.lastRefreshOfAllActiveAccounts = new Date();
     await Promise.allSettled(this.symbols.map((symbol) => this.refreshActiveAccounts(symbol)));
   }
 
@@ -214,13 +285,18 @@ export default class Distributor {
   public async refreshActiveAccounts(symbol: string) {
     this.requireReady();
     if (Date.now() - (this.lastRefreshTime.get(symbol) ?? 0) < this.config.refreshAccountsIntervalSecondsMin * 1_000) {
+      console.log("[refreshActiveAccounts] called too soon", {
+        symbol: symbol,
+        time: new Date(Date.now()).toISOString(),
+        lastRefresh: new Date(this.lastRefreshTime.get(symbol) ?? 0),
+      });
       return;
     }
     const chunkSize1 = 2 ** 16; // for addresses
     const chunkSize2 = 2 ** 8; // for margin accounts
     const perpId = this.md.getPerpIdFromSymbol(symbol)!;
-    const proxy = this.md.getReadOnlyProxyInstance();
-    const rpcProviders = this.config.rpcWatch.map((url) => new providers.StaticJsonRpcProvider(url));
+    const proxy = this.md.getReadOnlyProxyInstance() as any as IPerpetualManager;
+    const rpcProviders = this.config.rpcWatch.map((url) => new JsonRpcProvider(url));
     let providerIdx = Math.floor(Math.random() * rpcProviders.length);
     this.lastRefreshTime.set(symbol, Date.now());
 
@@ -228,7 +304,7 @@ export default class Distributor {
     console.log(`${symbol}: fetching number of accounts ... `);
     tsStart = Date.now();
 
-    const numAccounts = (await proxy.countActivePerpAccounts(perpId)).toNumber();
+    const numAccounts = Number(await proxy.countActivePerpAccounts(perpId));
     console.log({ symbol: symbol, time: new Date(Date.now()).toISOString(), activeAccounts: numAccounts });
 
     // fetch addresses
@@ -251,26 +327,25 @@ export default class Distributor {
         console.log(`${symbol} ${new Date(Date.now()).toISOString()}: error`);
       }
     }
-    // console.log({
-    //   symbol: symbol,
-    //   time: new Date(Date.now()).toISOString(),
-    //   addresses: addresses.size,
-    //   waited: `${Date.now() - tsStart} ms`,
-    // });
 
     // fech accounts
     const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];
     const addressChunks: string[][] = [];
     const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, rpcProviders[providerIdx]);
     const traderList = [...addresses];
+    const pxS2S3 = this.pxSubmission.get(symbol)!.idxPrices;
     for (let i = 0; i < traderList.length; i += chunkSize2) {
       const addressChunk = traderList.slice(i, i + chunkSize2);
       const calls: Multicall3.Call3Struct[] = addressChunk.map((addr) => ({
         allowFailure: true,
-        target: proxy.address,
-        callData: proxy.interface.encodeFunctionData("getMarginAccount", [perpId, addr]),
+        target: proxy.getAddress(),
+        callData: proxy.interface.encodeFunctionData("getTraderState", [
+          perpId,
+          addr,
+          [floatToABK64x64(pxS2S3[0]), floatToABK64x64(pxS2S3[1] ?? 0)],
+        ]),
       }));
-      promises2.push(multicall.connect(rpcProviders[providerIdx]).callStatic.aggregate3(calls));
+      promises2.push(multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls));
       addressChunks.push(addressChunk);
       providerIdx = (providerIdx + 1) % rpcProviders.length;
     }
@@ -287,27 +362,37 @@ export default class Distributor {
             results.value.map((result, k) => {
               if (result.success) {
                 const account = proxy.interface.decodeFunctionResult(
-                  "getMarginAccount",
+                  "getTraderState",
                   result.returnData
-                )[0] as PerpStorage.MarginAccountStructOutput;
+                )[0] as BigNumberish[];
+                /**
+                 * 0 marginBalance : number; // current margin balance
+                 * 1 availableMargin : number; // amount over initial margin
+                 * 2 availableCashCC : number; // cash minus unpaid funding
+                 * 3 marginAccountCashCC : number;
+                 * 4 marginAccountPositionBC : number;
+                 * 5 marginAccountLockedInValueQC : number;
+                 * 6 fUnitAccumulatedFundingStart
+                 * 7 leverage
+                 * 8 fMarkPrice
+                 * 9 CollateralToQuoteConversion
+                 * 10 maintenance margin rate
+                 */
                 const position: Position = {
                   perpetualId: perpId,
                   address: addressChunk[k],
-                  positionBC: ABK64x64ToFloat(account.fPositionBC),
-                  cashCC: ABK64x64ToFloat(account.fCashCC),
-                  lockedInQC: ABK64x64ToFloat(account.fLockedInValueQC),
-                  unpaidFundingCC: 0,
+                  positionBC: ABK64x64ToFloat(BigInt(account[4])),
+                  cashCC: ABK64x64ToFloat(BigInt(account[3])),
+                  lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
+                  unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
                 };
-                position.unpaidFundingCC =
-                  position.positionBC *
-                  (this.unitAccumulatedFunding.get(symbol)! - ABK64x64ToFloat(account.fUnitAccumulatedFundingStart));
                 this.updatePosition(position);
               }
             });
           }
         });
       } catch (e) {
-        console.log("Error fetching account chunk (RPC?)");
+        console.log("Error fetching account chunk (RPC?)", e);
       }
     }
     console.log({
@@ -318,6 +403,25 @@ export default class Distributor {
     });
   }
 
+  private async refreshPrices(symbol: string) {
+    if (Date.now() - (this.pricesFetchedAt.get(symbol) ?? 0) < this.config.fetchPricesIntervalSecondsMin * 1_000) {
+      return true;
+    }
+    this.pricesFetchedAt.set(symbol, Date.now());
+    try {
+      const newPxSubmission = await this.md.fetchPricesForPerpetual(symbol);
+      // if (!this.checkSubmissionsInSync(newPxSubmission.submission.timestamps)) {
+      //   return false;
+      // }
+      this.pxSubmission.set(symbol, newPxSubmission);
+    } catch (e) {
+      console.log("error fetching from price service:");
+      console.log(e);
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Checks if any accounts can be liquidated and publishes them via redis.
    * No RPC calls are made here, only price service
@@ -326,18 +430,8 @@ export default class Distributor {
    */
   private async checkPositions(symbol: string) {
     this.requireReady();
-    if (Date.now() - (this.pricesFetchedAt.get(symbol) ?? 0) < this.config.fetchPricesIntervalSecondsMin * 1_000) {
-      return undefined;
-    }
-    try {
-      const newPxSubmission = await this.md.fetchPriceSubmissionInfoForPerpetual(symbol);
-      if (!this.checkSubmissionsInSync(newPxSubmission.submission.timestamps)) {
-        return false;
-      }
-      this.pxSubmission.set(symbol, newPxSubmission);
-    } catch (e) {
-      console.log("error fetching from price service:");
-      console.log(e);
+
+    if (!(await this.refreshPrices(symbol))) {
       return false;
     }
     const positions = this.openPositions.get(symbol)!;
@@ -346,12 +440,13 @@ export default class Distributor {
 
     for (const trader of positions.keys()) {
       const position = positions.get(trader)!;
-      if (!this.isMarginSafe(position, curPx.pxS2S3)) {
+      if (!this.isMarginSafe(position, [curPx.idxPrices[0], curPx.idxPrices[1]])) {
         const msg = JSON.stringify({
           symbol: symbol,
           traderAddr: trader,
         });
         if (Date.now() - (this.messageSentAt.get(msg) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
+          this.logPosition(position, [curPx.idxPrices[0], curPx.idxPrices[1]]);
           await this.redisPubClient.publish("LiquidateTrader", msg);
           this.messageSentAt.set(msg, Date.now());
         }
@@ -361,20 +456,49 @@ export default class Distributor {
     return accountsSent.size > 0;
   }
 
+  private logPosition(position: Position, pxS2S3: [number, number | undefined]) {
+    const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
+    let S2 = pxS2S3[0];
+    let Sm = S2 * (1 + (this.markPremium.get(symbol) ?? 0));
+    // undefined -> either S3 = 1 (quote coll) or S3 = S2 (base coll)
+    let S3 = pxS2S3[1] && !isNaN(pxS2S3[1]) ? pxS2S3[1] : this.isQuote.get(symbol) ? 1 : S2;
+    let pos = position.positionBC;
+    let lockedIn = position.lockedInQC;
+    let cash = position.cashCC - position.unpaidFundingCC;
+    let balance = cash + (pos * Sm - lockedIn) / S3;
+    let leverage = (Math.abs(pos) * (Sm / S3)) / balance;
+    console.log({
+      pxS2SmS3: [S2, Sm, S3],
+      symbol: symbol,
+      balance: balance,
+      leverage: leverage,
+      ...position,
+    });
+  }
+
   private isMarginSafe(position: Position, pxS2S3: [number, number | undefined]) {
     if (position.positionBC == 0) {
       return true;
     }
     const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
     let S2 = pxS2S3[0];
-    let Sm = S2 * (1 + this.markPremium.get(symbol)!);
+    let Sm = S2 * (1 + (this.markPremium.get(symbol) ?? 0));
     // undefined -> either S3 = 1 (quote coll) or S3 = S2 (base coll)
-    let S3 = pxS2S3[1] ?? (this.isQuote! ? 1 : S2);
+    let S3 = pxS2S3[1] && !isNaN(pxS2S3[1]) ? pxS2S3[1] : this.isQuote.get(symbol) ? 1 : S2;
     let pos = position.positionBC;
     let lockedIn = position.lockedInQC;
     let cash = position.cashCC - position.unpaidFundingCC;
     let maintenanceMargin = ((Math.abs(pos) * Sm) / S3) * this.maintenanceRate.get(symbol)!;
     let balance = cash + (pos * Sm - lockedIn) / S3;
+    // if (balance < maintenanceMargin) {
+    //   console.log({
+    //     trader: position.address,
+    //     symbol: symbol,
+    //     cash: cash,
+    //     balance: balance,
+    //     leverage: Math.abs(balance) > 1e-12 ? (Math.abs(pos) * Sm) / S3 / balance : -Infinity,
+    //   });
+    // }
     return balance >= maintenanceMargin;
   }
 

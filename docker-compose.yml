@@ -9,7 +9,7 @@ services:
     image: redis:6.2-alpine
     restart: always
     ports:
-      - "${REDIS_PORT}:${REDIS_PORT}"
+      - "127.0.0.1:${REDIS_PORT}:${REDIS_PORT}"
     command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
 
   # Listen to block and events, and stream on redis
@@ -55,3 +55,49 @@ services:
       SDK_CONFIG: ${SDK_CONFIG}
       SEED_PHRASE: ${SEED_PHRASE}
     restart: on-failure
+  # Prometheus with alertmanager
+  prometheus:
+    image: prom/prometheus:latest
+    command: [
+        "--config.file=/etc/prometheus/prometheus.yml",
+        "--storage.tsdb.path=/prometheus",
+        "--web.console.libraries=/usr/share/prometheus/console_libraries",
+        "--web.console.templates=/usr/share/prometheus/consoles",
+        # Enable external label expansion
+        "--enable-feature=expand-external-labels",
+      ]
+    ports:
+      - 127.0.0.1:9090:9090
+    volumes:
+      - prometheus_data:/prometheus
+    configs:
+      - source: prometheus_yaml
+        target: /etc/prometheus/prometheus.yml
+      - source: rules_1
+        target: /etc/prometheus/rules/executor.rules.yaml
+    restart: always
+    environment:
+      PROMETHEUS_DEPLOYMENT_NAME: ${PROMETHEUS_DEPLOYMENT_NAME}
+      PROMETHEUS_SERVER_IP: ${PROMETHEUS_SERVER_IP}
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - 127.0.0.1:9093:9093
+    restart: always
+    configs:
+      - source: alertmanager_slack_url
+        target: /etc/alertmanager/slack_api_url.txt
+      - source: alertmanager_yaml
+        target: /etc/alertmanager/alertmanager.yml
+
+volumes:
+  prometheus_data:
+configs:
+  prometheus_yaml:
+    file: ./prometheus_configs/prometheus.yaml
+  alertmanager_slack_url:
+    file: ./prometheus_configs/prometheus_alertmanager_slack_url.txt
+  alertmanager_yaml:
+    file: ./prometheus_configs/prometheus_alertmanager.yaml
+  rules_1:
+    file: ./prometheus_configs/liquidator.rules.yaml

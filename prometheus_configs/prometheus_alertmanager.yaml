@@ -1,0 +1,27 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ["alertname", "severity"]
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 30m
+  receiver: "slack"
+
+receivers:
+  - name: "slack"
+    slack_configs:
+      - send_resolved: false
+        username: "Prometheus"
+        channel: "#zbot-prometheus-alerts"
+        # Slack ur file should be mounted at this specified path
+        api_url_file: /etc/alertmanager/slack_api_url.txt
+        title: "{{ .CommonAnnotations.title }}"
+        text: "{{ .CommonAnnotations.server_info }}"
+
+inhibit_rules:
+  - source_match:
+      severity: "critical"
+    target_match:
+      severity: "warning"
+    equal: ["alertname"]

@@ -1,4 +1,4 @@
-import { floatToABK64x64 } from "@d8x/perpetuals-sdk";
+import { PriceFeedEndpointsItem, floatToABK64x64 } from "@d8x/perpetuals-sdk";
 
 export const ZERO_POSITION = floatToABK64x64(0);
 
@@ -31,10 +31,10 @@ export interface LiquidatorConfig {
   refreshAccountsIntervalSecondsMin: number;
   liquidateIntervalSecondsMax: number;
   liquidateIntervalSecondsMin: number;
-  refreshAccountsSecondsMax: number;
   fetchPricesIntervalSecondsMin: number;
-  maxGasPriceGWei: 1;
-  priceFeedEndpoints: [{ type: "pyth" | "odin"; endpoints: string[] }];
+  maxGasPriceGWei: number;
+  gasLimit: number;
+  priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
 }
 
 export interface RedisMsg {
@@ -69,9 +69,6 @@ export interface UpdateMarginAccountMsg extends RedisMsg {
   perpetualId: number;
   symbol: string;
   traderAddr: string;
-  positionBC: number;
-  cashCC: number;
-  lockedInQC: number;
   fundingPaymentCC: number;
 }
 
