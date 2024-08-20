@@ -316,8 +316,8 @@ export default class Liquidator {
     // return cases:
     switch (true) {
       case noops === 0 && successes === 0 && attempts === this.bots.length:
-        // failures/rejections only all bots are down, either rpc or px service
-        // issue
+        // failures/rejections only - all bots are down, either rpc or px
+        // service issue
         return BotStatus.Error;
       case attempts == 0 && q.length > 0:
         // did not try anything
