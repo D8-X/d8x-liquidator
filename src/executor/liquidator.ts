@@ -5,6 +5,15 @@ import { Redis } from "ioredis";
 import { constructRedis, executeWithTimeout } from "../utils";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
 import { Metrics } from "./metrics";
+import { time } from "console";
+
+// Liquidation result status
+export enum LiquidationStatus {
+  NoOp,
+  Success,
+  Failure,
+  Rejection,
+}
 
 export default class Liquidator {
   // objects
@@ -135,7 +144,7 @@ export default class Liquidator {
   private async liquidateTraderByBot(botIdx: number, symbol: string, trader: string) {
     trader = trader.toLowerCase();
     if (this.bots[botIdx].busy || this.locked.has(`${symbol}:${trader}`)) {
-      return false;
+      return LiquidationStatus.NoOp;
     }
     // lock
     this.bots[botIdx].busy = true;
@@ -150,10 +159,11 @@ export default class Liquidator {
         symbol: symbol,
         executor: this.bots[botIdx].api.getAddress(),
         trader: trader,
+        timestamp: new Date().toISOString(),
       });
       this.bots[botIdx].busy = false;
       this.locked.delete(`${symbol}:${trader}`);
-      return false;
+      return LiquidationStatus.NoOp;
     }
 
     // submit txn
@@ -162,6 +172,7 @@ export default class Liquidator {
       symbol: symbol,
       executor: this.bots[botIdx].api.getAddress(),
       trader: trader,
+      timestamp: new Date().toISOString(),
     });
     let tx: TransactionResponse;
     try {
@@ -176,11 +187,12 @@ export default class Liquidator {
         symbol: symbol,
         executor: this.bots[botIdx].api.getAddress(),
         trader: trader,
+        timestamp: new Date().toISOString(),
       });
       this.metrics.incrTxRejects();
       this.bots[botIdx].busy = false;
       this.locked.delete(`${symbol}:${trader}`);
-      return false;
+      return LiquidationStatus.Rejection;
     }
     console.log({
       info: "txn accepted",
@@ -190,9 +202,11 @@ export default class Liquidator {
       trader: trader,
       gasLimit: `${formatUnits(tx.gasLimit, "wei")} wei`,
       hash: tx.hash,
+      timestamp: new Date().toISOString(),
     });
 
     // confirm execution
+    let result = LiquidationStatus.Success;
     try {
       const receipt = await tx.wait();
       if (receipt === null) {
@@ -208,6 +222,7 @@ export default class Liquidator {
         block: receipt.blockNumber,
         gasUsed: `${formatUnits(receipt.cumulativeGasUsed, "wei")} wei`,
         hash: receipt.hash,
+        timestamp: new Date().toISOString(),
       });
       this.locked.delete(`${symbol}:${trader}`);
     } catch (e: any) {
@@ -219,6 +234,7 @@ export default class Liquidator {
         symbol: symbol,
         executor: this.bots[botIdx].api.getAddress(),
         trader: trader,
+        timestamp: new Date().toISOString(),
       });
       this.locked.delete(`${symbol}:${trader}`);
       const bot = this.bots[botIdx].api.getAddress();
@@ -229,10 +245,14 @@ export default class Liquidator {
           console.log(`failed to fund bot ${bot}`);
         }
       }
+
+      // Set result to failure
+      result = LiquidationStatus.Failure;
     }
+
     // unlock bot
     this.bots[botIdx].busy = false;
-    return true;
+    return result;
   }
 
   /**
@@ -245,14 +265,13 @@ export default class Liquidator {
 
     this.lastLiquidateCall = Date.now();
     let attempts = 0;
-    let successes = 0;
     const q = [...this.q];
 
     if (q.length == 0) {
       return BotStatus.Ready;
     }
 
-    const executed: Promise<boolean>[] = [];
+    const executed: Promise<LiquidationStatus>[] = [];
     for (const msg of q) {
       const { symbol, traderAddr }: LiquidateTraderMsg = JSON.parse(msg);
       for (let i = 0; i < this.bots.length; i++) {
@@ -265,33 +284,53 @@ export default class Liquidator {
         }
       }
     }
+
+    let successes = 0;
+    let noops = 0;
+
     // send txns
     const results = await Promise.allSettled(executed);
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       if (result.status === "fulfilled") {
-        successes += result.value ? 1 : 0;
+        switch (result.value) {
+          case LiquidationStatus.NoOp:
+            noops++;
+            break;
+          case LiquidationStatus.Success:
+            successes++;
+            break;
+          case LiquidationStatus.Failure:
+          case LiquidationStatus.Rejection:
+            // do nothing atm
+            break;
+        }
       } else {
-        console.log(`uncaught error: ${result.reason.toString()}`);
+        console.log({
+          error: `uncaught error: ${result.reason.toString()}`,
+          timestamp: new Date().toISOString(),
+        });
       }
     }
 
     // return cases:
-    if (successes == 0 && attempts == this.bots.length) {
-      // all bots are down, either rpc or px service issue
-      return BotStatus.Error;
-    } else if (attempts == 0 && q.length > 0) {
-      // did not try anything
-      return BotStatus.Busy;
-    } else if (successes == 0 && attempts > 0) {
-      // tried something but it didn't work
-      return BotStatus.PartialError;
-    } else if (successes < attempts) {
-      // some attempts worked, others failed
-      return BotStatus.PartialError;
-    } else {
-      // everything worked or nothing happend
-      return BotStatus.Ready;
+    switch (true) {
+      case noops === 0 && successes === 0 && attempts === this.bots.length:
+        // failures/rejections only all bots are down, either rpc or px service
+        // issue
+        return BotStatus.Error;
+      case attempts == 0 && q.length > 0:
+        // did not try anything
+        return BotStatus.Busy;
+      case successes == 0 && attempts > 0:
+        // tried something but it didn't work
+        return BotStatus.PartialError;
+      case successes < attempts:
+        // some attempts worked, others failed
+        return BotStatus.PartialError;
+      default:
+        // everything worked or nothing happend
+        return BotStatus.Ready;
     }
   }
 
