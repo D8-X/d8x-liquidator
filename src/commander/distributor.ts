@@ -468,6 +468,7 @@ export default class Distributor {
     let balance = cash + (pos * Sm - lockedIn) / S3;
     let leverage = (Math.abs(pos) * (Sm / S3)) / balance;
     console.log({
+      time: new Date(Date.now()).toISOString(),
       pxS2SmS3: [S2, Sm, S3],
       symbol: symbol,
       balance: balance,
