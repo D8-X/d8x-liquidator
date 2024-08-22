@@ -28,6 +28,7 @@ export default class BlockhainListener {
   private mode: ListeningMode = ListeningMode.Events;
   private lastBlockReceivedAt: number;
   private lastRpcIndex = { http: -1, ws: -1 };
+  private switchingRPC = false;
 
   constructor(config: LiquidatorConfig) {
     this.config = config;
@@ -74,7 +75,13 @@ export default class BlockhainListener {
   }
 
   private async switchListeningMode() {
+    if (this.switchingRPC) {
+      console.log(`${new Date(Date.now()).toISOString()}: already switching RPC`);
+      return;
+    }
+
     this.blockNumber = undefined;
+    this.switchingRPC = true;
 
     // Destroy websockets provider and close underlying connection. Do not call
     // unsubscribe for websocket provider as it will cause async eth_unsubscribe
@@ -88,19 +95,32 @@ export default class BlockhainListener {
     }
 
     if (this.mode == ListeningMode.Events || this.config.rpcListenWs.length < 1) {
-      console.log(`${new Date(Date.now()).toISOString()}: switching from WS to HTTP`);
+      const url = this.chooseHttpRpc();
+      console.log({
+        info: "Switching from WS to HTTP",
+        newRpc: url,
+        time: new Date(Date.now()).toISOString(),
+      });
       this.mode = ListeningMode.Polling;
-      this.listeningProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.network, {
+      this.listeningProvider = new JsonRpcProvider(url, this.network, {
         staticNetwork: true,
         polling: true,
       });
     } else if (this.config.rpcListenWs.length > 0) {
-      console.log(`${new Date(Date.now()).toISOString()}: switching from HTTP to WS`);
+      const url = this.chooseWsRpc();
+      console.log({
+        info: "Switching from HTTP to WS",
+        newRpc: url,
+        time: new Date(Date.now()).toISOString(),
+      });
+
       this.mode = ListeningMode.Events;
-      this.listeningProvider = new WebSocketProvider(this.chooseWsRpc(), this.network, {
+      this.listeningProvider = new WebSocketProvider(url, this.network, {
         staticNetwork: true,
       });
     }
+    this.switchingRPC = false;
+
     await this.addListeners();
     this.redisPubClient.publish("switch-mode", this.mode);
   }
@@ -151,7 +171,42 @@ export default class BlockhainListener {
     }, this.config.healthCheckSeconds * 1_000);
   }
 
+  public containsEthersConnErrors(error: string) {
+    const ethersErrors = [
+      "Unexpected server response",
+      "SERVER_ERROR",
+      "WebSocket was closed before the connection was established",
+    ];
+    for (const err of ethersErrors) {
+      if (error.includes(err)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public async start() {
+    // Catch exceptions from failed async calls (mainly from within event
+    // listeners) within ethers providers. Ethers seem to sends async requests
+    // which cannot be caught by try/catch. This global handler checks if
+    // uncaught error originates from ethers by inspecting known error messages
+    // and attempts to switch listener.
+    process.on("uncaughtException", (error) => {
+      if (error instanceof Error) {
+        if (this.containsEthersConnErrors(error.message)) {
+          console.log({
+            info: "Uncaught ethers exception with RPC server error",
+            time: new Date(Date.now()).toISOString(),
+            message: error.message,
+          });
+          this.switchListeningMode();
+        } else {
+          console.log(error);
+          process.exit(1);
+        }
+      }
+    });
+
     // http rpc
     this.network = await executeWithTimeout(
       this.httpProvider.getNetwork(),
