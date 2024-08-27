@@ -12,7 +12,7 @@ import {
   IdxPriceInfo,
   pmExcessBalance,
 } from "@d8x/perpetuals-sdk";
-import { BigNumberish, JsonRpcProvider } from "ethers";
+import { BigNumberish } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis } from "../utils";
 import {
@@ -24,13 +24,22 @@ import {
   UpdateMarkPriceMsg,
   UpdateUnitAccumulatedFundingMsg,
 } from "../types";
+import { PooledJsonRpcProvider } from "../jsonRpcPool";
 
 export default class Distributor {
   // objects
   private md: MarketData;
   private redisSubClient: Redis;
   private redisPubClient: Redis;
-  private providers: JsonRpcProvider[];
+
+  /**
+   * There will be only 1 instance of provider in this array. Historically we
+   * used a list of JsonRpcProvider's, therefore we have array here until we
+   * cleanup.
+   *
+   * Use this.config.rpcWatch for distributor providers.
+   */
+  private providers: PooledJsonRpcProvider[];
 
   // state
   private lastRefreshTime: Map<string, number> = new Map();
@@ -59,8 +68,16 @@ export default class Distributor {
     this.config = config;
     this.redisSubClient = constructRedis("commanderSubClient");
     this.redisPubClient = constructRedis("commanderPubClient");
-    this.providers = this.config.rpcWatch.map((url) => new JsonRpcProvider(url));
+
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(config.sdkConfig));
+    this.providers = [
+      new PooledJsonRpcProvider(this.config.rpcWatch, this.md.network, {
+        timeoutSeconds: 25,
+        logErrors: true,
+        logRpcSwitches: true,
+        staticNetwork: true,
+      }),
+    ];
   }
 
   /**
@@ -295,7 +312,7 @@ export default class Distributor {
     const chunkSize2 = 2 ** 8; // for margin accounts
     const perpId = this.md.getPerpIdFromSymbol(symbol)!;
     const proxy = this.md.getReadOnlyProxyInstance() as any as IPerpetualManager;
-    const rpcProviders = this.config.rpcWatch.map((url) => new JsonRpcProvider(url));
+    const rpcProviders = this.providers;
     let providerIdx = Math.floor(Math.random() * rpcProviders.length);
     this.lastRefreshTime.set(symbol, Date.now());
 
