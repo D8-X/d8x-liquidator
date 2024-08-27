@@ -51,6 +51,8 @@ export default class Liquidator {
         logRpcSwitches: true,
         staticNetwork: true,
         maxRetries: this.config.rpcExec.length * 3,
+        // do not switch rpc on each request with premium rpcExec rpcs.
+        switchRpcOnEachRequest: false,
       }),
     ];
 
@@ -92,9 +94,8 @@ export default class Liquidator {
         // createProxyInstance attaches the given provider to the object instance
         this.bots.map((liq) => liq.api.createProxyInstance(this.providers[i]))
       );
-      success = results.every((r) => {
-        r.status === "fulfilled";
-      });
+
+      success = results.every((r) => r.status === "fulfilled");
       i = (i + 1) % this.providers.length;
       tried++;
     }

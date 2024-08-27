@@ -12,8 +12,9 @@ import { executeWithTimeout } from "./utils";
 
 export interface PoolJsonRpcProviderOptions extends JsonRpcApiProviderOptions {
   // Switch to different rpc on each send call. Defaults to true. Optimal when
-  // using a lot of free rpcs.
-  switchOnEachCall?: boolean;
+  // using a lot of free rpcs. If set to false, the rpc will switch only on
+  // error.
+  switchRpcOnEachRequest?: boolean;
   // Timeout in seconds for a single send to complete. This is for entier
   // request/response duration, so make sure to use sane value. Defaults to 30
   // seconds.
@@ -49,7 +50,7 @@ export class PooledJsonRpcProvider extends JsonRpcApiProvider {
     super(network, options);
     // Setup options with sane defaults
     this.options = {
-      switchOnEachCall: true,
+      switchRpcOnEachRequest: true,
       timeoutSeconds: 30,
       maxRetries: rpcUrls.length,
       logErrors: false,
@@ -79,7 +80,7 @@ export class PooledJsonRpcProvider extends JsonRpcApiProvider {
     // Do not switch rpc if we have automatic switch enabled, since the next
     // send will automatically switch to next rpc. If we switched here, we would
     // always skip 2 rpcs.
-    if (!this.options.switchOnEachCall) {
+    if (!this.options.switchRpcOnEachRequest) {
       this.switchRpc();
     }
 
@@ -106,7 +107,7 @@ export class PooledJsonRpcProvider extends JsonRpcApiProvider {
    * @returns
    */
   async _send(payload: JsonRpcPayload | Array<JsonRpcPayload>): Promise<Array<JsonRpcResult>> {
-    if (this.options.switchOnEachCall) {
+    if (this.options.switchRpcOnEachRequest) {
       this.switchRpc();
     }
 
