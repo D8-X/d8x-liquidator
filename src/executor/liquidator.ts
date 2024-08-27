@@ -5,7 +5,6 @@ import { Redis } from "ioredis";
 import { constructRedis, executeWithTimeout } from "../utils";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
 import { Metrics } from "./metrics";
-import { time } from "console";
 
 // Liquidation result status
 export enum LiquidationStatus {
@@ -30,6 +29,7 @@ export default class Liquidator {
   // state
   private q: Set<string> = new Set();
   private lastLiquidateCall: number = 0;
+  // Set of symbol:traderAddr elements which are currently being processed.
   private locked: Set<string> = new Set();
 
   protected metrics: Metrics;
@@ -150,9 +150,10 @@ export default class Liquidator {
     this.bots[botIdx].busy = true;
     this.locked.add(`${symbol}:${trader}`);
 
-    // check if order is on-chain - stop if not/unable to check
+    // Check if trader is margin safe before liquidating.
     const isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch(() => true);
 
+    // Do not liquidate when margin safe.
     if (isMarginSafe) {
       console.log({
         info: "trader is margin safe",
