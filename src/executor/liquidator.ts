@@ -1,8 +1,7 @@
 import { PerpetualDataHandler, LiquidatorTool } from "@d8x/perpetuals-sdk";
-import { TransactionResponse, Wallet, formatUnits } from "ethers";
-import { JsonRpcProvider } from "ethers";
+import { Network, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
-import { constructRedis, executeWithTimeout } from "../utils";
+import { constructRedis } from "../utils";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
 import { Metrics } from "./metrics";
 
@@ -16,7 +15,7 @@ export enum LiquidationStatus {
 
 export default class Liquidator {
   // objects
-  private providers: JsonRpcProvider[];
+  private providers: PooledJsonRpcProvider[];
   private bots: { api: LiquidatorTool; busy: boolean }[];
   private redisSubClient: Redis;
 
@@ -42,9 +41,18 @@ export default class Liquidator {
     this.privateKey = pkLiquidators;
     this.config = config;
     this.redisSubClient = constructRedis("executorSubClient");
-    this.providers = this.config.rpcExec.map((url) => new JsonRpcProvider(url));
 
     const sdkConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
+
+    this.providers = [
+      new PooledJsonRpcProvider(this.config.rpcExec, new Network(sdkConfig.name || "", sdkConfig.chainId), {
+        timeoutSeconds: 25,
+        logErrors: true,
+        logRpcSwitches: true,
+        staticNetwork: true,
+        maxRetries: this.config.rpcExec.length * 3,
+      }),
+    ];
 
     // Use price feed endpoints from user specified config
     if (this.config.priceFeedEndpoints.length > 0) {
@@ -84,7 +92,9 @@ export default class Liquidator {
         // createProxyInstance attaches the given provider to the object instance
         this.bots.map((liq) => liq.api.createProxyInstance(this.providers[i]))
       );
-      success = results.every((r) => r.status === "fulfilled");
+      success = results.every((r) => {
+        r.status === "fulfilled";
+      });
       i = (i + 1) % this.providers.length;
       tried++;
     }
