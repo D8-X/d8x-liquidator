@@ -10,6 +10,7 @@ import {
   IPerpetualManager,
   floatToABK64x64,
   IdxPriceInfo,
+  pmExcessBalance,
 } from "@d8x/perpetuals-sdk";
 import { BigNumberish, JsonRpcProvider } from "ethers";
 import { Redis } from "ioredis";
@@ -481,12 +482,19 @@ export default class Distributor {
     }
     const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
     let S2 = px.s2;
-    let Sm = S2 * (1 + (this.markPremium.get(symbol) ?? 0));
+    let Sm = this.md.isPredictionMarket(symbol)
+      ? px.ema + (this.markPremium.get(symbol) ?? 0)
+      : S2 * (1 + (this.markPremium.get(symbol) ?? 0));
     // undefined -> either S3 = 1 (quote coll) or S3 = S2 (base coll)
     let S3 = px.s3 && !isNaN(px.s3) ? px.s3 : this.isQuote.get(symbol) ? 1 : S2;
     let pos = position.positionBC;
     let lockedIn = position.lockedInQC;
     let cash = position.cashCC - position.unpaidFundingCC;
+    // pred mkt?
+    if (this.md.isPredictionMarket(symbol)) {
+      return pmExcessBalance(pos, Sm, S3, lockedIn, cash, this.maintenanceRate.get(symbol)!) >= 0;
+    }
+    // usual calculation
     let maintenanceMargin = ((Math.abs(pos) * Sm) / S3) * this.maintenanceRate.get(symbol)!;
     let balance = cash + (pos * Sm - lockedIn) / S3;
     // if (balance < maintenanceMargin) {
