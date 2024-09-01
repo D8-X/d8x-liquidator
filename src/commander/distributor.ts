@@ -24,7 +24,7 @@ import {
   UpdateMarkPriceMsg,
   UpdateUnitAccumulatedFundingMsg,
 } from "../types";
-import { PooledJsonRpcProvider } from "../jsonRpcPool";
+import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
 
 export default class Distributor {
   // objects
@@ -39,7 +39,7 @@ export default class Distributor {
    *
    * Use this.config.rpcWatch for distributor providers.
    */
-  private providers: PooledJsonRpcProvider[];
+  private providers: MultiUrlJsonRpcProvider[];
 
   // state
   private lastRefreshTime: Map<string, number> = new Map();
@@ -71,10 +71,12 @@ export default class Distributor {
 
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(config.sdkConfig));
     this.providers = [
-      new PooledJsonRpcProvider(this.config.rpcWatch, this.md.network, {
+      new MultiUrlJsonRpcProvider(this.config.rpcWatch, this.md.network, {
         timeoutSeconds: 25,
         logErrors: true,
         logRpcSwitches: true,
+        // Distributor uses free rpcs, make sure to switch on each call.
+        switchRpcOnEachRequest: true,
         staticNetwork: true,
       }),
     ];
