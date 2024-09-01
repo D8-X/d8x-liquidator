@@ -4,6 +4,7 @@ import { Redis } from "ioredis";
 import { constructRedis } from "../utils";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
 import { Metrics } from "./metrics";
+import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
 
 // Liquidation result status
 export enum LiquidationStatus {
@@ -15,7 +16,7 @@ export enum LiquidationStatus {
 
 export default class Liquidator {
   // objects
-  private providers: PooledJsonRpcProvider[];
+  private providers: MultiUrlJsonRpcProvider[];
   private bots: { api: LiquidatorTool; busy: boolean }[];
   private redisSubClient: Redis;
 
@@ -45,7 +46,7 @@ export default class Liquidator {
     const sdkConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
 
     this.providers = [
-      new PooledJsonRpcProvider(this.config.rpcExec, new Network(sdkConfig.name || "", sdkConfig.chainId), {
+      new MultiUrlJsonRpcProvider(this.config.rpcExec, new Network(sdkConfig.name || "", sdkConfig.chainId), {
         timeoutSeconds: 25,
         logErrors: true,
         logRpcSwitches: true,

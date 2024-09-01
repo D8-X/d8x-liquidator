@@ -10,10 +10,15 @@ import {
 } from "ethers";
 import { executeWithTimeout } from "./utils";
 
-export interface PoolJsonRpcProviderOptions extends JsonRpcApiProviderOptions {
-  // Switch to different rpc on each send call. Defaults to true. Optimal when
-  // using a lot of free rpcs. If set to false, the rpc will switch only on
-  // error.
+// Common methods among multi url providers
+export interface MultiUrlProvider {
+  getCurrentRpcUrl(): string;
+  resetErrorNumber(): void;
+}
+
+export interface MultiUrlJsonRpcProviderOptions extends JsonRpcApiProviderOptions {
+  // Switch to different rpc on each send call. Defaults to false. Optimal when
+  // using a lot of free rpcs. If set to true, the rpc will switch on each send.
   switchRpcOnEachRequest?: boolean;
   // Timeout in seconds for a single send to complete. This is for entier
   // request/response duration, so make sure to use sane value. Defaults to 30
@@ -22,39 +27,42 @@ export interface PoolJsonRpcProviderOptions extends JsonRpcApiProviderOptions {
   // Maximum number of rpc errors until send starts throwing errors. Defaults to
   // number of provided rpc urls.
   maxRetries?: number;
-  // Should errors be logged to console. Defaults to false.
+  // Whether to console.log errors. Defaults to false.
   logErrors?: boolean;
   // Whether to console.log the switch of rpc urls. Defaults to false.
   logRpcSwitches?: boolean;
 }
 
 /**
- * PooledJsonRpcProvider is a JsonRpcProvider that can switch between multiple RPC
- * URLs if a request fails. Useful when using public rpcs.
+ * MultiUrlJsonRpcProvider is a JsonRpcProvider that switches between multiple
+ * RPC URLs if a request fails. This provided is useful when using multiple
+ * public or unrelialble rpcs which fail frequently or get rate limited.
  *
- * @see JsonRpcProvider for details
+ * @see JsonRpcApiProvider for more details
  */
-export class PooledJsonRpcProvider extends JsonRpcApiProvider {
+export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements MultiUrlProvider {
   private currentConnection: FetchRequest;
-  private options: PoolJsonRpcProviderOptions;
+  private options: MultiUrlJsonRpcProviderOptions;
   private rpcUrls: string[] = [];
   private currentRpcUrlIndex: number = 0;
   // Resets when a request is successful
   private currentNumberOfErrors: number = 0;
 
-  constructor(rpcUrls: string[], network?: Networkish, options?: PoolJsonRpcProviderOptions) {
+  constructor(rpcUrls: string[], network?: Networkish, options?: MultiUrlJsonRpcProviderOptions) {
     if (rpcUrls.length <= 0) {
       throw new Error("at least one rpc url must be provided");
     }
 
     super(network, options);
+
     // Setup options with sane defaults
     this.options = {
-      switchRpcOnEachRequest: true,
+      switchRpcOnEachRequest: false,
       timeoutSeconds: 30,
       maxRetries: rpcUrls.length,
       logErrors: false,
       logRpcSwitches: false,
+      // Override with user provided options
       ...options,
     };
     this.rpcUrls = rpcUrls;
@@ -63,7 +71,7 @@ export class PooledJsonRpcProvider extends JsonRpcApiProvider {
     this.currentConnection = new FetchRequest(rpcUrls[0]);
   }
 
-  _getConnection(): FetchRequest {
+  public _getConnection(): FetchRequest {
     return this.currentConnection.clone();
   }
 
@@ -73,13 +81,12 @@ export class PooledJsonRpcProvider extends JsonRpcApiProvider {
   }
 
   /**
-   * Use the next rpc in list, increment errors counter and initialize new
-   * request conn.
+   * Use the next rpc url in the list, increment errors counter.
    */
-  switchRpcOnError() {
+  private switchRpcOnError() {
     // Do not switch rpc if we have automatic switch enabled, since the next
-    // send will automatically switch to next rpc. If we switched here, we would
-    // always skip 2 rpcs.
+    // send will automatically switch to next rpc. If we had switched here, we
+    // would always skip 2 rpcs.
     if (!this.options.switchRpcOnEachRequest) {
       this.switchRpc();
     }
@@ -90,12 +97,14 @@ export class PooledJsonRpcProvider extends JsonRpcApiProvider {
   /**
    * Simply switch to the next rpc in the list.
    */
-  private switchRpc() {
+  public switchRpc() {
     this.currentRpcUrlIndex = (this.currentRpcUrlIndex + 1) % this.rpcUrls.length;
     this.currentConnection = new FetchRequest(this.getCurrentRpcUrl());
 
     if (this.options.logRpcSwitches) {
-      console.log(`[PooledJsonRpcProvider] switched rpc from to ${this.getCurrentRpcUrl()}`);
+      console.log(
+        `[(${new Date().toISOString()}) MultiUrlJsonRpcProvider]  switched rpc to ${this.getCurrentRpcUrl()}`
+      );
     }
   }
 
@@ -134,12 +143,13 @@ export class PooledJsonRpcProvider extends JsonRpcApiProvider {
       }
     } catch (err) {
       if (this.options.logErrors) {
-        console.error(`[PooledJsonRpcProvider@${currentRpcUrl}] request error: `, err);
+        console.error(`[(${new Date().toISOString()}) MultiUrlJsonRpcProvider@${currentRpcUrl}] request error: `, err);
       }
       this.switchRpcOnError();
 
       // When max number of errors is reached - throw.
       if (this.currentNumberOfErrors >= this.options.maxRetries!) {
+        console.error(`[(${new Date().toISOString()}) MultiUrlJsonRpcProvider@${currentRpcUrl}] Max retries reached`);
         throw err;
       }
 
@@ -154,7 +164,10 @@ export class PooledJsonRpcProvider extends JsonRpcApiProvider {
     // JSON-RPC error might be returned inside a correct response. Check for it.
     if (resp.length > 0 && Object.hasOwnProperty.call(resp[0], "error")) {
       if (this.options.logErrors) {
-        console.error(`[PooledJsonRpcProvider@${currentRpcUrl}] JSON-RPC response error: `, resp[0].error);
+        console.error(
+          `[(${new Date().toISOString()}) MultiUrlJsonRpcProvider@${currentRpcUrl}] JSON-RPC response error: `,
+          resp[0].error
+        );
       }
       this.switchRpcOnError();
       return this._send(payload);
@@ -166,7 +179,17 @@ export class PooledJsonRpcProvider extends JsonRpcApiProvider {
     return resp;
   }
 
-  getCurrentRpcUrl(): string {
+  /**
+   * @returns the current rpc url
+   */
+  public getCurrentRpcUrl(): string {
     return this.rpcUrls[this.currentRpcUrlIndex];
+  }
+
+  /**
+   * Reset the number of errors back to 0.
+   */
+  public resetErrorNumber(): void {
+    this.currentNumberOfErrors = 0;
   }
 }
