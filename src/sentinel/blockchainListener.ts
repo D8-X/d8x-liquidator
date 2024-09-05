@@ -45,7 +45,7 @@ export default class BlockhainListener {
     this.redisPubClient = constructRedis("sentinelPubClient");
     this.httpProvider = new MultiUrlJsonRpcProvider(this.config.rpcListenHttp, this.md.network, {
       logErrors: false,
-      logRpcSwitches: true,
+      logRpcSwitches: false,
       switchRpcOnEachRequest: true,
       timeoutSeconds: 20,
       maxRetries: this.config.rpcListenHttp.length * 5,
@@ -160,18 +160,33 @@ export default class BlockhainListener {
         // currently on HTTP - check if we can switch to WS by seeing if we get
         // blocks with next WS connection.
         let success = false;
-        console.log(`[${new Date(Date.now()).toISOString()}] attempting to switch to WS`);
+
+        // await this.multiUrlWsProvider.startNextWebsocket(); Do not use once
+        // with MultiUrlWebsocketProvider. Also, do not call
+        // startNextWebsocket(), multi url provider will handle the switching
+        // internally
         await this.multiUrlWsProvider.startNextWebsocket();
-        this.multiUrlWsProvider.once("block", () => {
+        console.log(
+          `[${new Date(
+            Date.now()
+          ).toISOString()}] attempting to switch to WS ${this.multiUrlWsProvider.getCurrentRpcUrl()}`
+        );
+        const blockReceivedCb = () => {
+          console.log("block received", this.multiUrlWsProvider.getCurrentRpcUrl());
           success = true;
-        });
+        };
+        this.multiUrlWsProvider.on("block", blockReceivedCb);
         // after N seconds, check if we received a block - if yes, switch
         setTimeout(async () => {
           if (success) {
+            this.multiUrlWsProvider.removeListener("block", blockReceivedCb);
             await this.switchListeningMode();
           } else {
             // Otherwise just stop the multi url ws provider and try again later
             await this.multiUrlWsProvider.stop();
+            console.log(
+              `[${new Date(Date.now()).toISOString()}] attempting to switch to WS failed - block not received`
+            );
           }
         }, this.config.waitForBlockSeconds * 1_000);
       }
