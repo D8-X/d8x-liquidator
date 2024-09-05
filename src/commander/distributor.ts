@@ -511,7 +511,19 @@ export default class Distributor {
     let cash = position.cashCC - position.unpaidFundingCC;
     // pred mkt?
     if (this.md.isPredictionMarket(symbol)) {
-      return pmExcessBalance(pos, Sm, S3, lockedIn, cash, this.maintenanceRate.get(symbol)!) >= 0;
+      // Skip prediction markets for now
+      const excessBalance = pmExcessBalance(pos, Sm, S3, lockedIn, cash, this.maintenanceRate.get(symbol)!);
+      const isSafe = excessBalance >= 0;
+      if (!isSafe) {
+        console.log({
+          info: "Prediction market liquidation would occur, ignoring for now",
+          position,
+          excessBalance,
+          pmExcessBalanceParams: [pos, Sm, S3, lockedIn, cash, this.maintenanceRate.get(symbol)],
+        });
+      }
+      // Return true to skip prediction markets for now
+      return true;
     }
     // usual calculation
     let maintenanceMargin = ((Math.abs(pos) * Sm) / S3) * this.maintenanceRate.get(symbol)!;
