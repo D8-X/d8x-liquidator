@@ -1,11 +1,10 @@
 import { PerpetualDataHandler, LiquidatorTool } from "@d8x/perpetuals-sdk";
-import { TransactionResponse, Wallet, formatUnits } from "ethers";
-import { JsonRpcProvider } from "ethers";
+import { Network, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
-import { constructRedis, executeWithTimeout } from "../utils";
+import { constructRedis } from "../utils";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
 import { Metrics } from "./metrics";
-import { time } from "console";
+import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
 
 // Liquidation result status
 export enum LiquidationStatus {
@@ -17,7 +16,7 @@ export enum LiquidationStatus {
 
 export default class Liquidator {
   // objects
-  private providers: JsonRpcProvider[];
+  private providers: MultiUrlJsonRpcProvider[];
   private bots: { api: LiquidatorTool; busy: boolean }[];
   private redisSubClient: Redis;
 
@@ -30,6 +29,7 @@ export default class Liquidator {
   // state
   private q: Set<string> = new Set();
   private lastLiquidateCall: number = 0;
+  // Set of symbol:traderAddr elements which are currently being processed.
   private locked: Set<string> = new Set();
 
   protected metrics: Metrics;
@@ -42,9 +42,20 @@ export default class Liquidator {
     this.privateKey = pkLiquidators;
     this.config = config;
     this.redisSubClient = constructRedis("executorSubClient");
-    this.providers = this.config.rpcExec.map((url) => new JsonRpcProvider(url));
 
     const sdkConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
+
+    this.providers = [
+      new MultiUrlJsonRpcProvider(this.config.rpcExec, new Network(sdkConfig.name || "", sdkConfig.chainId), {
+        timeoutSeconds: 25,
+        logErrors: true,
+        logRpcSwitches: true,
+        staticNetwork: true,
+        maxRetries: this.config.rpcExec.length * 3,
+        // do not switch rpc on each request with premium rpcExec rpcs.
+        switchRpcOnEachRequest: false,
+      }),
+    ];
 
     // Use price feed endpoints from user specified config
     if (this.config.priceFeedEndpoints.length > 0) {
@@ -84,6 +95,7 @@ export default class Liquidator {
         // createProxyInstance attaches the given provider to the object instance
         this.bots.map((liq) => liq.api.createProxyInstance(this.providers[i]))
       );
+
       success = results.every((r) => r.status === "fulfilled");
       i = (i + 1) % this.providers.length;
       tried++;
@@ -150,9 +162,10 @@ export default class Liquidator {
     this.bots[botIdx].busy = true;
     this.locked.add(`${symbol}:${trader}`);
 
-    // check if order is on-chain - stop if not/unable to check
+    // Check if trader is margin safe before liquidating.
     const isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch(() => true);
 
+    // Do not liquidate when margin safe.
     if (isMarginSafe) {
       console.log({
         info: "trader is margin safe",
@@ -178,7 +191,7 @@ export default class Liquidator {
     try {
       this.metrics.incrTxSubmissions();
       tx = await this.bots[botIdx].api.liquidateTrader(symbol, trader, this.config.rewardsAddress, undefined, {
-        gasLimit: this.config.gasLimit,
+        // gasLimit: this.config.gasLimit,
       });
     } catch (e: any) {
       console.log({

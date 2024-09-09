@@ -9,8 +9,10 @@ import {
   Multicall3,
   IPerpetualManager,
   floatToABK64x64,
+  IdxPriceInfo,
+  pmExcessBalance,
 } from "@d8x/perpetuals-sdk";
-import { BigNumberish, JsonRpcProvider } from "ethers";
+import { BigNumberish } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis } from "../utils";
 import {
@@ -22,19 +24,28 @@ import {
   UpdateMarkPriceMsg,
   UpdateUnitAccumulatedFundingMsg,
 } from "../types";
+import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
 
 export default class Distributor {
   // objects
   private md: MarketData;
   private redisSubClient: Redis;
   private redisPubClient: Redis;
-  private providers: JsonRpcProvider[];
+
+  /**
+   * There will be only 1 instance of provider in this array. Historically we
+   * used a list of JsonRpcProvider's, therefore we have array here until we
+   * cleanup.
+   *
+   * Use this.config.rpcWatch for distributor providers.
+   */
+  private providers: MultiUrlJsonRpcProvider[];
 
   // state
   private lastRefreshTime: Map<string, number> = new Map();
   private lastFundingFetchTime: Map<string, number> = new Map();
   private openPositions: Map<string, Map<string, Position>> = new Map();
-  private pxSubmission: Map<string, { idxPrices: number[] }> = new Map();
+  private pxSubmission: Map<string, IdxPriceInfo> = new Map();
   private markPremium: Map<string, number> = new Map();
   private unitAccumulatedFunding: Map<string, number> = new Map();
   private messageSentAt: Map<string, number> = new Map();
@@ -57,8 +68,18 @@ export default class Distributor {
     this.config = config;
     this.redisSubClient = constructRedis("commanderSubClient");
     this.redisPubClient = constructRedis("commanderPubClient");
-    this.providers = this.config.rpcWatch.map((url) => new JsonRpcProvider(url));
+
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(config.sdkConfig));
+    this.providers = [
+      new MultiUrlJsonRpcProvider(this.config.rpcWatch, this.md.network, {
+        timeoutSeconds: 25,
+        logErrors: true,
+        logRpcSwitches: true,
+        // Distributor uses free rpcs, make sure to switch on each call.
+        switchRpcOnEachRequest: true,
+        staticNetwork: true,
+      }),
+    ];
   }
 
   /**
@@ -95,7 +116,8 @@ export default class Distributor {
         this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE
       );
       // price info
-      this.pxSubmission.set(symbol, await this.md.fetchPricesForPerpetual(symbol));
+      const priceInfo = await this.md.fetchPricesForPerpetual(symbol);
+      this.pxSubmission.set(symbol, priceInfo);
       // mark premium, accumulated funding per BC unit
       const perpState = await this.md.getReadOnlyProxyInstance().getPerpetual(this.md.getPerpIdFromSymbol(symbol));
       this.markPremium.set(symbol, ABK64x64ToFloat(perpState.currentMarkPremiumRate.fPrice));
@@ -112,7 +134,6 @@ export default class Distributor {
     }
 
     // Subscribe to blockchain events
-    // console.log(`${new Date(Date.now()).toISOString()}: subscribing to blockchain event streamer...`);
     await this.redisSubClient.subscribe(
       "block",
       "UpdateMarkPriceEvent",
@@ -125,9 +146,6 @@ export default class Distributor {
           console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
           process.exit(1);
         }
-        // else {
-        //   console.log(`${new Date(Date.now()).toISOString()}: redis subscription success - ${count} active channels`);
-        // }
       }
     );
 
@@ -247,10 +265,10 @@ export default class Distributor {
 
   private async fetchPosition(perpetualId: number, address: string) {
     const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
-    const pxS2S3 = this.pxSubmission.get(symbol)!.idxPrices;
+    const pxSubmission = this.pxSubmission.get(symbol)!;
     const account = await this.md
       .getReadOnlyProxyInstance()
-      .getTraderState(perpetualId, address, [floatToABK64x64(pxS2S3[0]), floatToABK64x64(pxS2S3[1] ?? 0)]);
+      .getTraderState(perpetualId, address, [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0)]);
 
     const position: Position = {
       perpetualId: perpetualId,
@@ -296,7 +314,7 @@ export default class Distributor {
     const chunkSize2 = 2 ** 8; // for margin accounts
     const perpId = this.md.getPerpIdFromSymbol(symbol)!;
     const proxy = this.md.getReadOnlyProxyInstance() as any as IPerpetualManager;
-    const rpcProviders = this.config.rpcWatch.map((url) => new JsonRpcProvider(url));
+    const rpcProviders = this.providers;
     let providerIdx = Math.floor(Math.random() * rpcProviders.length);
     this.lastRefreshTime.set(symbol, Date.now());
 
@@ -333,7 +351,7 @@ export default class Distributor {
     const addressChunks: string[][] = [];
     const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, rpcProviders[providerIdx]);
     const traderList = [...addresses];
-    const pxS2S3 = this.pxSubmission.get(symbol)!.idxPrices;
+    const pxSubmission = this.pxSubmission.get(symbol)!;
     for (let i = 0; i < traderList.length; i += chunkSize2) {
       const addressChunk = traderList.slice(i, i + chunkSize2);
       const calls: Multicall3.Call3Struct[] = addressChunk.map((addr) => ({
@@ -342,7 +360,7 @@ export default class Distributor {
         callData: proxy.interface.encodeFunctionData("getTraderState", [
           perpId,
           addr,
-          [floatToABK64x64(pxS2S3[0]), floatToABK64x64(pxS2S3[1] ?? 0)],
+          [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0)],
         ]),
       }));
       promises2.push(multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls));
@@ -440,13 +458,13 @@ export default class Distributor {
 
     for (const trader of positions.keys()) {
       const position = positions.get(trader)!;
-      if (!this.isMarginSafe(position, [curPx.idxPrices[0], curPx.idxPrices[1]])) {
+      if (!this.isMarginSafe(position, curPx)) {
         const msg = JSON.stringify({
           symbol: symbol,
           traderAddr: trader,
         });
         if (Date.now() - (this.messageSentAt.get(msg) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
-          this.logPosition(position, [curPx.idxPrices[0], curPx.idxPrices[1]]);
+          this.logPosition(position, [curPx.s2, curPx.s3]);
           await this.redisPubClient.publish("LiquidateTrader", msg);
           this.messageSentAt.set(msg, Date.now());
         }
@@ -477,18 +495,38 @@ export default class Distributor {
     });
   }
 
-  private isMarginSafe(position: Position, pxS2S3: [number, number | undefined]) {
+  private isMarginSafe(position: Position, px: IdxPriceInfo) {
     if (position.positionBC == 0) {
       return true;
     }
     const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
-    let S2 = pxS2S3[0];
-    let Sm = S2 * (1 + (this.markPremium.get(symbol) ?? 0));
+    let S2 = px.s2;
+    let Sm = this.md.isPredictionMarket(symbol)
+      ? px.ema + (this.markPremium.get(symbol) ?? 0)
+      : S2 * (1 + (this.markPremium.get(symbol) ?? 0));
     // undefined -> either S3 = 1 (quote coll) or S3 = S2 (base coll)
-    let S3 = pxS2S3[1] && !isNaN(pxS2S3[1]) ? pxS2S3[1] : this.isQuote.get(symbol) ? 1 : S2;
+    let S3 = px.s3 && !isNaN(px.s3) ? px.s3 : this.isQuote.get(symbol) ? 1 : S2;
     let pos = position.positionBC;
     let lockedIn = position.lockedInQC;
     let cash = position.cashCC - position.unpaidFundingCC;
+    // pred mkt?
+    if (this.md.isPredictionMarket(symbol)) {
+      // Skip prediction markets for now
+      const excessBalance = pmExcessBalance(pos, Sm, S3, lockedIn, cash, this.maintenanceRate.get(symbol)!);
+      const isSafe = excessBalance >= 0;
+      // if (!isSafe) {
+      //   console.log({
+      //     info: "Prediction market liquidation would occur, ignoring for now",
+      //     position,
+      //     excessBalance,
+      //     pmExcessBalanceParams: [pos, Sm, S3, lockedIn, cash, this.maintenanceRate.get(symbol)],
+      //   });
+      // }
+      // // Return true to skip prediction markets for now
+      // return true;
+      return isSafe;
+    }
+    // usual calculation
     let maintenanceMargin = ((Math.abs(pos) * Sm) / S3) * this.maintenanceRate.get(symbol)!;
     let balance = cash + (pos * Sm - lockedIn) / S3;
     // if (balance < maintenanceMargin) {

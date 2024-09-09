@@ -5,7 +5,9 @@ import Websocket from "ws";
 import { LiquidateMsg, LiquidatorConfig, UpdateMarginAccountMsg, UpdateMarkPriceMsg } from "../types";
 import { constructRedis, executeWithTimeout, sleep } from "../utils";
 
-import { JsonRpcProvider, Network, WebSocketProvider } from "ethers";
+import { JsonRpcProvider, Network, SocketProvider, WebSocketProvider } from "ethers";
+import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
+import { MultiUrlWebSocketProvider } from "../multiUrlWebsocketProvider";
 
 enum ListeningMode {
   Polling = "Polling",
@@ -17,9 +19,12 @@ export default class BlockhainListener {
   // Network is initialized in start() method
   private network!: Network;
 
-  // objects
-  private httpProvider: JsonRpcProvider;
-  private listeningProvider: JsonRpcProvider | WebSocketProvider | undefined;
+  // Single instance of multiurl http provider.
+  private httpProvider: MultiUrlJsonRpcProvider;
+  // Single instance of multiurl ws provider. When switching listener, we will
+  // simply switch to next rpc url in the list.
+  private multiUrlWsProvider!: MultiUrlWebSocketProvider;
+  private listeningProvider: MultiUrlJsonRpcProvider | MultiUrlWebSocketProvider | undefined;
   private redisPubClient: Redis;
   private md: MarketData;
 
@@ -28,26 +33,34 @@ export default class BlockhainListener {
   private mode: ListeningMode = ListeningMode.Events;
   private lastBlockReceivedAt: number;
   private lastRpcIndex = { http: -1, ws: -1 };
+  private switchingRPC = false;
 
   constructor(config: LiquidatorConfig) {
+    if (config.rpcListenHttp.length <= 0) {
+      throw new Error("Please specify at least one HTTP RPC URL in rpcListenHttp configuration field");
+    }
+
     this.config = config;
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig));
     this.redisPubClient = constructRedis("sentinelPubClient");
-    this.httpProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.md.network, { staticNetwork: true });
+    this.httpProvider = new MultiUrlJsonRpcProvider(this.config.rpcListenHttp, this.md.network, {
+      logErrors: false,
+      logRpcSwitches: false,
+      switchRpcOnEachRequest: true,
+      timeoutSeconds: 20,
+      maxRetries: this.config.rpcListenHttp.length * 5,
+
+      staticNetwork: true,
+      polling: true,
+    });
+    this.multiUrlWsProvider = new MultiUrlWebSocketProvider(this.config.rpcListenWs, this.network, {
+      logErrors: true,
+      logRpcSwitches: true,
+      maxRetries: this.config.rpcListenWs.length * 4,
+
+      staticNetwork: true,
+    });
     this.lastBlockReceivedAt = Date.now();
-  }
-
-  private chooseHttpRpc() {
-    const idx = (this.lastRpcIndex.http + 1) % this.config.rpcListenHttp.length;
-    this.lastRpcIndex.http = idx;
-    console.log(idx, this.config.rpcListenHttp[idx]);
-    return this.config.rpcListenHttp[idx];
-  }
-
-  private chooseWsRpc() {
-    const idx = (this.lastRpcIndex.ws + 1) % this.config.rpcListenWs.length;
-    this.lastRpcIndex.ws = idx;
-    return this.config.rpcListenWs[idx];
   }
 
   public unsubscribe() {
@@ -60,53 +73,70 @@ export default class BlockhainListener {
   public checkHeartbeat() {
     const blockTime = Math.floor((Date.now() - this.lastBlockReceivedAt) / 1_000);
     if (blockTime > this.config.waitForBlockSeconds) {
-      console.log(
-        `${new Date(Date.now()).toISOString()}: websocket connection block time is ${blockTime} - disconnecting`
-      );
+      console.log({
+        info: "Last block received too long ago - heartbeat check failed",
+        receivedSecondsAgo: blockTime,
+        time: new Date(Date.now()).toISOString(),
+      });
       return false;
     }
-    console.log(
-      `${new Date(Date.now()).toISOString()}: websocket connection block time is ${blockTime} seconds @ block ${
-        this.blockNumber
-      }`
-    );
+    console.log({
+      info: "Last block received within expected time",
+      receivedSecondsAgo: blockTime,
+      time: new Date(Date.now()).toISOString(),
+    });
     return true;
   }
 
   private async switchListeningMode() {
-    this.blockNumber = undefined;
+    if (this.switchingRPC) {
+      console.log(`${new Date(Date.now()).toISOString()}: already switching RPC`);
+      return;
+    }
 
-    // Destroy websockets provider and close underlying connection. Do not call
-    // unsubscribe for websocket provider as it will cause async eth_unsubscribe
-    // calls while underlying connection is being closed.
-    //
-    // Change this once ether.js is upgraded to v6
-    if (this.listeningProvider instanceof WebSocketProvider) {
-      this.listeningProvider.destroy();
-    } else {
-      this.listeningProvider?.removeAllListeners();
+    this.blockNumber = undefined;
+    this.switchingRPC = true;
+
+    // Remove existing listeners. MultiUrlWebSocketProvider handles this
+    // internally, so this is only for Http providers.
+    if (this.listeningProvider) {
+      if (this.listeningProvider instanceof MultiUrlWebSocketProvider) {
+        await this.listeningProvider.stop();
+      }
+      await this.listeningProvider.removeAllListeners();
     }
 
     if (this.mode == ListeningMode.Events || this.config.rpcListenWs.length < 1) {
-      console.log(`${new Date(Date.now()).toISOString()}: switching from WS to HTTP`);
+      console.log({
+        info: "Switching from Websocket to HTTP provider",
+        time: new Date(Date.now()).toISOString(),
+      });
       this.mode = ListeningMode.Polling;
-      this.listeningProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.network, {
-        staticNetwork: true,
-        polling: true,
-      });
+      this.listeningProvider = this.httpProvider;
     } else if (this.config.rpcListenWs.length > 0) {
-      console.log(`${new Date(Date.now()).toISOString()}: switching from HTTP to WS`);
-      this.mode = ListeningMode.Events;
-      this.listeningProvider = new WebSocketProvider(this.chooseWsRpc(), this.network, {
-        staticNetwork: true,
+      console.log({
+        info: "Switching from HTTP to WS",
+        nexRpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl(),
+        time: new Date(Date.now()).toISOString(),
       });
+      this.mode = ListeningMode.Events;
+      // startNextWebsocket will be called in health checks, therefore we don't
+      // need to do that here.
+      this.listeningProvider = this.multiUrlWsProvider;
     }
+    this.switchingRPC = false;
+
+    this.listeningProvider!.resetErrorNumber();
+
     await this.addListeners();
     this.redisPubClient.publish("switch-mode", this.mode);
   }
 
-  private async connectOrSwitch() {
-    // try to connect via ws, switch to http on failure
+  /**
+   * Wait for blockNumber to come from WS connection or switch to http on
+   * failure.
+   */
+  private async connectWsOrSwitchToHttp() {
     this.blockNumber = undefined;
     setTimeout(async () => {
       if (!this.blockNumber) {
@@ -121,68 +151,91 @@ export default class BlockhainListener {
     // periodic health checks
     setInterval(async () => {
       if (this.mode == ListeningMode.Events) {
-        // currently on WS - check that block time is still reasonable or if we need to switch
+        // currently on WS - check that block time is still reasonable or if we
+        // need to switch
         if (!this.checkHeartbeat()) {
           this.switchListeningMode();
         }
       } else if (this.config.rpcListenWs.length > 0) {
-        // currently on HTTP - check if we can switch to WS by seeing if we get blocks
+        // currently on HTTP - check if we can switch to WS by seeing if we get
+        // blocks with next WS connection.
         let success = false;
-        let wsProvider = new WebSocketProvider(
-          new SturdyWebSocket(this.chooseWsRpc(), {
-            wsConstructor: Websocket,
-          }),
-          this.network
+
+        // await this.multiUrlWsProvider.startNextWebsocket(); Do not use once
+        // with MultiUrlWebsocketProvider. Also, do not call
+        // startNextWebsocket(), multi url provider will handle the switching
+        // internally
+        await this.multiUrlWsProvider.startNextWebsocket();
+        console.log(
+          `[${new Date(
+            Date.now()
+          ).toISOString()}] attempting to switch to WS ${this.multiUrlWsProvider.getCurrentRpcUrl()}`
         );
-        wsProvider.once("block", () => {
+        const blockReceivedCb = () => {
+          console.log("block received", this.multiUrlWsProvider.getCurrentRpcUrl());
           success = true;
-        });
+        };
+        this.multiUrlWsProvider.on("block", blockReceivedCb);
         // after N seconds, check if we received a block - if yes, switch
         setTimeout(async () => {
           if (success) {
+            this.multiUrlWsProvider.removeListener("block", blockReceivedCb);
             await this.switchListeningMode();
+          } else {
+            // Otherwise just stop the multi url ws provider and try again later
+            await this.multiUrlWsProvider.stop();
+            console.log(
+              `[${new Date(Date.now()).toISOString()}] attempting to switch to WS failed - block not received`
+            );
           }
-
-          // Destroy the one-off websocket provider and close underlying ws
-          // connection.
-          wsProvider.destroy();
         }, this.config.waitForBlockSeconds * 1_000);
       }
     }, this.config.healthCheckSeconds * 1_000);
   }
 
+  public containsEthersConnErrors(error: string) {
+    const ethersErrors = [
+      "Unexpected server response",
+      "SERVER_ERROR",
+      "WebSocket was closed before the connection was established",
+    ];
+    for (const err of ethersErrors) {
+      if (error.includes(err)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public async start() {
-    // http rpc
     this.network = await executeWithTimeout(
       this.httpProvider.getNetwork(),
-      10_000,
+      // Use at least 2X timeout of HTTP provider in case some of the rpc are
+      // slow to respond.
+      40_000,
       "could not establish http connection"
     );
+
     await this.md.createProxyInstance(this.httpProvider);
-    console.log(
-      `${new Date(Date.now()).toISOString()}: connected to ${this.network.name}, chain id ${
-        this.network.chainId
-      }, using HTTP provider`
-    );
-    // ws rpc
+
     if (this.config.rpcListenWs.length > 0) {
-      this.listeningProvider = new WebSocketProvider(
-        new SturdyWebSocket(this.chooseWsRpc(), {
-          wsConstructor: Websocket,
-        }),
-        this.network,
-        { staticNetwork: true }
-      );
+      this.listeningProvider = this.multiUrlWsProvider;
     } else if (this.config.rpcListenHttp.length > 0) {
-      this.listeningProvider = new JsonRpcProvider(this.chooseHttpRpc(), this.network, {
-        staticNetwork: true,
-        polling: true,
-      });
+      this.listeningProvider = this.httpProvider;
     } else {
       throw new Error("Please specify RPC URLs for listening to blockchain events");
     }
+    console.log({
+      info: "BlockchainListener started",
+      time: new Date(Date.now()).toISOString(),
+      network: {
+        name: this.network.name,
+        chainId: this.network.chainId,
+      },
+      listenerType: this.listeningProvider instanceof MultiUrlWebSocketProvider ? "Websocket" : "Http",
+    });
 
-    this.connectOrSwitch();
+    this.connectWsOrSwitchToHttp();
     this.addListeners();
     this.resetHealthChecks();
   }
@@ -191,6 +244,7 @@ export default class BlockhainListener {
     if (this.listeningProvider === undefined) {
       throw new Error("No provider ready to listen.");
     }
+
     // on error terminate
     this.listeningProvider.on("error", (e) => {
       console.log(
