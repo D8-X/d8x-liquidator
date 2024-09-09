@@ -191,7 +191,7 @@ export default class Liquidator {
     try {
       this.metrics.incrTxSubmissions();
       tx = await this.bots[botIdx].api.liquidateTrader(symbol, trader, this.config.rewardsAddress, undefined, {
-        gasLimit: this.config.gasLimit,
+        // gasLimit: this.config.gasLimit,
       });
     } catch (e: any) {
       console.log({
