@@ -1,4 +1,4 @@
-import { PerpetualDataHandler, LiquidatorTool } from "@d8x/perpetuals-sdk";
+import { PerpetualDataHandler, LiquidatorTool, sleep } from "@d8x/perpetuals-sdk";
 import { Network, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis } from "../utils";
@@ -163,7 +163,7 @@ export default class Liquidator {
     this.locked.add(`${symbol}:${trader}`);
 
     // Check if trader is margin safe before liquidating.
-    const isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch(() => true);
+    let isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch(() => undefined);
 
     // Do not liquidate when margin safe.
     if (isMarginSafe) {
@@ -204,6 +204,10 @@ export default class Liquidator {
       });
       this.metrics.incrTxRejects();
       this.bots[botIdx].busy = false;
+      if (isMarginSafe === undefined) {
+        // tried without knowing and failed - keep locked
+        await sleep(60);
+      }
       this.locked.delete(`${symbol}:${trader}`);
       return LiquidationStatus.Rejection;
     }
