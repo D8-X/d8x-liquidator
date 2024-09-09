@@ -42,6 +42,35 @@
     "maxGasPriceGWei": 100,
     "gasLimit": 2000000,
     "priceFeedEndpoints": [
+      { "type": "odin", "endpoints": ["https://hermes.pyth.network"], "writeEndpoints": ["https://odin.d8x.xyz"] },
+      {
+        "type": "pyth",
+        "endpoints": ["https://hermes.pyth.network"],
+        "writeEndpoints": ["https://hermes.pyth.network"]
+      }
+    ]
+  },
+  {
+    "sdkConfig": "arbitrumSepolia",
+    "bots": 1,
+    "rewardsAddress": "0xf14Af9b2Bc43C37f78bD83b0fb954F2A3afC1D29",
+    "rpcExec": ["https://sepolia-rollup.arbitrum.io/rpc", "https://arbitrum-sepolia.blockpi.network/v1/rpc/public"],
+    "rpcWatch": ["https://sepolia-rollup.arbitrum.io/rpc", "https://arbitrum-sepolia.blockpi.network/v1/rpc/public"],
+    "rpcListenHttp": [
+      "https://sepolia-rollup.arbitrum.io/rpc",
+      "https://arbitrum-sepolia.blockpi.network/v1/rpc/public"
+    ],
+    "rpcListenWs": ["wss://soft-patient-mound.arbitrum-sepolia.quiknode.pro/bc45d46903bbed7f3abd5bbd68d70741c5fd855a"],
+    "waitForBlockSeconds": 30,
+    "healthCheckSeconds": 3600,
+    "refreshAccountsIntervalSecondsMax": 3600,
+    "refreshAccountsIntervalSecondsMin": 10,
+    "liquidateIntervalSecondsMax": 60,
+    "liquidateIntervalSecondsMin": 5,
+    "fetchPricesIntervalSecondsMin": 10,
+    "maxGasPriceGWei": 100,
+    "gasLimit": 2000000,
+    "priceFeedEndpoints": [
       { "type": "odin", "endpoints": ["https://hermes.pyth.network"], "writeEndpoints": ["https://odin.d8x.xyz"] }
     ]
   }
