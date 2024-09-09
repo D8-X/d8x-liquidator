@@ -163,7 +163,10 @@ export default class Liquidator {
     this.locked.add(`${symbol}:${trader}`);
 
     // Check if trader is margin safe before liquidating.
-    let isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch(() => undefined);
+    let isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch((e) => {
+      console.log(e);
+      return undefined;
+    });
 
     // Do not liquidate when margin safe.
     if (isMarginSafe) {
