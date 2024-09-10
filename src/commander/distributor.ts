@@ -118,15 +118,14 @@ export default class Distributor {
       // price info
       try {
         const priceInfo = await this.md.fetchPricesForPerpetual(symbol);
-
         this.pxSubmission.set(symbol, priceInfo);
       } catch (e) {
         this.pxSubmission.set(symbol, {
           s2: 1,
           ema: 1,
           s2MktClosed: true,
-          conf: 1n,
-          predMktCLOBParams: 1n,
+          conf: BigInt(1),
+          predMktCLOBParams: BigInt(1),
         });
       }
       // mark premium, accumulated funding per BC unit
