@@ -116,8 +116,19 @@ export default class Distributor {
         this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE
       );
       // price info
-      const priceInfo = await this.md.fetchPricesForPerpetual(symbol);
-      this.pxSubmission.set(symbol, priceInfo);
+      try {
+        const priceInfo = await this.md.fetchPricesForPerpetual(symbol);
+
+        this.pxSubmission.set(symbol, priceInfo);
+      } catch (e) {
+        this.pxSubmission.set(symbol, {
+          s2: 1,
+          ema: 1,
+          s2MktClosed: true,
+          conf: 1n,
+          predMktCLOBParams: 1n,
+        });
+      }
       // mark premium, accumulated funding per BC unit
       const perpState = await this.md.getReadOnlyProxyInstance().getPerpetual(this.md.getPerpIdFromSymbol(symbol));
       this.markPremium.set(symbol, ABK64x64ToFloat(perpState.currentMarkPremiumRate.fPrice));
