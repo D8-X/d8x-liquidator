@@ -103,8 +103,11 @@ export default class Distributor {
     const info = await this.md.exchangeInfo();
 
     this.symbols = info.pools
+      .filter(({ isRunning }) => isRunning)
       .map((pool) =>
-        pool.perpetuals.map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`)
+        pool.perpetuals
+          .filter(({ state }) => state === "NORMAL")
+          .map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`)
       )
       .flat();
 
