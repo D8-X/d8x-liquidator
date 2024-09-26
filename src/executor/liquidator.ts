@@ -1,7 +1,7 @@
-import { PerpetualDataHandler, LiquidatorTool, sleep } from "@d8x/perpetuals-sdk";
+import { PerpetualDataHandler, LiquidatorTool } from "@d8x/perpetuals-sdk";
 import { Network, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
-import { constructRedis } from "../utils";
+import { constructRedis, sleep } from "../utils";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
 import { Metrics } from "./metrics";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
