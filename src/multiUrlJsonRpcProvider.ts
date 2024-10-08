@@ -1,4 +1,3 @@
-import { sleep } from "@d8x/perpetuals-sdk";
 import {
   FetchRequest,
   FetchResponse,
