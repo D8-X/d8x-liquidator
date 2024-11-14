@@ -60,7 +60,7 @@
       "https://sepolia-rollup.arbitrum.io/rpc",
       "https://arbitrum-sepolia.blockpi.network/v1/rpc/public"
     ],
-    "rpcListenWs": ["wss://soft-patient-mound.arbitrum-sepolia.quiknode.pro/bc45d46903bbed7f3abd5bbd68d70741c5fd855a"],
+    "rpcListenWs": [],
     "waitForBlockSeconds": 30,
     "healthCheckSeconds": 3600,
     "refreshAccountsIntervalSecondsMax": 3600,
@@ -73,5 +73,24 @@
     "priceFeedEndpoints": [
       { "type": "odin", "endpoints": ["https://hermes.pyth.network"], "writeEndpoints": ["https://odin.d8x.xyz"] }
     ]
+  },
+  {
+    "sdkConfig": "bartio",
+    "bots": 1,
+    "rewardsAddress": "",
+    "rpcExec": ["https://bartio.rpc.berachain.com/"],
+    "rpcWatch": ["https://bartio.rpc.berachain.com/"],
+    "rpcListenHttp": ["https://bartio.rpc.berachain.com/"],
+    "rpcListenWs": [],
+    "waitForBlockSeconds": 30,
+    "healthCheckSeconds": 100,
+    "refreshAccountsIntervalSecondsMax": 2000,
+    "refreshAccountsIntervalSecondsMin": 10,
+    "liquidateIntervalSecondsMax": 60,
+    "liquidateIntervalSecondsMin": 5,
+    "fetchPricesIntervalSecondsMin": 10,
+    "maxGasPriceGWei": 1000,
+    "gasLimit": 1500000,
+    "priceFeedEndpoints": []
   }
 ]
