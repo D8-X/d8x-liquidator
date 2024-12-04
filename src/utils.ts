@@ -4,12 +4,24 @@ import { HDNodeWallet, Mnemonic } from "ethers";
 
 require("dotenv").config();
 
+const shuffle = (array: string[]) => {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+};
+
 export function loadConfig(sdkConfig: string): LiquidatorConfig {
   const configList = require("./config/live.liquidatorConfig.json") as LiquidatorConfig[];
   const config = configList.find((config) => config.sdkConfig == sdkConfig);
   if (!config) {
     throw new Error(`SDK Config ${sdkConfig} not found in config file.`);
   }
+  config.rpcExec = shuffle(config.rpcExec);
+  config.rpcListenHttp = shuffle(config.rpcListenHttp);
+  config.rpcWatch = shuffle(config.rpcWatch);
+  config.rpcListenWs = shuffle(config.rpcListenWs);
   return config;
 }
 

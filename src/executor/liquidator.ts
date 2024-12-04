@@ -31,6 +31,7 @@ export default class Liquidator {
   private lastLiquidateCall: number = 0;
   // Set of symbol:traderAddr elements which are currently being processed.
   private locked: Set<string> = new Set();
+  private timesTried: Map<string, number> = new Map();
 
   protected metrics: Metrics;
 
@@ -159,8 +160,10 @@ export default class Liquidator {
       return LiquidationStatus.NoOp;
     }
     // lock
+    const id = `${symbol}:${trader}`;
     this.bots[botIdx].busy = true;
-    this.locked.add(`${symbol}:${trader}`);
+    this.locked.add(id);
+    this.timesTried.set(id, (this.timesTried.get(id) ?? 0) + 1);
 
     // Check if trader is margin safe before liquidating.
     let isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch((e) => {
@@ -170,6 +173,9 @@ export default class Liquidator {
 
     // Do not liquidate when margin safe.
     if (isMarginSafe) {
+      if (this.timesTried.get(id)! > 10) {
+        throw new Error("too many false positives");
+      }
       console.log({
         info: "trader is margin safe",
         symbol: symbol,
@@ -265,7 +271,10 @@ export default class Liquidator {
           console.log(`failed to fund bot ${bot}`);
         }
       }
-
+      if (this.timesTried.get(id)! > 10) {
+        // too many failures for same account
+        throw e;
+      }
       // Set result to failure
       result = LiquidationStatus.Failure;
     }
