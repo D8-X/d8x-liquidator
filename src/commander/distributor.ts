@@ -11,6 +11,7 @@ import {
   floatToABK64x64,
   IdxPriceInfo,
   pmExcessBalance,
+  sleepForSec,
 } from "@d8x/perpetuals-sdk";
 import { BigNumberish } from "ethers";
 import { Redis } from "ioredis";
@@ -216,9 +217,11 @@ export default class Distributor {
             if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
               return;
             }
-            await this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
-              this.updatePosition(pos);
-            });
+            sleepForSec(5).then(() =>
+              this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
+                this.updatePosition(pos).then();
+              })
+            );
             break;
           }
 
