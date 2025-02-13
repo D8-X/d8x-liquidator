@@ -25,7 +25,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_ID: 0
       SDK_CONFIG: bartio
-    restart: on-failure
+    restart: always
     logging:
       driver: "json-file"
       options:
@@ -44,12 +44,12 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_ID: 1
       SDK_CONFIG: bera
-    restart: on-failure
+    restart: always
     logging:
       driver: "json-file"
       options:
-        max-size: "1k"
-        max-file: "3"
+        max-size: "100k"
+        max-file: "10"
 
   # Account manager: fetches and distributes data to liquidators
   commander-bartio:
@@ -64,7 +64,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_ID: 0
       SDK_CONFIG: bartio
-    restart: on-failure
+    restart: always
     logging:
       driver: "json-file"
       options:
@@ -83,7 +83,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_ID: 1
       SDK_CONFIG: bera
-    restart: on-failure
+    restart: always
     logging:
       driver: "json-file"
       options:
@@ -105,7 +105,7 @@ services:
       REDIS_ID: 0
       SDK_CONFIG: bartio
       SEED_PHRASE: ${SEED_PHRASE}
-    restart: on-failure
+    restart: always
     logging:
       driver: "json-file"
       options:
@@ -126,7 +126,7 @@ services:
       REDIS_ID: 1
       SDK_CONFIG: bera
       SEED_PHRASE: ${SEED_PHRASE}
-    restart: on-failure
+    restart: always
     logging:
       driver: "json-file"
       options:
