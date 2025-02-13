@@ -92,5 +92,37 @@
     "maxGasPriceGWei": 1000,
     "gasLimit": 1500000,
     "priceFeedEndpoints": []
+  },
+  {
+    "sdkConfig": "bera",
+    "bots": 1,
+    "rewardsAddress": "0xf14Af9b2Bc43C37f78bD83b0fb954F2A3afC1D29",
+    "brokerWS": ["wss://broker-80084.d8x.xyz/ws"],
+    "rpcExec": [
+      "https://rpc.berachain.com/",
+      "https://berachain.blockpi.network/v1/rpc/public",
+      "https://berachain.blockpi.network/v1/rpc/public"
+    ],
+    "rpcWatch": [
+      "https://rpc.berachain.com/",
+      "https://berachain.blockpi.network/v1/rpc/public",
+      "https://berachain.blockpi.network/v1/rpc/public"
+    ],
+    "rpcListenHttp": [
+      "https://rpc.berachain.com/",
+      "https://berachain.blockpi.network/v1/rpc/public",
+      "https://berachain.blockpi.network/v1/rpc/public"
+    ],
+    "rpcListenWs": ["wss://berachain-rpc.publicnode.com"],
+    "waitForBlockSeconds": 30,
+    "healthCheckSeconds": 100,
+    "refreshAccountsIntervalSecondsMax": 2000,
+    "refreshAccountsIntervalSecondsMin": 10,
+    "liquidateIntervalSecondsMax": 60,
+    "liquidateIntervalSecondsMin": 5,
+    "fetchPricesIntervalSecondsMin": 10,
+    "maxGasPriceGWei": 1000,
+    "gasLimit": 1500000,
+    "priceFeedEndpoints": []
   }
 ]

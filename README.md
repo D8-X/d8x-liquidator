@@ -20,12 +20,14 @@ Note that your proceeds are sent to an address of your choice, which need not be
 
 ### Environment variables
 
-Rename the file `sample.env` as `.env` and edit as necessary:
+Create a copy of the file [sample.env](./sample.env) and rename it to `.env`. You will need to enter a mnemonic seed phrase in the variable named SEED_PHRASE. Remember to fund the first address along the derivation path. You can create a seed phrase e.g. by creating a new Metamask wallet, exporting the seed phrase, and funding the first account in this wallet with sufficient native tokens.
 
-- SDK_CONFIG: The D8X Perpetuals SDK confgi name of the network where traders are liquidated, e.g. "zkevm"
-- SEED_PHRASE: Your mnemonic seed phrase.
-  - Remember to fund the first address along the derivation path.
-  - You can create a seed phrase e.g. by creating a new Metamask wallet, exporting the seed phrase, and funding the first account in this wallet with sufficient native tokens.
+### Docker Compose
+
+Edit the file [docker-compose.yml](./docker-compose.yml):
+
+- Create copies of the sentinel, commander and executor processes, renaming them following the convention `service-chain` (e.g. `sentinel-arbitrum`).
+- In each copy, enter the corresponding D8X SDK config name, and a Redis ID unique to that chain.
 
 ### Parameter file
 

@@ -1,6 +1,4 @@
 # sudo docker compose up --build -d
-version: "3.8"
-
 name: d8x
 
 services:
@@ -11,9 +9,11 @@ services:
     ports:
       - "127.0.0.1:${REDIS_PORT}:${REDIS_PORT}"
     command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
+    # environment:
+    #   REDIS_ID: ${REDIS_ID}
 
   # Listen to block and events, and stream on redis
-  sentinel:
+  sentinel-bartio:
     build:
       context: .
       dockerfile: ./src/sentinel/Dockerfile
@@ -23,11 +23,36 @@ services:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      SDK_CONFIG: ${SDK_CONFIG}
+      REDIS_ID: 0
+      SDK_CONFIG: bartio
     restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1k"
+        max-file: "3"
+
+  sentinel-bera:
+    build:
+      context: .
+      dockerfile: ./src/sentinel/Dockerfile
+    depends_on:
+      - cache
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 1
+      SDK_CONFIG: bera
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1k"
+        max-file: "3"
 
   # Account manager: fetches and distributes data to liquidators
-  commander:
+  commander-bartio:
     depends_on:
       - cache
     build:
@@ -37,14 +62,39 @@ services:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      SDK_CONFIG: ${SDK_CONFIG}
+      REDIS_ID: 0
+      SDK_CONFIG: bartio
     restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1k"
+        max-file: "3"
 
-  # liquidator: submits liquidate calls to the blockchain
-  executor:
+  commander-bera:
     depends_on:
       - cache
-      - commander
+    build:
+      context: .
+      dockerfile: ./src/commander/Dockerfile
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 1
+      SDK_CONFIG: bera
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1k"
+        max-file: "3"
+
+  # liquidator: submits liquidate calls to the blockchain
+  executor-bartio:
+    depends_on:
+      - cache
+      - commander-bartio
     build:
       context: .
       dockerfile: ./src/executor/Dockerfile
@@ -52,9 +102,37 @@ services:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      SDK_CONFIG: ${SDK_CONFIG}
+      REDIS_ID: 0
+      SDK_CONFIG: bartio
       SEED_PHRASE: ${SEED_PHRASE}
     restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1k"
+        max-file: "3"
+
+  executor-bera:
+    depends_on:
+      - cache
+      - commander-bera
+    build:
+      context: .
+      dockerfile: ./src/executor/Dockerfile
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 1
+      SDK_CONFIG: bera
+      SEED_PHRASE: ${SEED_PHRASE}
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1k"
+        max-file: "3"
+
   # Prometheus with alertmanager
   prometheus:
     image: prom/prometheus:latest
@@ -89,7 +167,6 @@ services:
         target: /etc/alertmanager/slack_api_url.txt
       - source: alertmanager_yaml
         target: /etc/alertmanager/alertmanager.yml
-
 volumes:
   prometheus_data:
 configs:

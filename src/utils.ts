@@ -50,7 +50,13 @@ export function getPrivateKeyFromSeed(mnemonic: string, idx: number) {
 }
 
 export function getRedisConfig(): RedisConfig {
-  let config = { host: process.env.REDIS_HOST!, port: +process.env.REDIS_PORT!, password: process.env.REDIS_PASSWORD };
+  // let config = { host: process.env.REDIS_HOST!, port: +process.env.REDIS_PORT!, password: process.env.REDIS_PASSWORD };
+  let config = {
+    host: process.env.REDIS_HOST!,
+    port: +process.env.REDIS_PORT!,
+    password: process.env.REDIS_PASSWORD,
+    db: +process.env.REDIS_ID!,
+  };
   return config;
 }
 
