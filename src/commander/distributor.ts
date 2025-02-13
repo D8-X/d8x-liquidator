@@ -480,7 +480,7 @@ export default class Distributor {
           traderAddr: trader,
         });
         if (Date.now() - (this.messageSentAt.get(msg) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
-          this.logPosition(position, [curPx.s2, curPx.s3]);
+          // this.logPosition(position, [curPx.s2, curPx.s3]);
           await this.redisPubClient.publish("LiquidateTrader", msg);
           this.messageSentAt.set(msg, Date.now());
         }
