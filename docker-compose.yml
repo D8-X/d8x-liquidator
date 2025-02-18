@@ -51,6 +51,63 @@ services:
         max-size: "100k"
         max-file: "10"
 
+  sentinel-arbitrum:
+    build:
+      context: .
+      dockerfile: ./src/sentinel/Dockerfile
+    depends_on:
+      - cache
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 2
+      SDK_CONFIG: arbitrum
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  sentinel-zkevm:
+    build:
+      context: .
+      dockerfile: ./src/sentinel/Dockerfile
+    depends_on:
+      - cache
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 3
+      SDK_CONFIG: zkevm
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  sentinel-base:
+    build:
+      context: .
+      dockerfile: ./src/sentinel/Dockerfile
+    depends_on:
+      - cache
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 4
+      SDK_CONFIG: base
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
   # Account manager: fetches and distributes data to liquidators
   commander-bartio:
     depends_on:
@@ -87,8 +144,65 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-size: "1k"
-        max-file: "3"
+        max-size: "100k"
+        max-file: "10"
+
+  commander-arbitrum:
+    depends_on:
+      - cache
+    build:
+      context: .
+      dockerfile: ./src/commander/Dockerfile
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 2
+      SDK_CONFIG: arbitrum
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  commander-zkevm:
+    depends_on:
+      - cache
+    build:
+      context: .
+      dockerfile: ./src/commander/Dockerfile
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 3
+      SDK_CONFIG: zkevm
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  commander-base:
+    depends_on:
+      - cache
+    build:
+      context: .
+      dockerfile: ./src/commander/Dockerfile
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 4
+      SDK_CONFIG: base
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
 
   # liquidator: submits liquidate calls to the blockchain
   executor-bartio:
@@ -130,8 +244,71 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-size: "1k"
-        max-file: "3"
+        max-size: "100k"
+        max-file: "10"
+
+  executor-arbitrum:
+    depends_on:
+      - cache
+      - commander-arbitrum
+    build:
+      context: .
+      dockerfile: ./src/executor/Dockerfile
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 2
+      SDK_CONFIG: arbitrum
+      SEED_PHRASE: ${SEED_PHRASE}
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  executor-zkevm:
+    depends_on:
+      - cache
+      - commander-zkevm
+    build:
+      context: .
+      dockerfile: ./src/executor/Dockerfile
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 3
+      SDK_CONFIG: zkevm
+      SEED_PHRASE: ${SEED_PHRASE}
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  executor-base:
+    depends_on:
+      - cache
+      - commander-base
+    build:
+      context: .
+      dockerfile: ./src/executor/Dockerfile
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 4
+      SDK_CONFIG: base
+      SEED_PHRASE: ${SEED_PHRASE}
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
 
   # Prometheus with alertmanager
   prometheus:
