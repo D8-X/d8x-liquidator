@@ -19,6 +19,7 @@ export default class Liquidator {
   private providers: MultiUrlJsonRpcProvider[];
   private bots: { api: LiquidatorTool; busy: boolean }[];
   private redisSubClient: Redis;
+  private redisPubClient: Redis;
 
   // parameters
   private treasury: string;
@@ -43,6 +44,7 @@ export default class Liquidator {
     this.privateKey = pkLiquidators;
     this.config = config;
     this.redisSubClient = constructRedis("executorSubClient");
+    this.redisPubClient = constructRedis("executorPubClient");
 
     const sdkConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
 
@@ -273,6 +275,7 @@ export default class Liquidator {
       }
       if (this.timesTried.get(id)! > 10) {
         // too many failures for same account
+        this.redisPubClient.publish("Restart", "too many trials");
         throw e;
       }
       // Set result to failure
