@@ -169,7 +169,7 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
         );
       }
       this.switchRpcOnError();
-      return this._send(payload);
+      // return this._send(payload);
     }
 
     // Request was sent successfuly, reset errors counter
