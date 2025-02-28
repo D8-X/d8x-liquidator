@@ -13,8 +13,6 @@ RUN yarn install
 
 COPY . .
 
-# RUN echo -e "SDK_CONFIG=${SDK_CONFIG}\n" "SEED_PHRASE=${SEED_PHRASE}\n" > .env
-
 RUN yarn build
 
 CMD yarn start-executor

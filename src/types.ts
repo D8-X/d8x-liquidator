@@ -87,6 +87,7 @@ export interface UpdateUnitAccumulatedFundingMsg extends RedisMsg {
 }
 
 export interface LiquidateTraderMsg {
+  chainId: number;
   symbol: string;
   traderAddr: string;
   // px: PriceFeedSubmission;

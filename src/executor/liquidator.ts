@@ -26,6 +26,7 @@ export default class Liquidator {
   private privateKey: string[];
   private config: LiquidatorConfig;
   private earnings: string | undefined;
+  private chainId: number;
 
   // state
   private q: Set<string> = new Set();
@@ -43,11 +44,12 @@ export default class Liquidator {
     this.treasury = pkTreasury;
     this.privateKey = pkLiquidators;
     this.config = config;
+
     this.redisSubClient = constructRedis("executorSubClient");
     this.redisPubClient = constructRedis("executorPubClient");
 
     const sdkConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
-
+    this.chainId = sdkConfig.chainId;
     this.providers = [
       new MultiUrlJsonRpcProvider(this.config.rpcExec, new Network(sdkConfig.name || "", sdkConfig.chainId), {
         timeoutSeconds: 25,
@@ -136,18 +138,21 @@ export default class Liquidator {
         switch (channel) {
           case "LiquidateTrader": {
             const prevCount = this.q.size;
-            this.q.add(msg);
-            msgs += this.q.size > prevCount ? 1 : 0;
-            const res = await this.liquidate();
-            if (res == BotStatus.Busy) {
-              busy++;
-            } else if (res == BotStatus.PartialError) {
-              errors++;
-            } else if (res == BotStatus.Error) {
-              throw new Error(`error`);
-            } else {
-              // res == BotStatus.Ready
-              success++;
+            const { chainId } = JSON.parse(msg);
+            if (this.chainId == chainId) {
+              this.q.add(msg);
+              msgs += this.q.size > prevCount ? 1 : 0;
+              const res = await this.liquidate();
+              if (res == BotStatus.Busy) {
+                busy++;
+              } else if (res == BotStatus.PartialError) {
+                errors++;
+              } else if (res == BotStatus.Error) {
+                throw new Error(`error`);
+              } else {
+                // res == BotStatus.Ready
+                success++;
+              }
             }
             break;
           }

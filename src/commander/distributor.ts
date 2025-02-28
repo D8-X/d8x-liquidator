@@ -58,6 +58,7 @@ export default class Distributor {
   private isQuote: Map<string, boolean> = new Map();
   private symbols: string[] = [];
   private maintenanceRate: Map<string, number> = new Map();
+  private chainId: number;
 
   // publish times must be within 10 seconds of each other, or submission will fail on-chain
   private MAX_OUTOFSYNC_SECONDS: number = 10;
@@ -69,8 +70,9 @@ export default class Distributor {
     this.config = config;
     this.redisSubClient = constructRedis("commanderSubClient");
     this.redisPubClient = constructRedis("commanderPubClient");
-
-    this.md = new MarketData(PerpetualDataHandler.readSDKConfig(config.sdkConfig));
+    const sdkConfig = PerpetualDataHandler.readSDKConfig(config.sdkConfig);
+    this.chainId = sdkConfig.chainId;
+    this.md = new MarketData(sdkConfig);
     this.providers = [
       new MultiUrlJsonRpcProvider(this.config.rpcWatch, this.md.network, {
         timeoutSeconds: 25,
@@ -476,6 +478,7 @@ export default class Distributor {
       const position = positions.get(trader)!;
       if (!this.isMarginSafe(position, curPx)) {
         const msg = JSON.stringify({
+          chainId: this.chainId,
           symbol: symbol,
           traderAddr: trader,
         });
