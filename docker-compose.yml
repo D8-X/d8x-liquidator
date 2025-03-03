@@ -13,25 +13,6 @@ services:
     #   REDIS_ID: ${REDIS_ID}
 
   # Listen to block and events, and stream on redis
-  sentinel-bartio:
-    build:
-      context: .
-      dockerfile: ./src/sentinel/Dockerfile
-    depends_on:
-      - cache
-    environment:
-      REDIS_HOST: cache
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_ID: 0
-      SDK_CONFIG: bartio
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "1k"
-        max-file: "3"
-
   sentinel-bera:
     build:
       context: .
@@ -109,25 +90,6 @@ services:
         max-file: "10"
 
   # Account manager: fetches and distributes data to liquidators
-  commander-bartio:
-    depends_on:
-      - cache
-    build:
-      context: .
-      dockerfile: ./src/commander/Dockerfile
-    environment:
-      REDIS_HOST: cache
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_ID: 0
-      SDK_CONFIG: bartio
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "1k"
-        max-file: "3"
-
   commander-bera:
     depends_on:
       - cache
@@ -205,27 +167,6 @@ services:
         max-file: "10"
 
   # liquidator: submits liquidate calls to the blockchain
-  executor-bartio:
-    depends_on:
-      - cache
-      - commander-bartio
-    build:
-      context: .
-      dockerfile: ./src/executor/Dockerfile
-    environment:
-      REDIS_HOST: cache
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_ID: 0
-      SDK_CONFIG: bartio
-      SEED_PHRASE: ${SEED_PHRASE}
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "1k"
-        max-file: "3"
-
   executor-bera:
     depends_on:
       - cache
