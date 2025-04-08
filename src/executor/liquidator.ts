@@ -1,5 +1,5 @@
 import { PerpetualDataHandler, LiquidatorTool } from "@d8x/perpetuals-sdk";
-import { Network, TransactionResponse, Wallet, formatUnits } from "ethers";
+import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
 import { constructRedis, sleep } from "../utils";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
@@ -27,6 +27,8 @@ export default class Liquidator {
   private config: LiquidatorConfig;
   private earnings: string | undefined;
   private chainId: number;
+  private gasPriceBuffer = 100n; // no buffer
+  private lastUsedRpcIndex: number = 0;
 
   // state
   private q: Set<string> = new Set();
@@ -80,6 +82,15 @@ export default class Liquidator {
       this.earnings = this.config.rewardsAddress;
     } else {
       this.earnings = undefined;
+    }
+
+    if (this.config.gasPriceMultiplier) {
+      if (this.config.gasPriceMultiplier > 0) {
+        // we only keep 2 digits
+        this.gasPriceBuffer = BigInt(Math.round(this.config.gasPriceMultiplier * 100));
+      } else {
+        throw new Error("Invalid gas price buffer");
+      }
     }
   }
 
@@ -206,8 +217,11 @@ export default class Liquidator {
     let tx: TransactionResponse;
     try {
       this.metrics.incrTxSubmissions();
+      const p = this.getNextRpc();
+      const feeData = await this.getFeeData(p);
       tx = await this.bots[botIdx].api.liquidateTrader(symbol, trader, this.config.rewardsAddress, undefined, {
-        // gasLimit: this.config.gasLimit,
+        ...feeData,
+        rpcURL: p._getConnection().url,
       });
     } catch (e: any) {
       console.log({
@@ -233,7 +247,10 @@ export default class Liquidator {
       orderBook: tx.to,
       executor: tx.from,
       trader: trader,
-      gasLimit: `${formatUnits(tx.gasLimit, "wei")} wei`,
+      gasLimit: tx.gasLimit ? `${formatUnits(tx.gasLimit, "wei")} gas` : undefined,
+      gasPrice: tx.gasPrice ? `${formatUnits(tx.gasPrice)} wei` : undefined,
+      maxFeePerGas: tx.maxFeePerGas ? `${formatUnits(tx.maxFeePerGas)} wei` : undefined,
+      maxPriorityFeePerGas: tx.maxPriorityFeePerGas ? `${formatUnits(tx.maxPriorityFeePerGas)} wei` : undefined,
       hash: tx.hash,
       timestamp: new Date().toISOString(),
     });
@@ -369,6 +386,30 @@ export default class Liquidator {
         // everything worked or nothing happend
         return BotStatus.Ready;
     }
+  }
+
+  public async getFeeData(p: Provider) {
+    return await p.getFeeData().then(({ gasPrice, maxFeePerGas, maxPriorityFeePerGas }) => {
+      if (maxFeePerGas) {
+        return {
+          gasPrice: null,
+          maxFeePerGas: (maxFeePerGas * this.gasPriceBuffer) / 100n,
+          maxPriorityFeePerGas: ((maxPriorityFeePerGas ?? maxFeePerGas) * this.gasPriceBuffer * 10n) / 100n,
+        };
+      } else {
+        return {
+          gasPrice,
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+        };
+      }
+    });
+  }
+
+  // Returns next rpc provider in the list
+  public getNextRpc() {
+    this.lastUsedRpcIndex = (this.lastUsedRpcIndex + 1) % this.providers.length;
+    return this.providers[this.lastUsedRpcIndex];
   }
 
   public async fundWallets(addressArray: string[]) {

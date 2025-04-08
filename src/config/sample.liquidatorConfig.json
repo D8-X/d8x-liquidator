@@ -16,6 +16,7 @@
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 1,
     "gasLimit": 2000000,
+    "gasPriceMultiplier": 1,
     "priceFeedEndpoints": [
       {
         "type": "pyth",
@@ -41,6 +42,7 @@
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 100,
     "gasLimit": 2000000,
+    "gasPriceMultiplier": 1,
     "priceFeedEndpoints": [
       { "type": "odin", "endpoints": ["https://hermes.pyth.network"], "writeEndpoints": ["https://odin.d8x.xyz"] },
       {
@@ -70,6 +72,7 @@
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 100,
     "gasLimit": 2000000,
+    "gasPriceMultiplier": 1,
     "priceFeedEndpoints": [
       { "type": "odin", "endpoints": ["https://hermes.pyth.network"], "writeEndpoints": ["https://odin.d8x.xyz"] }
     ]
@@ -91,6 +94,7 @@
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 1000,
     "gasLimit": 1500000,
+    "gasPriceMultiplier": 1,
     "priceFeedEndpoints": []
   },
   {
@@ -123,6 +127,7 @@
     "fetchPricesIntervalSecondsMin": 10,
     "maxGasPriceGWei": 1000,
     "gasLimit": 1500000,
+    "gasPriceMultiplier": 1,
     "priceFeedEndpoints": []
   }
 ]
