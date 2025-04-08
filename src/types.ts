@@ -32,6 +32,7 @@ export interface LiquidatorConfig {
   liquidateIntervalSecondsMax: number;
   liquidateIntervalSecondsMin: number;
   fetchPricesIntervalSecondsMin: number;
+  gasPriceMultiplier: number;
   maxGasPriceGWei: number;
   gasLimit: number;
   priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
