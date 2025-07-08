@@ -515,7 +515,7 @@ export default class Distributor {
   }
 
   private isMarginSafe(position: Position, px: IdxPriceInfo) {
-    if (position.positionBC == 0) {
+    if (position.positionBC == 0 || px.s2MktClosed || px.s3MktClosed) {
       return true;
     }
     const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
