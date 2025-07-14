@@ -93,6 +93,7 @@ services:
   commander-bera:
     depends_on:
       - cache
+      - sentinel-bera
     build:
       context: .
       dockerfile: ./src/commander/Dockerfile
