@@ -116,7 +116,10 @@ export default class Distributor {
 
     for (const symbol of this.symbols) {
       // static info
-      this.maintenanceRate.set(symbol, this.md.getPerpetualStaticInfo(symbol).maintenanceMarginRate);
+      this.maintenanceRate.set(
+        symbol,
+        PerpetualDataHandler.getMaintenanceMarginRate(this.md.getPerpetualStaticInfo(symbol))
+      );
       this.isQuote.set(
         symbol,
         this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE
