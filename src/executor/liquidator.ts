@@ -1,10 +1,10 @@
-import { PerpetualDataHandler, LiquidatorTool } from "@d8x/perpetuals-sdk";
+import { LiquidatorTool, PerpetualDataHandler } from "@d8x/perpetuals-sdk";
 import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
-import { constructRedis, sleep } from "../utils";
-import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
-import { Metrics } from "./metrics";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
+import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
+import { constructRedis, sleep } from "../utils";
+import { Metrics } from "./metrics";
 
 // Liquidation result status
 export enum LiquidationStatus {
@@ -394,7 +394,7 @@ export default class Liquidator {
         return {
           gasPrice: null,
           maxFeePerGas: (maxFeePerGas * this.gasPriceBuffer) / 100n,
-          maxPriorityFeePerGas: ((maxPriorityFeePerGas ?? maxFeePerGas) * this.gasPriceBuffer * 10n) / 100n,
+          maxPriorityFeePerGas: ((maxPriorityFeePerGas ?? maxFeePerGas) * this.gasPriceBuffer) / 100n,
         };
       } else {
         return {
