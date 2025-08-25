@@ -32,24 +32,24 @@ services:
         max-size: "100k"
         max-file: "10"
 
-  sentinel-arbitrum:
-    build:
-      context: .
-      dockerfile: ./src/sentinel/Dockerfile
-    depends_on:
-      - cache
-    environment:
-      REDIS_HOST: cache
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_ID: 2
-      SDK_CONFIG: arbitrum
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100k"
-        max-file: "10"
+  # sentinel-arbitrum:
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/sentinel/Dockerfile
+  #   depends_on:
+  #     - cache
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 2
+  #     SDK_CONFIG: arbitrum
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
 
   # sentinel-zkevm:
   #   build:
@@ -110,24 +110,24 @@ services:
         max-size: "100k"
         max-file: "10"
 
-  commander-arbitrum:
-    depends_on:
-      - cache
-    build:
-      context: .
-      dockerfile: ./src/commander/Dockerfile
-    environment:
-      REDIS_HOST: cache
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_ID: 2
-      SDK_CONFIG: arbitrum
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100k"
-        max-file: "10"
+  # commander-arbitrum:
+  #   depends_on:
+  #     - cache
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/commander/Dockerfile
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 2
+  #     SDK_CONFIG: arbitrum
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
 
   # commander-zkevm:
   #   depends_on:
@@ -189,26 +189,26 @@ services:
         max-size: "100k"
         max-file: "10"
 
-  executor-arbitrum:
-    depends_on:
-      - cache
-      - commander-arbitrum
-    build:
-      context: .
-      dockerfile: ./src/executor/Dockerfile
-    environment:
-      REDIS_HOST: cache
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_ID: 2
-      SDK_CONFIG: arbitrum
-      SEED_PHRASE: ${SEED_PHRASE}
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100k"
-        max-file: "10"
+  # executor-arbitrum:
+  #   depends_on:
+  #     - cache
+  #     - commander-arbitrum
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/executor/Dockerfile
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 2
+  #     SDK_CONFIG: arbitrum
+  #     SEED_PHRASE: ${SEED_PHRASE}
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
 
   # executor-zkevm:
   #   depends_on:
