@@ -13,24 +13,24 @@ services:
     #   REDIS_ID: ${REDIS_ID}
 
   # Listen to block and events, and stream on redis
-  sentinel-bera:
-    build:
-      context: .
-      dockerfile: ./src/sentinel/Dockerfile
-    depends_on:
-      - cache
-    environment:
-      REDIS_HOST: cache
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_ID: 1
-      SDK_CONFIG: bera
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100k"
-        max-file: "10"
+  # sentinel-bera:
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/sentinel/Dockerfile
+  #   depends_on:
+  #     - cache
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 1
+  #     SDK_CONFIG: bera
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
 
   # sentinel-arbitrum:
   #   build:
@@ -70,7 +70,7 @@ services:
   #       max-size: "100k"
   #       max-file: "10"
 
-  sentinel-base:
+  sentinel-base_sepolia:
     build:
       context: .
       dockerfile: ./src/sentinel/Dockerfile
@@ -81,7 +81,7 @@ services:
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_ID: 4
-      SDK_CONFIG: base
+      SDK_CONFIG: base_sepolia
     restart: always
     logging:
       driver: "json-file"
@@ -90,25 +90,25 @@ services:
         max-file: "10"
 
   # Account manager: fetches and distributes data to liquidators
-  commander-bera:
-    depends_on:
-      - cache
-      - sentinel-bera
-    build:
-      context: .
-      dockerfile: ./src/commander/Dockerfile
-    environment:
-      REDIS_HOST: cache
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_ID: 1
-      SDK_CONFIG: bera
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100k"
-        max-file: "10"
+  # commander-bera:
+  #   depends_on:
+  #     - cache
+  #     - sentinel-bera
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/commander/Dockerfile
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 1
+  #     SDK_CONFIG: bera
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
 
   # commander-arbitrum:
   #   depends_on:
@@ -148,7 +148,7 @@ services:
   #       max-size: "100k"
   #       max-file: "10"
 
-  commander-base:
+  commander-base_sepolia:
     depends_on:
       - cache
     build:
@@ -159,7 +159,7 @@ services:
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_ID: 4
-      SDK_CONFIG: base
+      SDK_CONFIG: base_sepolia
     restart: always
     logging:
       driver: "json-file"
@@ -168,26 +168,26 @@ services:
         max-file: "10"
 
   # liquidator: submits liquidate calls to the blockchain
-  executor-bera:
-    depends_on:
-      - cache
-      - commander-bera
-    build:
-      context: .
-      dockerfile: ./src/executor/Dockerfile
-    environment:
-      REDIS_HOST: cache
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_ID: 1
-      SDK_CONFIG: bera
-      SEED_PHRASE: ${SEED_PHRASE}
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100k"
-        max-file: "10"
+  # executor-bera:
+  #   depends_on:
+  #     - cache
+  #     - commander-bera
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/executor/Dockerfile
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 1
+  #     SDK_CONFIG: bera
+  #     SEED_PHRASE: ${SEED_PHRASE}
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
 
   # executor-arbitrum:
   #   depends_on:
@@ -231,10 +231,10 @@ services:
   #       max-size: "100k"
   #       max-file: "10"
 
-  executor-base:
+  executor-base_sepolia:
     depends_on:
       - cache
-      - commander-base
+      - commander-base_sepolia
     build:
       context: .
       dockerfile: ./src/executor/Dockerfile
@@ -243,7 +243,7 @@ services:
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_ID: 4
-      SDK_CONFIG: base
+      SDK_CONFIG: base_sepolia
       SEED_PHRASE: ${SEED_PHRASE}
     restart: always
     logging:
