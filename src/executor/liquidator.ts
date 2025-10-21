@@ -109,7 +109,7 @@ export default class Liquidator {
       console.log(`trying provider ${i} ... `);
       const results = await Promise.allSettled(
         // createProxyInstance attaches the given provider to the object instance
-        this.bots.map((liq) => liq.api.createProxyInstance(this.providers[i]))
+        this.bots.map((liq) => liq.api.createProxyInstance(this.providers[i]), this)
       );
 
       success = results.every((r) => r.status === "fulfilled");
