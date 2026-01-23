@@ -1,6 +1,4 @@
 # sudo docker compose up --build -d
-version: "3.8"
-
 name: d8x
 
 services:
@@ -11,9 +9,68 @@ services:
     ports:
       - "127.0.0.1:${REDIS_PORT}:${REDIS_PORT}"
     command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
+    # environment:
+    #   REDIS_ID: ${REDIS_ID}
 
   # Listen to block and events, and stream on redis
-  sentinel:
+  # sentinel-bera:
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/sentinel/Dockerfile
+  #   depends_on:
+  #     - cache
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 1
+  #     SDK_CONFIG: bera
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
+
+  # sentinel-arbitrum:
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/sentinel/Dockerfile
+  #   depends_on:
+  #     - cache
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 2
+  #     SDK_CONFIG: arbitrum
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
+
+  # sentinel-zkevm:
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/sentinel/Dockerfile
+  #   depends_on:
+  #     - cache
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 3
+  #     SDK_CONFIG: zkevm
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
+
+  sentinel-base_sepolia:
     build:
       context: .
       dockerfile: ./src/sentinel/Dockerfile
@@ -23,11 +80,75 @@ services:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      SDK_CONFIG: ${SDK_CONFIG}
-    restart: on-failure
+      REDIS_ID: 4
+      SDK_CONFIG: base_sepolia
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
 
   # Account manager: fetches and distributes data to liquidators
-  commander:
+  # commander-bera:
+  #   depends_on:
+  #     - cache
+  #     - sentinel-bera
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/commander/Dockerfile
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 1
+  #     SDK_CONFIG: bera
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
+
+  # commander-arbitrum:
+  #   depends_on:
+  #     - cache
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/commander/Dockerfile
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 2
+  #     SDK_CONFIG: arbitrum
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
+
+  # commander-zkevm:
+  #   depends_on:
+  #     - cache
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/commander/Dockerfile
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 3
+  #     SDK_CONFIG: zkevm
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
+
+  commander-base_sepolia:
     depends_on:
       - cache
     build:
@@ -37,14 +158,83 @@ services:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      SDK_CONFIG: ${SDK_CONFIG}
-    restart: on-failure
+      REDIS_ID: 4
+      SDK_CONFIG: base_sepolia
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
 
   # liquidator: submits liquidate calls to the blockchain
-  executor:
+  # executor-bera:
+  #   depends_on:
+  #     - cache
+  #     - commander-bera
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/executor/Dockerfile
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 1
+  #     SDK_CONFIG: bera
+  #     SEED_PHRASE: ${SEED_PHRASE}
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
+
+  # executor-arbitrum:
+  #   depends_on:
+  #     - cache
+  #     - commander-arbitrum
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/executor/Dockerfile
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 2
+  #     SDK_CONFIG: arbitrum
+  #     SEED_PHRASE: ${SEED_PHRASE}
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
+
+  # executor-zkevm:
+  #   depends_on:
+  #     - cache
+  #     - commander-zkevm
+  #   build:
+  #     context: .
+  #     dockerfile: ./src/executor/Dockerfile
+  #   environment:
+  #     REDIS_HOST: cache
+  #     REDIS_PORT: ${REDIS_PORT}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     REDIS_ID: 3
+  #     SDK_CONFIG: zkevm
+  #     SEED_PHRASE: ${SEED_PHRASE}
+  #   restart: always
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "100k"
+  #       max-file: "10"
+
+  executor-base_sepolia:
     depends_on:
       - cache
-      - commander
+      - commander-base_sepolia
     build:
       context: .
       dockerfile: ./src/executor/Dockerfile
@@ -52,9 +242,16 @@ services:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      SDK_CONFIG: ${SDK_CONFIG}
+      REDIS_ID: 4
+      SDK_CONFIG: base_sepolia
       SEED_PHRASE: ${SEED_PHRASE}
-    restart: on-failure
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
   # Prometheus with alertmanager
   prometheus:
     image: prom/prometheus:latest
@@ -89,7 +286,6 @@ services:
         target: /etc/alertmanager/slack_api_url.txt
       - source: alertmanager_yaml
         target: /etc/alertmanager/alertmanager.yml
-
 volumes:
   prometheus_data:
 configs:

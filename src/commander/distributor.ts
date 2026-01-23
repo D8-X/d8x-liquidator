@@ -11,6 +11,7 @@ import {
   floatToABK64x64,
   IdxPriceInfo,
   pmExcessBalance,
+  sleepForSec,
 } from "@d8x/perpetuals-sdk";
 import { BigNumberish } from "ethers";
 import { Redis } from "ioredis";
@@ -57,6 +58,7 @@ export default class Distributor {
   private isQuote: Map<string, boolean> = new Map();
   private symbols: string[] = [];
   private maintenanceRate: Map<string, number> = new Map();
+  private chainId: number;
 
   // publish times must be within 10 seconds of each other, or submission will fail on-chain
   private MAX_OUTOFSYNC_SECONDS: number = 10;
@@ -68,8 +70,9 @@ export default class Distributor {
     this.config = config;
     this.redisSubClient = constructRedis("commanderSubClient");
     this.redisPubClient = constructRedis("commanderPubClient");
-
-    this.md = new MarketData(PerpetualDataHandler.readSDKConfig(config.sdkConfig));
+    const sdkConfig = PerpetualDataHandler.readSDKConfig(config.sdkConfig);
+    this.chainId = sdkConfig.chainId;
+    this.md = new MarketData(sdkConfig);
     this.providers = [
       new MultiUrlJsonRpcProvider(this.config.rpcWatch, this.md.network, {
         timeoutSeconds: 25,
@@ -103,21 +106,37 @@ export default class Distributor {
     const info = await this.md.exchangeInfo();
 
     this.symbols = info.pools
+      .filter(({ isRunning }) => isRunning)
       .map((pool) =>
-        pool.perpetuals.map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`)
+        pool.perpetuals
+          .filter(({ state }) => state === "NORMAL")
+          .map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`)
       )
       .flat();
 
     for (const symbol of this.symbols) {
       // static info
-      this.maintenanceRate.set(symbol, this.md.getPerpetualStaticInfo(symbol).maintenanceMarginRate);
+      this.maintenanceRate.set(
+        symbol,
+        PerpetualDataHandler.getMaintenanceMarginRate(this.md.getPerpetualStaticInfo(symbol))
+      );
       this.isQuote.set(
         symbol,
         this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE
       );
       // price info
-      const priceInfo = await this.md.fetchPricesForPerpetual(symbol);
-      this.pxSubmission.set(symbol, priceInfo);
+      try {
+        const priceInfo = await this.md.fetchPricesForPerpetual(symbol);
+        this.pxSubmission.set(symbol, priceInfo);
+      } catch (e) {
+        this.pxSubmission.set(symbol, {
+          s2: 1,
+          ema: 1,
+          s2MktClosed: true,
+          conf: BigInt(1),
+          predMktCLOBParams: BigInt(1),
+        });
+      }
       // mark premium, accumulated funding per BC unit
       const perpState = await this.md.getReadOnlyProxyInstance().getPerpetual(this.md.getPerpIdFromSymbol(symbol));
       this.markPremium.set(symbol, ABK64x64ToFloat(perpState.currentMarkPremiumRate.fPrice));
@@ -203,9 +222,11 @@ export default class Distributor {
             if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
               return;
             }
-            await this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
-              this.updatePosition(pos);
-            });
+            sleepForSec(5).then(() =>
+              this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
+                this.updatePosition(pos).then();
+              })
+            );
             break;
           }
 
@@ -460,11 +481,12 @@ export default class Distributor {
       const position = positions.get(trader)!;
       if (!this.isMarginSafe(position, curPx)) {
         const msg = JSON.stringify({
+          chainId: this.chainId,
           symbol: symbol,
           traderAddr: trader,
         });
         if (Date.now() - (this.messageSentAt.get(msg) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
-          this.logPosition(position, [curPx.s2, curPx.s3]);
+          // this.logPosition(position, [curPx.s2, curPx.s3]);
           await this.redisPubClient.publish("LiquidateTrader", msg);
           this.messageSentAt.set(msg, Date.now());
         }
@@ -496,7 +518,7 @@ export default class Distributor {
   }
 
   private isMarginSafe(position: Position, px: IdxPriceInfo) {
-    if (position.positionBC == 0) {
+    if (position.positionBC == 0 || px.s2MktClosed || px.s3MktClosed) {
       return true;
     }
     const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;

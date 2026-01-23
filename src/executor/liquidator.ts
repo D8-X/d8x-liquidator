@@ -1,10 +1,10 @@
-import { PerpetualDataHandler, LiquidatorTool } from "@d8x/perpetuals-sdk";
-import { Network, TransactionResponse, Wallet, formatUnits } from "ethers";
+import { LiquidatorTool, PerpetualDataHandler } from "@d8x/perpetuals-sdk";
+import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
-import { constructRedis } from "../utils";
-import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
-import { Metrics } from "./metrics";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
+import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
+import { constructRedis, sleep } from "../utils";
+import { Metrics } from "./metrics";
 
 // Liquidation result status
 export enum LiquidationStatus {
@@ -19,18 +19,23 @@ export default class Liquidator {
   private providers: MultiUrlJsonRpcProvider[];
   private bots: { api: LiquidatorTool; busy: boolean }[];
   private redisSubClient: Redis;
+  private redisPubClient: Redis;
 
   // parameters
   private treasury: string;
   private privateKey: string[];
   private config: LiquidatorConfig;
   private earnings: string | undefined;
+  private chainId: number;
+  private gasPriceBuffer = 100n; // no buffer
+  private lastUsedRpcIndex: number = 0;
 
   // state
   private q: Set<string> = new Set();
   private lastLiquidateCall: number = 0;
   // Set of symbol:traderAddr elements which are currently being processed.
   private locked: Set<string> = new Set();
+  private timesTried: Map<string, number> = new Map();
 
   protected metrics: Metrics;
 
@@ -41,10 +46,12 @@ export default class Liquidator {
     this.treasury = pkTreasury;
     this.privateKey = pkLiquidators;
     this.config = config;
+
     this.redisSubClient = constructRedis("executorSubClient");
+    this.redisPubClient = constructRedis("executorPubClient");
 
     const sdkConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
-
+    this.chainId = sdkConfig.chainId;
     this.providers = [
       new MultiUrlJsonRpcProvider(this.config.rpcExec, new Network(sdkConfig.name || "", sdkConfig.chainId), {
         timeoutSeconds: 25,
@@ -76,6 +83,15 @@ export default class Liquidator {
     } else {
       this.earnings = undefined;
     }
+
+    if (this.config.gasPriceMultiplier) {
+      if (this.config.gasPriceMultiplier > 0) {
+        // we only keep 2 digits
+        this.gasPriceBuffer = BigInt(Math.round(this.config.gasPriceMultiplier * 100));
+      } else {
+        throw new Error("Invalid gas price buffer");
+      }
+    }
   }
 
   /**
@@ -93,7 +109,7 @@ export default class Liquidator {
       console.log(`trying provider ${i} ... `);
       const results = await Promise.allSettled(
         // createProxyInstance attaches the given provider to the object instance
-        this.bots.map((liq) => liq.api.createProxyInstance(this.providers[i]))
+        this.bots.map((liq) => liq.api.createProxyInstance(this.providers[i]), this)
       );
 
       success = results.every((r) => r.status === "fulfilled");
@@ -133,18 +149,21 @@ export default class Liquidator {
         switch (channel) {
           case "LiquidateTrader": {
             const prevCount = this.q.size;
-            this.q.add(msg);
-            msgs += this.q.size > prevCount ? 1 : 0;
-            const res = await this.liquidate();
-            if (res == BotStatus.Busy) {
-              busy++;
-            } else if (res == BotStatus.PartialError) {
-              errors++;
-            } else if (res == BotStatus.Error) {
-              throw new Error(`error`);
-            } else {
-              // res == BotStatus.Ready
-              success++;
+            const { chainId } = JSON.parse(msg);
+            if (this.chainId == chainId) {
+              this.q.add(msg);
+              msgs += this.q.size > prevCount ? 1 : 0;
+              const res = await this.liquidate();
+              if (res == BotStatus.Busy) {
+                busy++;
+              } else if (res == BotStatus.PartialError) {
+                errors++;
+              } else if (res == BotStatus.Error) {
+                throw new Error(`error`);
+              } else {
+                // res == BotStatus.Ready
+                success++;
+              }
             }
             break;
           }
@@ -159,14 +178,22 @@ export default class Liquidator {
       return LiquidationStatus.NoOp;
     }
     // lock
+    const id = `${symbol}:${trader}`;
     this.bots[botIdx].busy = true;
-    this.locked.add(`${symbol}:${trader}`);
+    this.locked.add(id);
+    this.timesTried.set(id, (this.timesTried.get(id) ?? 0) + 1);
 
     // Check if trader is margin safe before liquidating.
-    const isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch(() => true);
+    let isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch((e) => {
+      console.log(e);
+      return undefined;
+    });
 
     // Do not liquidate when margin safe.
     if (isMarginSafe) {
+      if (this.timesTried.get(id)! > 10) {
+        throw new Error("too many false positives");
+      }
       console.log({
         info: "trader is margin safe",
         symbol: symbol,
@@ -190,8 +217,11 @@ export default class Liquidator {
     let tx: TransactionResponse;
     try {
       this.metrics.incrTxSubmissions();
+      const p = this.getNextRpc();
+      const feeData = await this.getFeeData(p);
       tx = await this.bots[botIdx].api.liquidateTrader(symbol, trader, this.config.rewardsAddress, undefined, {
-        // gasLimit: this.config.gasLimit,
+        ...feeData,
+        rpcURL: p._getConnection().url,
       });
     } catch (e: any) {
       console.log({
@@ -204,6 +234,10 @@ export default class Liquidator {
       });
       this.metrics.incrTxRejects();
       this.bots[botIdx].busy = false;
+      if (isMarginSafe === undefined) {
+        // tried without knowing and failed - keep locked
+        await sleep(60);
+      }
       this.locked.delete(`${symbol}:${trader}`);
       return LiquidationStatus.Rejection;
     }
@@ -213,7 +247,10 @@ export default class Liquidator {
       orderBook: tx.to,
       executor: tx.from,
       trader: trader,
-      gasLimit: `${formatUnits(tx.gasLimit, "wei")} wei`,
+      gasLimit: tx.gasLimit ? `${formatUnits(tx.gasLimit, "wei")} gas` : undefined,
+      gasPrice: tx.gasPrice ? `${formatUnits(tx.gasPrice)} wei` : undefined,
+      maxFeePerGas: tx.maxFeePerGas ? `${formatUnits(tx.maxFeePerGas)} wei` : undefined,
+      maxPriorityFeePerGas: tx.maxPriorityFeePerGas ? `${formatUnits(tx.maxPriorityFeePerGas)} wei` : undefined,
       hash: tx.hash,
       timestamp: new Date().toISOString(),
     });
@@ -258,7 +295,11 @@ export default class Liquidator {
           console.log(`failed to fund bot ${bot}`);
         }
       }
-
+      if (this.timesTried.get(id)! > 10) {
+        // too many failures for same account
+        this.redisPubClient.publish("Restart", "too many trials");
+        throw e;
+      }
       // Set result to failure
       result = LiquidationStatus.Failure;
     }
@@ -345,6 +386,30 @@ export default class Liquidator {
         // everything worked or nothing happend
         return BotStatus.Ready;
     }
+  }
+
+  public async getFeeData(p: Provider) {
+    return await p.getFeeData().then(({ gasPrice, maxFeePerGas, maxPriorityFeePerGas }) => {
+      if (maxFeePerGas) {
+        return {
+          gasPrice: null,
+          maxFeePerGas: (maxFeePerGas * this.gasPriceBuffer) / 100n,
+          maxPriorityFeePerGas: ((maxPriorityFeePerGas ?? maxFeePerGas) * this.gasPriceBuffer) / 100n,
+        };
+      } else {
+        return {
+          gasPrice,
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+        };
+      }
+    });
+  }
+
+  // Returns next rpc provider in the list
+  public getNextRpc() {
+    this.lastUsedRpcIndex = (this.lastUsedRpcIndex + 1) % this.providers.length;
+    return this.providers[this.lastUsedRpcIndex];
   }
 
   public async fundWallets(addressArray: string[]) {

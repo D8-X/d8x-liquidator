@@ -350,21 +350,5 @@ export default class BlockhainListener {
         });
       }
     );
-
-    // proxy.on(
-    //   "UpdateUnitAccumulatedFunding",
-    //   (perpetualId: number, fUnitAccumulativeFundingCC: BigNumber, event: UpdateUnitAccumulatedFundingEvent) => {
-    //     const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
-    //     const msg: UpdateUnitAccumulatedFundingMsg = {
-    //       perpetualId: perpetualId,
-    //       symbol: symbol,
-    //       unitAccumulatedFundingCC: ABK64x64ToFloat(fUnitAccumulativeFundingCC),
-    //       block: event.blockNumber,
-    //       hash: event.transactionHash,
-    //       id: `${event.transactionHash}:${event.logIndex}`,
-    //     };
-    //     this.redisPubClient.publish("UpdateUnitAccumulatedFundingEvent", JSON.stringify(msg));
-    //   }
-    // );
   }
 }

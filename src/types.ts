@@ -32,6 +32,7 @@ export interface LiquidatorConfig {
   liquidateIntervalSecondsMax: number;
   liquidateIntervalSecondsMin: number;
   fetchPricesIntervalSecondsMin: number;
+  gasPriceMultiplier: number;
   maxGasPriceGWei: number;
   gasLimit: number;
   priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
@@ -87,6 +88,7 @@ export interface UpdateUnitAccumulatedFundingMsg extends RedisMsg {
 }
 
 export interface LiquidateTraderMsg {
+  chainId: number;
   symbol: string;
   traderAddr: string;
   // px: PriceFeedSubmission;
