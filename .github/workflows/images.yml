@@ -67,4 +67,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
-          cache-to: type=gha,mode=
+          cache-to: type=gha,mode=max
+          secrets: |
+            npm_token=${{ secrets.GITHUB_TOKEN }}
