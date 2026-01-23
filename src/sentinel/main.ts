@@ -1,5 +1,5 @@
-import { loadConfig } from "../utils";
-import BlockhainListener from "./blockchainListener";
+import { loadConfig } from "../utils.js";
+import BlockhainListener from "./blockchainListener.js";
 
 require("dotenv").config();
 

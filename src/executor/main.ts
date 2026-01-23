@@ -1,5 +1,5 @@
-import Liquidator from "./liquidator";
-import { loadAccounts, loadConfig, sleep } from "../utils";
+import Liquidator from "./liquidator.js";
+import { loadAccounts, loadConfig, sleep } from "../utils.js";
 
 require("dotenv").config();
 

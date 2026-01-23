@@ -10,7 +10,7 @@ import {
   JsonRpcError,
 } from "ethers";
 import { WebSocket } from "ws";
-import { MultiUrlProvider } from "./multiUrlJsonRpcProvider";
+import { MultiUrlProvider } from "./multiUrlJsonRpcProvider.js";
 
 export interface MultiUrlWebsocketsProviderOptions extends JsonRpcApiProviderOptions {
   maxRetries?: number;

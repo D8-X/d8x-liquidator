@@ -1,5 +1,5 @@
 import { Redis } from "ioredis";
-import { RedisConfig, LiquidatorConfig } from "./types";
+import { RedisConfig, LiquidatorConfig } from "./type.js";
 import { HDNodeWallet, Mnemonic } from "ethers";
 
 require("dotenv").config();

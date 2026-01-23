@@ -113,3 +113,5 @@ dump.rdb
 src/config/live.*.json
 
 .vscode/
+
+.npmrc

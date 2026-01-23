@@ -1,4 +1,4 @@
-import { PriceFeedEndpointsItem, floatToABK64x64 } from "@d8x/perpetuals-sdk";
+import { PriceFeedEndpointsItem, floatToABK64x64 } from "@d8-x/d8x-node-sdk";
 
 export const ZERO_POSITION = floatToABK64x64(0);
 

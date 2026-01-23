@@ -1,5 +1,5 @@
-import { loadConfig } from "../utils";
-import Distributor from "./distributor";
+import { loadConfig } from "../utils.js";
+import Distributor from "./distributor.js";
 
 require("dotenv").config();
 

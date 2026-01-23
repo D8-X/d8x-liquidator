@@ -7,7 +7,7 @@ import {
   JsonRpcResult,
   Networkish,
 } from "ethers";
-import { executeWithTimeout } from "./utils";
+import { executeWithTimeout } from "./utils.js";
 
 // Common methods among multi url providers
 export interface MultiUrlProvider {
