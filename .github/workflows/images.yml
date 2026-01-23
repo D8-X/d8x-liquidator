@@ -39,7 +39,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute image + tags (lowercase owner)
+            - name: Compute image + tags (lowercase owner)
         id: meta
         shell: bash
         run: |
@@ -48,4 +48,17 @@ jobs:
           IMAGE="ghcr.io/${OWNER}/${{ matrix.service.image }}"
           TAG="${GITHUB_REF_NAME}"
 
-          echo "image=${IMAGE}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:latest
+          # and only do latest on main:
+        if: github.ref_name == 'main'
