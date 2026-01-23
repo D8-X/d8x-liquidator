@@ -1,5 +1,5 @@
 import { Redis } from "ioredis";
-import { RedisConfig, LiquidatorConfig } from "./type.js";
+import { RedisConfig, LiquidatorConfig } from "./types.js";
 import { HDNodeWallet, Mnemonic } from "ethers";
 
 require("dotenv").config();
@@ -13,7 +13,12 @@ const shuffle = (array: string[]) => {
 };
 
 export function loadConfig(sdkConfig: string): LiquidatorConfig {
-  const configList = require("./config/live.liquidatorConfig.json") as LiquidatorConfig[];
+  //"./config/live.liquidatorConfig.json"
+  const cfgPath = process.env.LIQUIDATOR_CONFIG_PATH
+  if (cfgPath==undefined) {
+    throw("LIQUIDATOR_CONFIG_PATH not defined")
+  }
+  const configList = require(cfgPath) as LiquidatorConfig[];
   const config = configList.find((config) => config.sdkConfig == sdkConfig);
   if (!config) {
     throw new Error(`SDK Config ${sdkConfig} not found in config file.`);
