@@ -39,26 +39,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Compute image + tags (lowercase owner)
+      - name: Compute image + tags (lowercase owner)
         id: meta
         shell: bash
         run: |
           set -euo pipefail
           OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           IMAGE="ghcr.io/${OWNER}/${{ matrix.service.image }}"
-          TAG="${GITHUB_REF_NAME}"
+          BRANCH="${GITHUB_REF_NAME}"
 
+          # Always publish the branch tag (main/dev/DEV etc.)
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
 
-      - name: Build & push
+          # Add latest only for main
+          if [ "${BRANCH}" = "main" ]; then
+            echo "tags=${IMAGE}:${BRANCH},${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=${IMAGE}:${BRANCH}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build & push (${{ matrix.service.name }})
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.service.dockerfile }}
           push: true
-          tags: |
-            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
-            ${{ steps.meta.outputs.image }}:latest
-          # and only do latest on main:
-        if: github.ref_name == 'main'
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=
