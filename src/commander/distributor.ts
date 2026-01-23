@@ -12,10 +12,10 @@ import {
   IdxPriceInfo,
   pmExcessBalance,
   sleepForSec,
-} from "@d8x/perpetuals-sdk";
+} from "@d8-x/d8x-node-sdk";
 import { BigNumberish } from "ethers";
 import { Redis } from "ioredis";
-import { constructRedis } from "../utils";
+import { constructRedis } from "../utils.js";
 import {
   LiquidateMsg,
   LiquidateTraderMsg,
@@ -24,8 +24,8 @@ import {
   UpdateMarginAccountMsg,
   UpdateMarkPriceMsg,
   UpdateUnitAccumulatedFundingMsg,
-} from "../types";
-import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
+} from "../types.js";
+import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 
 export default class Distributor {
   // objects

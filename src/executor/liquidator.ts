@@ -1,10 +1,10 @@
-import { LiquidatorTool, PerpetualDataHandler } from "@d8x/perpetuals-sdk";
+import { LiquidatorTool, PerpetualDataHandler } from "@d8-x/d8x-node-sdk";
 import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
-import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
-import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
-import { constructRedis, sleep } from "../utils";
-import { Metrics } from "./metrics";
+import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
+import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
+import { constructRedis, sleep } from "../utils.js";
+import { Metrics } from "./metrics.js";
 
 // Liquidation result status
 export enum LiquidationStatus {

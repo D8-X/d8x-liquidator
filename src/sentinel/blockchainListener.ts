@@ -1,13 +1,13 @@
-import { ABK64x64ToFloat, IPerpetualManager__factory, MarketData, PerpetualDataHandler } from "@d8x/perpetuals-sdk";
+import { ABK64x64ToFloat, IPerpetualManager__factory, MarketData, PerpetualDataHandler } from "@d8-x/d8x-node-sdk";
 import { Redis } from "ioredis";
 import SturdyWebSocket from "sturdy-websocket";
 import Websocket from "ws";
-import { LiquidateMsg, LiquidatorConfig, UpdateMarginAccountMsg, UpdateMarkPriceMsg } from "../types";
-import { constructRedis, executeWithTimeout, sleep } from "../utils";
+import { LiquidateMsg, LiquidatorConfig, UpdateMarginAccountMsg, UpdateMarkPriceMsg } from "../types.js";
+import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 
 import { JsonRpcProvider, Network, SocketProvider, WebSocketProvider } from "ethers";
-import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
-import { MultiUrlWebSocketProvider } from "../multiUrlWebsocketProvider";
+import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
+import { MultiUrlWebSocketProvider } from "../multiUrlWebsocketProvider.js";
 
 enum ListeningMode {
   Polling = "Polling",

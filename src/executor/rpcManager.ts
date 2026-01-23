@@ -1,5 +1,5 @@
 import { JsonRpcProvider } from "ethers";
-import { executeWithTimeout } from "../utils";
+import { executeWithTimeout } from "../utils.js";
 
 export default class RPCManager {
   private healthy: Map<string, boolean> = new Map();
