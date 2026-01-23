@@ -1,36 +1,51 @@
-- name: Compute image + tags
-  id: meta
-  shell: bash
-  run: |
-    set -euo pipefail
-    OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
-    IMAGE="ghcr.io/${OWNER}/${{ matrix.service.image }}"
-    TAG="${GITHUB_REF_NAME}"
+name: Build & Push Liquidator Images
 
-    echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
-    echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+on:
+  push:
+    branches: [main, dev, DEV]
 
-    echo "Using image: ${IMAGE}"
-    echo "Using tag:   ${TAG}"
+permissions:
+  contents: read
+  packages: write
 
-- name: Verify NODE_AUTH_TOKEN secret is present
-  shell: bash
-  run: |
-    if [ -z "${{ secrets.NODE_AUTH_TOKEN }}" ]; then
-      echo "Missing secret NODE_AUTH_TOKEN (needed to install @d8-x packages from GitHub Packages)."
-      exit 1
-    fi
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: sentinel
+            image: liquidator-sentinel
+            dockerfile: ./src/sentinel/Dockerfile
+          - name: executor
+            image: liquidator-executor
+            dockerfile: ./src/executor/Dockerfile
+          - name: commander
+            image: liquidator-commander
+            dockerfile: ./src/commander/Dockerfile
 
-- name: Build and push
-  uses: docker/build-push-action@v6
-  with:
-    context: .
-    file: ${{ matrix.service.dockerfile }}
-    push: true
-    tags: |
-      ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
-      ${{ steps.meta.outputs.image }}:${{ github.sha }}
-    cache-from: type=gha
-    cache-to: type=gha,mode=max
-    secrets: |
-      npm_token=${{ secrets.NODE_AUTH_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image + tags (lowercase owner)
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE="ghcr.io/${OWNER}/${{ matrix.service.image }}"
+          TAG="${GITHUB_REF_NAME}"
+
+          echo "image=${IMAGE}"

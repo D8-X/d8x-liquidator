@@ -16,8 +16,10 @@ COPY package.json yarn.lock ./
 
 # Install deps with ephemeral .npmrc (token passed as secret)
 RUN --mount=type=secret,id=npm_token \
-    sh -c 'echo "@d8-x:registry=https://npm.pkg.github.com" > .npmrc && \
-           echo "//npm.pkg.github.com/:_authToken=$(cat /run/secrets/npm_token)" >> .npmrc && \
+    sh -c 'TOKEN="$(cat /run/secrets/npm_token)" && \
+           echo "@d8-x:registry=https://npm.pkg.github.com" > .npmrc && \
+           echo "always-auth=true" >> .npmrc && \
+           echo "//npm.pkg.github.com/:_authToken=${TOKEN}" >> .npmrc && \
            yarn install --frozen-lockfile && \
            rm -f .npmrc'
 
