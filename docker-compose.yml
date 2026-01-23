@@ -289,6 +289,7 @@ services:
         target: /etc/alertmanager/slack_api_url.txt
       - source: alertmanager_yaml
         target: /etc/alertmanager/alertmanager.yml
+
 volumes:
   prometheus_data:
 configs:
