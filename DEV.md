@@ -9,7 +9,7 @@
 
 # Deploy
 - setup ssh config for server (for example: `LIQUIDATORS_NODE_V2`)
-- make config file "live.liquidatorConfig.json" and .env file available and copy to server
+- make config file "live.liquidatorConfig.json", prometeus files and .env file available and copy to server
 - `scp docker-compose.yml LIQUIDATORS_NODE_V2:/home/quantena/d8x-liquidator`
 - on server, check location of config file vs where docker-compose.yml looks for it
 - export GITHUB_TOKEN=...
