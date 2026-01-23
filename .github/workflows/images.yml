@@ -39,9 +39,9 @@ jobs:
       - name: Compute tags
         id: meta
         run: |
-          BRANCH="${GITHUB_REF_NAME}"
-          echo "tag=${BRANCH}" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/${{ github.repository }}-${{ matrix.service.name }}" >> "$GITHUB_OUTPUT"
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${OWNER}/${{ matrix.service.image }}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
