@@ -12,64 +12,6 @@ services:
     # environment:
     #   REDIS_ID: ${REDIS_ID}
 
-  # Listen to block and events, and stream on redis
-  # sentinel-bera:
-  #   build:
-  #     context: .
-  #     dockerfile: ./src/sentinel/Dockerfile
-  #   depends_on:
-  #     - cache
-  #   environment:
-  #     REDIS_HOST: cache
-  #     REDIS_PORT: ${REDIS_PORT}
-  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
-  #     REDIS_ID: 1
-  #     SDK_CONFIG: bera
-  #   restart: always
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "100k"
-  #       max-file: "10"
-
-  # sentinel-arbitrum:
-  #   build:
-  #     context: .
-  #     dockerfile: ./src/sentinel/Dockerfile
-  #   depends_on:
-  #     - cache
-  #   environment:
-  #     REDIS_HOST: cache
-  #     REDIS_PORT: ${REDIS_PORT}
-  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
-  #     REDIS_ID: 2
-  #     SDK_CONFIG: arbitrum
-  #   restart: always
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "100k"
-  #       max-file: "10"
-
-  # sentinel-zkevm:
-  #   build:
-  #     context: .
-  #     dockerfile: ./src/sentinel/Dockerfile
-  #   depends_on:
-  #     - cache
-  #   environment:
-  #     REDIS_HOST: cache
-  #     REDIS_PORT: ${REDIS_PORT}
-  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
-  #     REDIS_ID: 3
-  #     SDK_CONFIG: zkevm
-  #   restart: always
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "100k"
-  #       max-file: "10"
-
   sentinel-base_sepolia:
     image: ghcr.io/d8-x/liquidator-sentinel:dev
     #build:
@@ -83,71 +25,16 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_ID: 4
       SDK_CONFIG: base_sepolia
+      LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+    configs:
+      - source: liquidator_config
+        target: /etc/liquidatorconf.json
     restart: always
     logging:
       driver: "json-file"
       options:
         max-size: "100k"
         max-file: "10"
-
-  # Account manager: fetches and distributes data to liquidators
-  # commander-bera:
-  #   depends_on:
-  #     - cache
-  #     - sentinel-bera
-  #   build:
-  #     context: .
-  #     dockerfile: ./src/commander/Dockerfile
-  #   environment:
-  #     REDIS_HOST: cache
-  #     REDIS_PORT: ${REDIS_PORT}
-  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
-  #     REDIS_ID: 1
-  #     SDK_CONFIG: bera
-  #   restart: always
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "100k"
-  #       max-file: "10"
-
-  # commander-arbitrum:
-  #   depends_on:
-  #     - cache
-  #   build:
-  #     context: .
-  #     dockerfile: ./src/commander/Dockerfile
-  #   environment:
-  #     REDIS_HOST: cache
-  #     REDIS_PORT: ${REDIS_PORT}
-  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
-  #     REDIS_ID: 2
-  #     SDK_CONFIG: arbitrum
-  #   restart: always
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "100k"
-  #       max-file: "10"
-
-  # commander-zkevm:
-  #   depends_on:
-  #     - cache
-  #   build:
-  #     context: .
-  #     dockerfile: ./src/commander/Dockerfile
-  #   environment:
-  #     REDIS_HOST: cache
-  #     REDIS_PORT: ${REDIS_PORT}
-  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
-  #     REDIS_ID: 3
-  #     SDK_CONFIG: zkevm
-  #   restart: always
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "100k"
-  #       max-file: "10"
 
   commander-base_sepolia:
     image: ghcr.io/d8-x/liquidator-commander:dev
@@ -162,76 +49,16 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_ID: 4
       SDK_CONFIG: base_sepolia
+      LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+    configs:
+      - source: liquidator_config
+        target: /etc/liquidatorconf.json
     restart: always
     logging:
       driver: "json-file"
       options:
         max-size: "100k"
         max-file: "10"
-
-  # liquidator: submits liquidate calls to the blockchain
-  # executor-bera:
-  #   depends_on:
-  #     - cache
-  #     - commander-bera
-  #   build:
-  #     context: .
-  #     dockerfile: ./src/executor/Dockerfile
-  #   environment:
-  #     REDIS_HOST: cache
-  #     REDIS_PORT: ${REDIS_PORT}
-  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
-  #     REDIS_ID: 1
-  #     SDK_CONFIG: bera
-  #     SEED_PHRASE: ${SEED_PHRASE}
-  #   restart: always
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "100k"
-  #       max-file: "10"
-
-  # executor-arbitrum:
-  #   depends_on:
-  #     - cache
-  #     - commander-arbitrum
-  #   build:
-  #     context: .
-  #     dockerfile: ./src/executor/Dockerfile
-  #   environment:
-  #     REDIS_HOST: cache
-  #     REDIS_PORT: ${REDIS_PORT}
-  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
-  #     REDIS_ID: 2
-  #     SDK_CONFIG: arbitrum
-  #     SEED_PHRASE: ${SEED_PHRASE}
-  #   restart: always
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "100k"
-  #       max-file: "10"
-
-  # executor-zkevm:
-  #   depends_on:
-  #     - cache
-  #     - commander-zkevm
-  #   build:
-  #     context: .
-  #     dockerfile: ./src/executor/Dockerfile
-  #   environment:
-  #     REDIS_HOST: cache
-  #     REDIS_PORT: ${REDIS_PORT}
-  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
-  #     REDIS_ID: 3
-  #     SDK_CONFIG: zkevm
-  #     SEED_PHRASE: ${SEED_PHRASE}
-  #   restart: always
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "100k"
-  #       max-file: "10"
 
   executor-base_sepolia:
     image: ghcr.io/d8-x/liquidator-executor:dev
@@ -248,6 +75,10 @@ services:
       REDIS_ID: 4
       SDK_CONFIG: base_sepolia
       SEED_PHRASE: ${SEED_PHRASE}
+      LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+    configs:
+      - source: liquidator_config
+        target: /etc/liquidatorconf.json
     restart: always
     logging:
       driver: "json-file"
@@ -301,3 +132,5 @@ configs:
     file: ./prometheus_configs/prometheus_alertmanager.yaml
   rules_1:
     file: ./prometheus_configs/liquidator.rules.yaml
+  liquidator_config:
+    file: ./config/live.liquidatorConfig.json
