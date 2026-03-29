@@ -14,22 +14,22 @@
   dependencies:
     "@jridgewell/trace-mapping" "0.3.9"
 
-"@d8-x/d8x-node-sdk@^0.1.35":
-  version "0.1.35"
-  resolved "https://npm.pkg.github.com/download/@d8-x/d8x-node-sdk/0.1.35/f811b170f8db4c4c6c5fb930d9143f5d94ea1fdb#f811b170f8db4c4c6c5fb930d9143f5d94ea1fdb"
-  integrity sha512-alB75X+t/ejHds5kC3u0LYZXgGBG61L8TYoN7iMjOYv0lFuaN+8rNnFTCWh3KCZi4vDn04jULLiIbZJrytZyeQ==
+"@d8-x/d8x-node-sdk@0.1.58":
+  version "0.1.58"
+  resolved "https://npm.pkg.github.com/download/@d8-x/d8x-node-sdk/0.1.58/01545148f6da024548e4f7f797af7b8443bfc413#01545148f6da024548e4f7f797af7b8443bfc413"
+  integrity sha512-LnEr+AD5aBE7qQyq+c0qjrQ7KqweAO5N1o846RwAA+kC9lUEc9yxB1XPIbTrW97bjyGIZqzGIpk+V4tcRyPhSA==
   dependencies:
-    "@d8-x/d8x-price-wasm" "^1.0.26"
+    "@d8-x/d8x-price-wasm" "^1.0.33"
     "@typechain/ethers-v6" "^0.5.1"
     buffer "6.0.3"
     ethers "^6.13.1"
     process "0.11.10"
     typechain "^8.3.2"
 
-"@d8-x/d8x-price-wasm@^1.0.26":
-  version "1.0.26"
-  resolved "https://npm.pkg.github.com/download/@d8-x/d8x-price-wasm/1.0.26/4221c9efe59678315a63e1a4700bb67ab953d0d1#4221c9efe59678315a63e1a4700bb67ab953d0d1"
-  integrity sha512-3UjfcNm887QKYC27GKaRkx1K2Wx1k9MgQfFxVuXs3gvIp+BNmjG4MdWpoGTnOSF8bK2+SJqe7DZULaSqMR/low==
+"@d8-x/d8x-price-wasm@^1.0.33":
+  version "1.0.33"
+  resolved "https://npm.pkg.github.com/download/@d8-x/d8x-price-wasm/1.0.33/2bb911045509c0e4d66bb35480b2aa1dcb6f1d9b#2bb911045509c0e4d66bb35480b2aa1dcb6f1d9b"
+  integrity sha512-CgxLiwGuRYr2VPwyZXt5/5c+c2HlVfan0Ef/wIGSoL3LhO4Uz+AcHPY+JLFzbBvYj4hDNm4FeJ1FzsgEHu+j/Q==
 
 "@ioredis/commands@^1.1.1":
   version "1.2.0"

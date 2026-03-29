@@ -302,7 +302,15 @@ export default class BlockhainListener {
 
     proxy.on(
       proxy.filters.UpdateMarginAccount,
-      (perpetualId: bigint, trader: string, fFundingPaymentCC: bigint, event) => {
+      (
+        perpetualId: bigint,
+        trader: string,
+        _fLockedInValueQC: bigint,
+        _fCashCC: bigint,
+        _fPositionBC: bigint,
+        fFundingPaymentCC: bigint,
+        event: any
+      ) => {
         const perpId = Number(perpetualId);
         const symbol = this.md.getSymbolFromPerpId(perpId)!;
         const msg: UpdateMarginAccountMsg = {

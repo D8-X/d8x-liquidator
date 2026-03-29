@@ -4,7 +4,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@d8-x/d8x-node-sdk": "^0.1.35",
+    "@d8-x/d8x-node-sdk": "0.1.58",
     "dotenv": "^16.0.3",
     "ethers": "^6.13.1",
     "express": "^4.19.2",
