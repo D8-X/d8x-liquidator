@@ -1,10 +1,10 @@
-import { LiquidatorTool, PerpetualDataHandler } from "@d8x/perpetuals-sdk";
+import { LiquidatorTool, PerpetualDataHandler } from "@d8-x/d8x-node-sdk";
 import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
-import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
-import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types";
-import { constructRedis, sleep } from "../utils";
-import { Metrics } from "./metrics";
+import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
+import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
+import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
+import { Metrics } from "./metrics.js";
 
 // Liquidation result status
 export enum LiquidationStatus {
@@ -219,10 +219,15 @@ export default class Liquidator {
       this.metrics.incrTxSubmissions();
       const p = this.getNextRpc();
       const feeData = await this.getFeeData(p);
-      tx = await this.bots[botIdx].api.liquidateTrader(symbol, trader, this.config.rewardsAddress, undefined, {
-        ...feeData,
-        rpcURL: p._getConnection().url,
-      });
+      // Wrap liquidateTrader with timeout to prevent hanging on slow price feeds or unresponsive RPCs
+      tx = await executeWithTimeout(
+        this.bots[botIdx].api.liquidateTrader(symbol, trader, this.config.rewardsAddress, undefined, {
+          ...feeData,
+          rpcURL: p._getConnection().url,
+        }),
+        30_000, // 30 second timeout
+        `liquidateTrader timed out for ${symbol}:${trader}`
+      );
     } catch (e: any) {
       console.log({
         info: "txn rejected",

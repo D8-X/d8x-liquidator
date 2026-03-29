@@ -12,10 +12,10 @@ import {
   IdxPriceInfo,
   pmExcessBalance,
   sleepForSec,
-} from "@d8x/perpetuals-sdk";
+} from "@d8-x/d8x-node-sdk";
 import { BigNumberish } from "ethers";
 import { Redis } from "ioredis";
-import { constructRedis } from "../utils";
+import { constructRedis } from "../utils.js";
 import {
   LiquidateMsg,
   LiquidateTraderMsg,
@@ -24,8 +24,8 @@ import {
   UpdateMarginAccountMsg,
   UpdateMarkPriceMsg,
   UpdateUnitAccumulatedFundingMsg,
-} from "../types";
-import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider";
+} from "../types.js";
+import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 
 export default class Distributor {
   // objects
@@ -289,7 +289,7 @@ export default class Distributor {
     const pxSubmission = this.pxSubmission.get(symbol)!;
     const account = await this.md
       .getReadOnlyProxyInstance()
-      .getTraderState(perpetualId, address, [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0)]);
+      .getTraderState(perpetualId, address, [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0), floatToABK64x64(pxSubmission.rho ?? 0)]);
 
     const position: Position = {
       perpetualId: perpetualId,
@@ -381,7 +381,7 @@ export default class Distributor {
         callData: proxy.interface.encodeFunctionData("getTraderState", [
           perpId,
           addr,
-          [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0)],
+          [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0), floatToABK64x64(pxSubmission.rho ?? 0)],
         ]),
       }));
       promises2.push(multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls));

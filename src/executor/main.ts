@@ -1,7 +1,6 @@
-import Liquidator from "./liquidator";
-import { loadAccounts, loadConfig, sleep } from "../utils";
-
-require("dotenv").config();
+import Liquidator from "./liquidator.js";
+import { loadAccounts, loadConfig, sleep } from "../utils.js";
+import "dotenv/config";
 
 async function run() {
   // sdk config
@@ -15,7 +14,7 @@ async function run() {
     throw new Error(`Environment variable SEED_PHRASE not defined.`);
   }
   // config
-  const cfg = loadConfig(sdkConfig);
+  const cfg = await loadConfig(sdkConfig);
 
   // bot treasury
   const {

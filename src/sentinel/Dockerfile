@@ -1,4 +1,5 @@
-FROM node:18-alpine
+# syntax=docker/dockerfile:1.6
+FROM node:20-alpine
 
 ARG SDK_CONFIG
 ARG REDIS_HOST
@@ -7,12 +8,24 @@ ARG REDIS_ID
 
 WORKDIR /app
 
-COPY . .
+# (optional but common) native deps for node-gyp builds
+# RUN apk add --no-cache python3 make g++
 
-RUN yarn install 
+# Copy only dependency manifests first for caching
+COPY package.json yarn.lock ./
 
+# Install deps with ephemeral .npmrc (token passed as secret)
+RUN --mount=type=secret,id=npm_token \
+    sh -c 'TOKEN="$(cat /run/secrets/npm_token)" && \
+           echo "@d8-x:registry=https://npm.pkg.github.com" > .npmrc && \
+           echo "always-auth=true" >> .npmrc && \
+           echo "//npm.pkg.github.com/:_authToken=${TOKEN}" >> .npmrc && \
+           yarn install --frozen-lockfile && \
+           rm -f .npmrc'
+
+# Now copy the rest and build
 COPY . .
 
 RUN yarn build
 
-CMD yarn start-sentinel
+CMD ["yarn", "start-sentinel"]
