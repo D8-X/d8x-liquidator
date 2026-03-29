@@ -278,7 +278,7 @@ export default class BlockhainListener {
         newPositionSizeBC: bigint,
         fFeeCC: bigint,
         fPnlCC: bigint,
-        event
+        event: any
       ) => {
         const perpId = Number(perpetualId);
         const symbol = this.md.getSymbolFromPerpId(perpId)!;
@@ -291,9 +291,9 @@ export default class BlockhainListener {
           pnl: ABK64x64ToFloat(fPnlCC),
           fee: ABK64x64ToFloat(fFeeCC),
           newPositionSizeBC: ABK64x64ToFloat(newPositionSizeBC),
-          block: event.blockNumber,
-          hash: event.transactionHash,
-          id: `${event.transactionHash}:${event.index}`,
+          block: event.log.blockNumber,
+          hash: event.log.transactionHash,
+          id: `${event.log.transactionHash}:${event.log.index}`,
         };
         this.redisPubClient.publish("LiquidateEvent", JSON.stringify(msg));
         console.log({ event: "Liquidate", time: new Date(Date.now()).toISOString(), mode: ListeningMode, ...msg });
@@ -318,9 +318,9 @@ export default class BlockhainListener {
           symbol: symbol,
           traderAddr: trader,
           fundingPaymentCC: ABK64x64ToFloat(fFundingPaymentCC),
-          block: event.blockNumber,
-          hash: event.transactionHash,
-          id: `${event.transactionHash}:${event.index}`,
+          block: event.log.blockNumber,
+          hash: event.log.transactionHash,
+          id: `${event.log.transactionHash}:${event.log.index}`,
         };
         this.redisPubClient.publish("UpdateMarginAccountEvent", JSON.stringify(msg));
 
@@ -335,7 +335,7 @@ export default class BlockhainListener {
 
     proxy.on(
       proxy.filters.UpdateMarkPrice,
-      (perpetualId: bigint, fMidPricePremium: bigint, fMarkPricePremium: bigint, fSpotIndexPrice: bigint, event) => {
+      (perpetualId: bigint, fMidPricePremium: bigint, fMarkPricePremium: bigint, fSpotIndexPrice: bigint, event: any) => {
         const perpId = Number(perpetualId);
         const symbol = this.md.getSymbolFromPerpId(perpId)!;
         const msg: UpdateMarkPriceMsg = {
@@ -344,9 +344,9 @@ export default class BlockhainListener {
           midPremium: ABK64x64ToFloat(fMidPricePremium),
           markPremium: ABK64x64ToFloat(fMarkPricePremium),
           spotIndexPrice: ABK64x64ToFloat(fSpotIndexPrice),
-          block: event.blockNumber,
-          hash: event.transactionHash,
-          id: `${event.transactionHash}:${event.index}`,
+          block: event.log.blockNumber,
+          hash: event.log.transactionHash,
+          id: `${event.log.transactionHash}:${event.log.index}`,
         };
         this.redisPubClient.publish("UpdateMarkPriceEvent", JSON.stringify(msg));
 
