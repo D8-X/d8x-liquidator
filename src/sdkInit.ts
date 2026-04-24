@@ -26,8 +26,14 @@ export async function initMarketDataWithCache(
 ): Promise<MarketDataInitResult> {
   const state = await loadSDKState(redis, chainId);
   if (state) {
-    await md.createProxyInstanceFromState(state, providers[0]);
-    return { usedCache: true, providerIndex: 0 };
+    try {
+      await md.createProxyInstanceFromState(state, providers[0]);
+      return { usedCache: true, providerIndex: 0 };
+    } catch (e) {
+      console.log(
+        `${new Date(Date.now()).toISOString()}: cached SDK state unusable, falling back to full init: ${String(e)}`
+      );
+    }
   }
   let lastErr: unknown;
   for (let i = 0; i < providers.length; i++) {
@@ -70,6 +76,7 @@ function rebindBotProvider(bot: LiquidatorTool, md: MarketData, provider: Provid
     multicall: ReturnType<typeof Multicall3__factory.connect>;
     signer: { connect: (p: Provider) => unknown } | null;
     config: { multicall?: string };
+    nodeURL: string;
   };
   anyBot.provider = provider;
   anyBot.signerOrProvider = provider;
@@ -77,5 +84,12 @@ function rebindBotProvider(bot: LiquidatorTool, md: MarketData, provider: Provid
   anyBot.multicall = Multicall3__factory.connect(anyBot.config.multicall ?? MULTICALL_ADDRESS, provider);
   if (anyBot.signer) {
     anyBot.signer = anyBot.signer.connect(provider) as typeof anyBot.signer;
+  }
+  // Align nodeURL with the rebound provider so any SDK method that falls back
+  // to `this.nodeURL` (when no rpcURL override is passed) doesn't hit the
+  // stale single URL that the MarketData overload copied from md.config.
+  const providerUrl = (provider as unknown as { _getConnection?: () => { url: string } })._getConnection?.().url;
+  if (providerUrl) {
+    anyBot.nodeURL = providerUrl;
   }
 }
