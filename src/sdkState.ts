@@ -29,12 +29,24 @@ export async function refreshSDKStateTTL(redis: Redis, chainId: number): Promise
   return result === 1;
 }
 
-export async function loadSDKState(redis: Redis, chainId: number): Promise<LoadedSDKState | null> {
-  const raw = await redis.get(sdkStateKey(chainId));
+export interface TrustedAnchors {
+  chainId: number;
+  proxyAddr: string;
+}
+
+export async function loadSDKState(redis: Redis, anchors: TrustedAnchors): Promise<LoadedSDKState | null> {
+  const raw = await redis.get(sdkStateKey(anchors.chainId));
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<CachedSDKState>;
     if (parsed?.sdkVersion !== D8X_SDK_VERSION || !parsed.state) {
+      return null;
+    }
+    if (parsed.state.chainId !== anchors.chainId) return null;
+    if (
+      typeof parsed.state.proxyAddr !== "string" ||
+      parsed.state.proxyAddr.toLowerCase() !== anchors.proxyAddr.toLowerCase()
+    ) {
       return null;
     }
     const ageMs = typeof parsed.publishedAt === "number" ? Date.now() - parsed.publishedAt : NaN;
