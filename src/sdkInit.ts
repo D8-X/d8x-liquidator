@@ -1,10 +1,4 @@
-import {
-  IPerpetualManager__factory,
-  LiquidatorTool,
-  MarketData,
-  MULTICALL_ADDRESS,
-  Multicall3__factory,
-} from "@d8-x/d8x-node-sdk";
+import { LiquidatorTool, MarketData } from "@d8-x/d8x-node-sdk";
 import { Provider } from "ethers";
 import { Redis } from "ioredis";
 import { loadSDKState } from "./sdkState.js";
@@ -75,46 +69,5 @@ export async function initLiquidatorsFromMarketData(
   md: MarketData,
   provider: Provider
 ): Promise<void> {
-  await Promise.all(bots.map((b) => b.api.createProxyInstance(md)));
-  const proxyAddr = md.getProxyAddress();
-  for (const { api } of bots) {
-    rebindBotProvider(api, proxyAddr, provider);
-  }
-}
-
-// TODO: to drop this hack once the SDK's `WriteAccessHandler.createProxyInstance(marketData)` overload accepts an
-// explicit provider. 
-// The MarketData path currently discards any provider attached to the MarketData 
-// and builds a single URL JsonRpcProvider from `md.config.nodeURL`, which kills multi URL failover on reads like `proxyContract.staticCall(...)`.
-// Until that SDK change lands we rebind the bot's contract handles and signer to our multURL provider here here
-function rebindBotProvider(bot: LiquidatorTool, proxyAddr: string, provider: Provider): void {
-  const anyBot = bot as unknown as {
-    provider: Provider;
-    signerOrProvider: Provider;
-    proxyContract: ReturnType<typeof IPerpetualManager__factory.connect>;
-    multicall: ReturnType<typeof Multicall3__factory.connect>;
-    signer: { connect: (p: Provider) => unknown } | null;
-    config: { multicall?: string };
-    nodeURL: string;
-  };
-  anyBot.provider = provider;
-  anyBot.signerOrProvider = provider;
-  anyBot.proxyContract = IPerpetualManager__factory.connect(proxyAddr, provider);
-  anyBot.multicall = Multicall3__factory.connect(anyBot.config.multicall ?? MULTICALL_ADDRESS, provider);
-  if (anyBot.signer) {
-    anyBot.signer = anyBot.signer.connect(provider) as typeof anyBot.signer;
-  }
-  // Align nodeURL with the rebound provider so any SDK method that falls back
-  // to `this.nodeURL` (when no rpcURL override is passed) doesn't hit the
-  // stale single URL that the MarketData overload copied from md.config.
-  const providerUrl = (provider as unknown as { _getConnection?: () => { url: string } })._getConnection?.().url;
-  if (providerUrl) {
-    anyBot.nodeURL = providerUrl;
-  }
-
-  if (!anyBot.proxyContract || !anyBot.multicall || anyBot.provider !== provider) {
-    throw new Error(
-      "rebindBotProvider: LiquidatorTool internal fields missing or unchanged — SDK layout likely changed, audit WriteAccessHandler"
-    );
-  }
+  await Promise.all(bots.map((b) => b.api.createProxyInstance(md, provider)));
 }
