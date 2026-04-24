@@ -8,7 +8,7 @@ import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 import { JsonRpcProvider, Network, SocketProvider, WebSocketProvider } from "ethers";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { MultiUrlWebSocketProvider } from "../multiUrlWebsocketProvider.js";
-import { initMarketDataWithCache } from "../sdkInit.js";
+import { formatCacheAgeSuffix, initMarketDataWithCache } from "../sdkInit.js";
 
 enum ListeningMode {
   Polling = "Polling",
@@ -217,14 +217,10 @@ export default class BlockhainListener {
       "could not establish http connection"
     );
 
-    const { usedCache, cacheAgeMs } = await initMarketDataWithCache(
-      this.md,
-      [this.httpProvider],
-      this.redisPubClient
-    );
+    const result = await initMarketDataWithCache(this.md, [this.httpProvider], this.redisPubClient);
     console.log(
       `${new Date(Date.now()).toISOString()}: sentinel MarketData initialized ` +
-        `(cache=${usedCache}${usedCache ? `, age=${typeof cacheAgeMs === "number" ? `${cacheAgeMs}ms` : "unknown"}` : ""})`
+        `(cache=${result.usedCache}${formatCacheAgeSuffix(result)})`
     );
 
     if (this.config.rpcListenWs.length > 0) {
