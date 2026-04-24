@@ -116,7 +116,7 @@ export default class Distributor {
       .map((pool) =>
         pool.perpetuals
           .filter(({ state }) => state === "NORMAL")
-          .map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`),
+          .map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`)
       )
       .flat();
 
@@ -124,11 +124,11 @@ export default class Distributor {
       // static info
       this.maintenanceRate.set(
         symbol,
-        PerpetualDataHandler.getMaintenanceMarginRate(this.md.getPerpetualStaticInfo(symbol)),
+        PerpetualDataHandler.getMaintenanceMarginRate(this.md.getPerpetualStaticInfo(symbol))
       );
       this.isQuote.set(
         symbol,
-        this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE,
+        this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE
       );
       // price info
       try {
