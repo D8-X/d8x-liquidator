@@ -26,6 +26,7 @@ import {
   UpdateUnitAccumulatedFundingMsg,
 } from "../types.js";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
+import { publishSDKState } from "../sdkState.js";
 
 export default class Distributor {
   // objects
@@ -101,6 +102,12 @@ export default class Distributor {
     }
     if (!success) {
       console.log(`${new Date(Date.now()).toISOString()}: all rpcs are down ${this.config.rpcWatch.join(", ")}`);
+    }
+
+    try {
+      await publishSDKState(this.redisPubClient, this.chainId, this.md.exportState());
+    } catch (e) {
+      console.log(`${new Date(Date.now()).toISOString()}: failed to publish SDK state: ${e}`);
     }
 
     const info = await this.md.exchangeInfo();
