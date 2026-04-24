@@ -10,7 +10,7 @@ async function start() {
   const cfg = await loadConfig(sdkConfig);
   const obj = new Distributor(cfg);
   await obj.initialize();
-  obj.run();
+  await obj.run();
 }
 
 start().catch((err) => {

@@ -35,7 +35,7 @@ async function run() {
   }
   await liquidator.initialize();
 
-  liquidator.run();
+  await liquidator.run();
 }
 
 run().catch((err) => {
