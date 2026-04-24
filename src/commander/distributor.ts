@@ -15,7 +15,7 @@ import {
 } from "@d8-x/d8x-node-sdk";
 import { BigNumberish } from "ethers";
 import { Redis } from "ioredis";
-import { constructRedis } from "../utils.js";
+import { constructRedis, stableStringify } from "../utils.js";
 import {
   LiquidateMsg,
   LiquidateTraderMsg,
@@ -182,10 +182,10 @@ export default class Distributor {
   private async publishState(): Promise<void> {
     try {
       const state = this.md.exportState();
-      const serialized = JSON.stringify(state);
+      const serialized = stableStringify(state);
       if (serialized === this.lastPublishedState) {
-        await refreshSDKStateTTL(this.redisPubClient, this.chainId);
-        return;
+        const refreshed = await refreshSDKStateTTL(this.redisPubClient, this.chainId);
+        if (refreshed) return;
       }
       await publishSDKState(this.redisPubClient, this.chainId, state);
       this.lastPublishedState = serialized;

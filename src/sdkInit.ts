@@ -25,16 +25,24 @@ export async function initMarketDataWithCache(
   redis: Redis,
   chainId: number
 ): Promise<MarketDataInitResult> {
+  if (providers.length === 0) {
+    throw new Error("no providers configured");
+  }
   const cached = await loadSDKState(redis, { chainId, proxyAddr: md.getProxyAddress() });
   if (cached) {
-    try {
-      await md.createProxyInstanceFromState(cached.state, providers[0]);
-      return { usedCache: true, providerIndex: 0, cacheAgeMs: cached.ageMs };
-    } catch (e) {
-      console.log(
-        `${new Date(Date.now()).toISOString()}: cached SDK state unusable, falling back to full init: ${String(e)}`
-      );
+    let lastCacheErr: unknown;
+    let j = providers.length > 0 ? Math.floor(Math.random() * providers.length) : 0;
+    for (let k = 0; k < providers.length; k++, j = (j + 1) % providers.length) {
+      try {
+        await md.createProxyInstanceFromState(cached.state, providers[j]);
+        return { usedCache: true, providerIndex: j, cacheAgeMs: cached.ageMs };
+      } catch (e) {
+        lastCacheErr = e;
+      }
     }
+    console.log(
+      `${new Date(Date.now()).toISOString()}: cached SDK state unusable across all providers, falling back to full init: ${String(lastCacheErr)}`
+    );
   }
   let lastErr: unknown;
 
