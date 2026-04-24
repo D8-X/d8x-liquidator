@@ -104,4 +104,10 @@ function rebindBotProvider(bot: LiquidatorTool, md: MarketData, provider: Provid
   if (providerUrl) {
     anyBot.nodeURL = providerUrl;
   }
+
+  if (!anyBot.proxyContract || !anyBot.multicall || anyBot.provider !== provider) {
+    throw new Error(
+      "rebindBotProvider: LiquidatorTool internal fields missing or unchanged — SDK layout likely changed, audit WriteAccessHandler"
+    );
+  }
 }
