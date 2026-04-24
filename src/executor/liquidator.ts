@@ -103,7 +103,7 @@ export default class Liquidator {
    */
   public async initialize() {
     const md = new MarketData(this.sdkConfig);
-    const { usedCache, providerIndex } = await initMarketDataWithCache(
+    const { usedCache, providerIndex, cacheAgeMs } = await initMarketDataWithCache(
       md,
       this.providers,
       this.redisPubClient,
@@ -112,7 +112,7 @@ export default class Liquidator {
     // TODO: use a proper logger
     console.log(
       `${new Date(Date.now()).toISOString()}: executor MarketData initialized ` +
-        `(cache=${usedCache}, providerIndex=${providerIndex})`
+        `(cache=${usedCache}${usedCache ? `, age=${cacheAgeMs}ms` : ""}, providerIndex=${providerIndex})`
     );
     await initLiquidatorsFromMarketData(this.bots, md, this.providers[providerIndex]);
 
