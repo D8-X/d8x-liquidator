@@ -25,7 +25,7 @@ export async function initMarketDataWithCache(
   redis: Redis,
   chainId: number
 ): Promise<MarketDataInitResult> {
-  const cached = await loadSDKState(redis, chainId);
+  const cached = await loadSDKState(redis, { chainId, proxyAddr: md.getProxyAddress() });
   if (cached) {
     try {
       await md.createProxyInstanceFromState(cached.state, providers[0]);
@@ -37,7 +37,7 @@ export async function initMarketDataWithCache(
     }
   }
   let lastErr: unknown;
-  
+
   let i = providers.length > 0 ? Math.floor(Math.random() * providers.length) : 0;
   for (let k = 0; k < providers.length; k++, i = (i + 1) % providers.length) {
     try {
