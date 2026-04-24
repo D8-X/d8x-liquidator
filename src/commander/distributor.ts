@@ -190,7 +190,11 @@ export default class Distributor {
       await publishSDKState(this.redisPubClient, this.chainId, state);
       this.lastPublishedState = serialized;
     } catch (e) {
-      console.log(`${new Date(Date.now()).toISOString()}: failed to publish SDK state: ${e}`);
+      console.log(
+        `${new Date(Date.now()).toISOString()}: failed to publish SDK state: ${
+          e instanceof Error ? e.stack ?? e.message : String(e)
+        }`
+      );
     }
   }
 
