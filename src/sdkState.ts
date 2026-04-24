@@ -10,13 +10,13 @@ export function sdkStateKey(chainId: number): string {
 
 interface CachedSDKState {
   sdkVersion: string;
-  publishedAt: number; 
+  publishedAt: number;
   state: SDKState;
 }
 
 export interface LoadedSDKState {
   state: SDKState;
-  ageMs: number;
+  ageMs?: number;
 }
 
 export async function publishSDKState(redis: Redis, chainId: number, state: SDKState): Promise<void> {
@@ -49,7 +49,7 @@ export async function loadSDKState(redis: Redis, anchors: TrustedAnchors): Promi
     ) {
       return null;
     }
-    const ageMs = typeof parsed.publishedAt === "number" ? Date.now() - parsed.publishedAt : NaN;
+    const ageMs = typeof parsed.publishedAt === "number" ? Date.now() - parsed.publishedAt : undefined;
     return { state: parsed.state, ageMs };
   } catch {
     return null;

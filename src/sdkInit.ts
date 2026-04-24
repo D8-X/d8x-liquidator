@@ -22,16 +22,18 @@ export interface MarketDataInitResult {
 export async function initMarketDataWithCache(
   md: MarketData,
   providers: Provider[],
-  redis: Redis,
-  chainId: number
+  redis: Redis
 ): Promise<MarketDataInitResult> {
   if (providers.length === 0) {
     throw new Error("no providers configured");
   }
-  const cached = await loadSDKState(redis, { chainId, proxyAddr: md.getProxyAddress() });
+  const cached = await loadSDKState(redis, {
+    chainId: md.config.chainId,
+    proxyAddr: md.getProxyAddress(),
+  });
   if (cached) {
     let lastCacheErr: unknown;
-    let j = providers.length > 0 ? Math.floor(Math.random() * providers.length) : 0;
+    let j = Math.floor(Math.random() * providers.length);
     for (let k = 0; k < providers.length; k++, j = (j + 1) % providers.length) {
       try {
         await md.createProxyInstanceFromState(cached.state, providers[j]);
@@ -45,8 +47,7 @@ export async function initMarketDataWithCache(
     );
   }
   let lastErr: unknown;
-
-  let i = providers.length > 0 ? Math.floor(Math.random() * providers.length) : 0;
+  let i = Math.floor(Math.random() * providers.length);
   for (let k = 0; k < providers.length; k++, i = (i + 1) % providers.length) {
     try {
       await md.createProxyInstance(providers[i]);

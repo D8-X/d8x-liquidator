@@ -220,12 +220,11 @@ export default class BlockhainListener {
     const { usedCache, cacheAgeMs } = await initMarketDataWithCache(
       this.md,
       [this.httpProvider],
-      this.redisPubClient,
-      Number(this.network.chainId)
+      this.redisPubClient
     );
     console.log(
       `${new Date(Date.now()).toISOString()}: sentinel MarketData initialized ` +
-        `(cache=${usedCache}${usedCache ? `, age=${cacheAgeMs}ms` : ""})`
+        `(cache=${usedCache}${usedCache ? `, age=${typeof cacheAgeMs === "number" ? `${cacheAgeMs}ms` : "unknown"}` : ""})`
     );
 
     if (this.config.rpcListenWs.length > 0) {
