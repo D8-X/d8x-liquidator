@@ -116,7 +116,7 @@ export default class Distributor {
       .map((pool) =>
         pool.perpetuals
           .filter(({ state }) => state === "NORMAL")
-          .map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`)
+          .map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`),
       )
       .flat();
 
@@ -124,11 +124,11 @@ export default class Distributor {
       // static info
       this.maintenanceRate.set(
         symbol,
-        PerpetualDataHandler.getMaintenanceMarginRate(this.md.getPerpetualStaticInfo(symbol))
+        PerpetualDataHandler.getMaintenanceMarginRate(this.md.getPerpetualStaticInfo(symbol)),
       );
       this.isQuote.set(
         symbol,
-        this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE
+        this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE,
       );
       // price info
       try {
@@ -171,7 +171,7 @@ export default class Distributor {
           console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
           process.exit(1);
         }
-      }
+      },
     );
 
     this.ready = true;
@@ -239,7 +239,7 @@ export default class Distributor {
             sleepForSec(5).then(() =>
               this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
                 this.updatePosition(pos).then();
-              })
+              }),
             );
             break;
           }
@@ -303,7 +303,11 @@ export default class Distributor {
     const pxSubmission = this.pxSubmission.get(symbol)!;
     const account = await this.md
       .getReadOnlyProxyInstance()
-      .getTraderState(perpetualId, address, [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0), floatToABK64x64(pxSubmission.rho ?? 0)]);
+      .getTraderState(perpetualId, address, [
+        floatToABK64x64(pxSubmission.s2),
+        floatToABK64x64(pxSubmission.s3 ?? 0),
+        floatToABK64x64(pxSubmission.rho ?? 0),
+      ]);
 
     const position: Position = {
       perpetualId: perpetualId,
@@ -395,7 +399,11 @@ export default class Distributor {
         callData: proxy.interface.encodeFunctionData("getTraderState", [
           perpId,
           addr,
-          [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0), floatToABK64x64(pxSubmission.rho ?? 0)],
+          [
+            floatToABK64x64(pxSubmission.s2),
+            floatToABK64x64(pxSubmission.s3 ?? 0),
+            floatToABK64x64(pxSubmission.rho ?? 0),
+          ],
         ]),
       }));
       promises2.push(multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls));
@@ -416,7 +424,7 @@ export default class Distributor {
               if (result.success) {
                 const account = proxy.interface.decodeFunctionResult(
                   "getTraderState",
-                  result.returnData
+                  result.returnData,
                 )[0] as BigNumberish[];
                 /**
                  * 0 marginBalance : number; // current margin balance
