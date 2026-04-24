@@ -1,7 +1,8 @@
-import { LiquidatorTool, PerpetualDataHandler } from "@d8-x/d8x-node-sdk";
+import { LiquidatorTool, MarketData, NodeSDKConfig, PerpetualDataHandler } from "@d8-x/d8x-node-sdk";
 import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
+import { initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 import { Metrics } from "./metrics.js";
@@ -27,6 +28,7 @@ export default class Liquidator {
   private config: LiquidatorConfig;
   private earnings: string | undefined;
   private chainId: number;
+  private sdkConfig: NodeSDKConfig;
   private gasPriceBuffer = 100n; // no buffer
   private lastUsedRpcIndex: number = 0;
 
@@ -51,6 +53,7 @@ export default class Liquidator {
     this.redisPubClient = constructRedis("executorPubClient");
 
     const sdkConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
+    this.sdkConfig = sdkConfig;
     this.chainId = sdkConfig.chainId;
     this.providers = [
       new MultiUrlJsonRpcProvider(this.config.rpcExec, new Network(sdkConfig.name || "", sdkConfig.chainId), {
@@ -99,26 +102,19 @@ export default class Liquidator {
    * An error is thrown if none of the providers works.
    */
   public async initialize() {
-    // Create a proxy instance to access the blockchain
-    let success = false;
-    let i = Math.floor(Math.random() * this.providers.length);
-    let tried = 0;
-    // try all providers until one works, reverts otherwise
-    // console.log(`${new Date(Date.now()).toISOString()}: initializing ...`);
-    while (!success && i < this.providers.length && tried <= this.providers.length) {
-      console.log(`trying provider ${i} ... `);
-      const results = await Promise.allSettled(
-        // createProxyInstance attaches the given provider to the object instance
-        this.bots.map((liq) => liq.api.createProxyInstance(this.providers[i]), this)
-      );
-
-      success = results.every((r) => r.status === "fulfilled");
-      i = (i + 1) % this.providers.length;
-      tried++;
-    }
-    if (!success) {
-      throw new Error("critical: all RPCs are down");
-    }
+    const md = new MarketData(this.sdkConfig);
+    const { usedCache, providerIndex } = await initMarketDataWithCache(
+      md,
+      this.providers,
+      this.redisPubClient,
+      this.chainId
+    );
+    // TODO: use a proper logger
+    console.log(
+      `${new Date(Date.now()).toISOString()}: executor MarketData initialized ` +
+        `(cache=${usedCache}, providerIndex=${providerIndex})`
+    );
+    await initLiquidatorsFromMarketData(this.bots, md);
 
     // Subscribe to relayed events
     // console.log(`${new Date(Date.now()).toISOString()}: subscribing to account streamer...`);
