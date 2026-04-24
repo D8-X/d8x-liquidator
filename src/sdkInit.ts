@@ -37,7 +37,9 @@ export async function initMarketDataWithCache(
     }
   }
   let lastErr: unknown;
-  for (let i = 0; i < providers.length; i++) {
+  
+  let i = providers.length > 0 ? Math.floor(Math.random() * providers.length) : 0;
+  for (let k = 0; k < providers.length; k++, i = (i + 1) % providers.length) {
     try {
       await md.createProxyInstance(providers[i]);
       return { usedCache: false, providerIndex: i };
