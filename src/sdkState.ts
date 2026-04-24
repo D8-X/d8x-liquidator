@@ -18,6 +18,11 @@ export async function publishSDKState(redis: Redis, chainId: number, state: SDKS
   await redis.set(sdkStateKey(chainId), JSON.stringify(payload), "EX", SDK_STATE_TTL_SECONDS);
 }
 
+export async function refreshSDKStateTTL(redis: Redis, chainId: number): Promise<boolean> {
+  const result = await redis.expire(sdkStateKey(chainId), SDK_STATE_TTL_SECONDS);
+  return result === 1;
+}
+
 export async function loadSDKState(redis: Redis, chainId: number): Promise<SDKState | null> {
   const raw = await redis.get(sdkStateKey(chainId));
   if (!raw) return null;

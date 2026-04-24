@@ -26,7 +26,7 @@ import {
   UpdateUnitAccumulatedFundingMsg,
 } from "../types.js";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
-import { SDK_STATE_REPUBLISH_SECONDS, publishSDKState } from "../sdkState.js";
+import { SDK_STATE_REPUBLISH_SECONDS, publishSDKState, refreshSDKStateTTL } from "../sdkState.js";
 
 export default class Distributor {
   // objects
@@ -177,9 +177,18 @@ export default class Distributor {
     this.ready = true;
   }
 
+  private lastPublishedState: string | undefined;
+
   private async publishState(): Promise<void> {
     try {
-      await publishSDKState(this.redisPubClient, this.chainId, this.md.exportState());
+      const state = this.md.exportState();
+      const serialized = JSON.stringify(state);
+      if (serialized === this.lastPublishedState) {
+        await refreshSDKStateTTL(this.redisPubClient, this.chainId);
+        return;
+      }
+      await publishSDKState(this.redisPubClient, this.chainId, state);
+      this.lastPublishedState = serialized;
     } catch (e) {
       console.log(`${new Date(Date.now()).toISOString()}: failed to publish SDK state: ${e}`);
     }
