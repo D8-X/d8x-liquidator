@@ -10,11 +10,17 @@ export function sdkStateKey(chainId: number): string {
 
 interface CachedSDKState {
   sdkVersion: string;
+  publishedAt: number; 
   state: SDKState;
 }
 
+export interface LoadedSDKState {
+  state: SDKState;
+  ageMs: number;
+}
+
 export async function publishSDKState(redis: Redis, chainId: number, state: SDKState): Promise<void> {
-  const payload: CachedSDKState = { sdkVersion: D8X_SDK_VERSION, state };
+  const payload: CachedSDKState = { sdkVersion: D8X_SDK_VERSION, publishedAt: Date.now(), state };
   await redis.set(sdkStateKey(chainId), JSON.stringify(payload), "EX", SDK_STATE_TTL_SECONDS);
 }
 
@@ -23,7 +29,7 @@ export async function refreshSDKStateTTL(redis: Redis, chainId: number): Promise
   return result === 1;
 }
 
-export async function loadSDKState(redis: Redis, chainId: number): Promise<SDKState | null> {
+export async function loadSDKState(redis: Redis, chainId: number): Promise<LoadedSDKState | null> {
   const raw = await redis.get(sdkStateKey(chainId));
   if (!raw) return null;
   try {
@@ -31,7 +37,8 @@ export async function loadSDKState(redis: Redis, chainId: number): Promise<SDKSt
     if (parsed?.sdkVersion !== D8X_SDK_VERSION || !parsed.state) {
       return null;
     }
-    return parsed.state;
+    const ageMs = typeof parsed.publishedAt === "number" ? Date.now() - parsed.publishedAt : NaN;
+    return { state: parsed.state, ageMs };
   } catch {
     return null;
   }

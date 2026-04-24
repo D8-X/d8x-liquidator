@@ -217,13 +217,16 @@ export default class BlockhainListener {
       "could not establish http connection"
     );
 
-    const { usedCache } = await initMarketDataWithCache(
+    const { usedCache, cacheAgeMs } = await initMarketDataWithCache(
       this.md,
       [this.httpProvider],
       this.redisPubClient,
       Number(this.network.chainId)
     );
-    console.log(`${new Date(Date.now()).toISOString()}: sentinel MarketData initialized (cache=${usedCache})`);
+    console.log(
+      `${new Date(Date.now()).toISOString()}: sentinel MarketData initialized ` +
+        `(cache=${usedCache}${usedCache ? `, age=${cacheAgeMs}ms` : ""})`
+    );
 
     if (this.config.rpcListenWs.length > 0) {
       this.listeningProvider = this.multiUrlWsProvider;

@@ -12,6 +12,7 @@ import { loadSDKState } from "./sdkState.js";
 export interface MarketDataInitResult {
   usedCache: boolean;
   providerIndex: number;
+  cacheAgeMs?: number;
 }
 
 /**
@@ -24,11 +25,11 @@ export async function initMarketDataWithCache(
   redis: Redis,
   chainId: number
 ): Promise<MarketDataInitResult> {
-  const state = await loadSDKState(redis, chainId);
-  if (state) {
+  const cached = await loadSDKState(redis, chainId);
+  if (cached) {
     try {
-      await md.createProxyInstanceFromState(state, providers[0]);
-      return { usedCache: true, providerIndex: 0 };
+      await md.createProxyInstanceFromState(cached.state, providers[0]);
+      return { usedCache: true, providerIndex: 0, cacheAgeMs: cached.ageMs };
     } catch (e) {
       console.log(
         `${new Date(Date.now()).toISOString()}: cached SDK state unusable, falling back to full init: ${String(e)}`
