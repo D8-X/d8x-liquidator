@@ -101,13 +101,13 @@ export default class Distributor {
       i++;
     }
     if (!success) {
-      console.log(`${new Date(Date.now()).toISOString()}: all rpcs are down ${this.config.rpcWatch.join(", ")}`);
+      throw new Error(
+        `commander: all RPCs are down (${this.config.rpcWatch.join(", ")})`
+      );
     }
 
-    if (success) {
-      await this.publishState();
-      setInterval(() => void this.publishState(), SDK_STATE_REPUBLISH_SECONDS * 1000).unref();
-    }
+    await this.publishState();
+    setInterval(() => void this.publishState(), SDK_STATE_REPUBLISH_SECONDS * 1000).unref();
 
     const info = await this.md.exchangeInfo();
 
