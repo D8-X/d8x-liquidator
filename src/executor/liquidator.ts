@@ -114,7 +114,7 @@ export default class Liquidator {
       `${new Date(Date.now()).toISOString()}: executor MarketData initialized ` +
         `(cache=${usedCache}, providerIndex=${providerIndex})`
     );
-    await initLiquidatorsFromMarketData(this.bots, md, this.providers[providerIndex] ?? this.providers[0]);
+    await initLiquidatorsFromMarketData(this.bots, md, this.providers[providerIndex]);
 
     // Subscribe to relayed events
     // console.log(`${new Date(Date.now()).toISOString()}: subscribing to account streamer...`);
