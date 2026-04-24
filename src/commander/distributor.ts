@@ -52,6 +52,7 @@ export default class Distributor {
   private unitAccumulatedFunding: Map<string, number> = new Map();
   private messageSentAt: Map<string, number> = new Map();
   private pricesFetchedAt: Map<string, number> = new Map();
+  private lastPublishedState: string | undefined;
   public ready: boolean = false;
 
   // static info
@@ -176,8 +177,6 @@ export default class Distributor {
 
     this.ready = true;
   }
-
-  private lastPublishedState: string | undefined;
 
   private async publishState(): Promise<void> {
     try {
