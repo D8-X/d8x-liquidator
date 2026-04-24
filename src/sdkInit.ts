@@ -15,6 +15,12 @@ export interface MarketDataInitResult {
   cacheAgeMs?: number;
 }
 
+export function formatCacheAgeSuffix(result: MarketDataInitResult): string {
+  if (!result.usedCache) return "";
+  const age = typeof result.cacheAgeMs === "number" ? `${result.cacheAgeMs}ms` : "unknown";
+  return `, age=${age}`;
+}
+
 /**
  * Initialize MarketData without RPC when a cached SDK state is available in Redis.
  * Falls back to createProxyInstance(provider) retried across the given providers.

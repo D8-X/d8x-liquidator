@@ -2,7 +2,7 @@ import { LiquidatorTool, MarketData, NodeSDKConfig, PerpetualDataHandler } from 
 import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
-import { initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
+import { formatCacheAgeSuffix, initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 import { Metrics } from "./metrics.js";
@@ -103,17 +103,13 @@ export default class Liquidator {
    */
   public async initialize() {
     const md = new MarketData(this.sdkConfig);
-    const { usedCache, providerIndex, cacheAgeMs } = await initMarketDataWithCache(
-      md,
-      this.providers,
-      this.redisPubClient
-    );
+    const result = await initMarketDataWithCache(md, this.providers, this.redisPubClient);
     // TODO: use a proper logger
     console.log(
       `${new Date(Date.now()).toISOString()}: executor MarketData initialized ` +
-        `(cache=${usedCache}${usedCache ? `, age=${typeof cacheAgeMs === "number" ? `${cacheAgeMs}ms` : "unknown"}` : ""}, providerIndex=${providerIndex})`
+        `(cache=${result.usedCache}${formatCacheAgeSuffix(result)}, providerIndex=${result.providerIndex})`
     );
-    await initLiquidatorsFromMarketData(this.bots, md, this.providers[providerIndex]);
+    await initLiquidatorsFromMarketData(this.bots, md, this.providers[result.providerIndex]);
 
     // Subscribe to relayed events
     // console.log(`${new Date(Date.now()).toISOString()}: subscribing to account streamer...`);
