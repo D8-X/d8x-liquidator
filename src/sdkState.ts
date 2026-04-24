@@ -1,5 +1,6 @@
 import { D8X_SDK_VERSION, type SDKState } from "@d8-x/d8x-node-sdk";
 import { Redis } from "ioredis";
+import { stableStringify } from "./utils.js";
 
 export const SDK_STATE_TTL_SECONDS = 15 * 60;
 export const SDK_STATE_REPUBLISH_SECONDS = 5 * 60;
@@ -21,7 +22,7 @@ export interface LoadedSDKState {
 
 export async function publishSDKState(redis: Redis, chainId: number, state: SDKState): Promise<void> {
   const payload: CachedSDKState = { sdkVersion: D8X_SDK_VERSION, publishedAt: Date.now(), state };
-  await redis.set(sdkStateKey(chainId), JSON.stringify(payload), "EX", SDK_STATE_TTL_SECONDS);
+  await redis.set(sdkStateKey(chainId), stableStringify(payload), "EX", SDK_STATE_TTL_SECONDS);
 }
 
 export async function refreshSDKStateTTL(redis: Redis, chainId: number): Promise<boolean> {
