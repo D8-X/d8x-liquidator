@@ -105,6 +105,9 @@ export function sleep(ms: number) {
 
 export function stableStringify(value: unknown): string {
   return JSON.stringify(value, (_key, val) => {
+    if (typeof val === "bigint") return val.toString();
+    if (val instanceof Map) return Array.from(val.entries());
+    if (val instanceof Set) return Array.from(val.values());
     if (val && typeof val === "object" && !Array.isArray(val)) {
       const sorted: Record<string, unknown> = {};
       for (const k of Object.keys(val as Record<string, unknown>).sort()) {
