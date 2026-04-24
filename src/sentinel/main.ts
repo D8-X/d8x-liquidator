@@ -9,7 +9,12 @@ async function start() {
   }
   const cfg = await loadConfig(sdkConfig);
   const eventStreamer = new BlockhainListener(cfg);
-  eventStreamer.start();
+  await eventStreamer.start();
 }
 
-start();
+start().catch((err) => {
+  console.error(
+    `${new Date().toISOString()}: sentinel fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}`
+  );
+  process.exit(1);
+});

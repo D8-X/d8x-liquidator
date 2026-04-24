@@ -13,4 +13,9 @@ async function start() {
   obj.run();
 }
 
-start();
+start().catch((err) => {
+  console.error(
+    `${new Date().toISOString()}: commander fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}`
+  );
+  process.exit(1);
+});
