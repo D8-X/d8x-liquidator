@@ -106,11 +106,10 @@ export default class Distributor {
         `commander: all RPCs are down (${this.config.rpcWatch.join(", ")})`
       );
     }
-
+    
+    const info = await this.md.exchangeInfo();
     await this.publishState();
     setInterval(() => void this.publishState(), SDK_STATE_REPUBLISH_SECONDS * 1000).unref();
-
-    const info = await this.md.exchangeInfo();
 
     this.symbols = info.pools
       .filter(({ isRunning }) => isRunning)
