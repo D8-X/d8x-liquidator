@@ -106,7 +106,7 @@ export default class Distributor {
 
     if (success) {
       await this.publishState();
-      setInterval(() => void this.publishState(), SDK_STATE_REPUBLISH_SECONDS * 1000);
+      setInterval(() => void this.publishState(), SDK_STATE_REPUBLISH_SECONDS * 1000).unref();
     }
 
     const info = await this.md.exchangeInfo();
