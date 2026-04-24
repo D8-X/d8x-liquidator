@@ -76,8 +76,9 @@ export async function initLiquidatorsFromMarketData(
   provider: Provider
 ): Promise<void> {
   await Promise.all(bots.map((b) => b.api.createProxyInstance(md)));
+  const proxyAddr = md.getProxyAddress();
   for (const { api } of bots) {
-    rebindBotProvider(api, md, provider);
+    rebindBotProvider(api, proxyAddr, provider);
   }
 }
 
@@ -86,7 +87,7 @@ export async function initLiquidatorsFromMarketData(
 // The MarketData path currently discards any provider attached to the MarketData 
 // and builds a single URL JsonRpcProvider from `md.config.nodeURL`, which kills multi URL failover on reads like `proxyContract.staticCall(...)`.
 // Until that SDK change lands we rebind the bot's contract handles and signer to our multURL provider here here
-function rebindBotProvider(bot: LiquidatorTool, md: MarketData, provider: Provider): void {
+function rebindBotProvider(bot: LiquidatorTool, proxyAddr: string, provider: Provider): void {
   const anyBot = bot as unknown as {
     provider: Provider;
     signerOrProvider: Provider;
@@ -98,7 +99,7 @@ function rebindBotProvider(bot: LiquidatorTool, md: MarketData, provider: Provid
   };
   anyBot.provider = provider;
   anyBot.signerOrProvider = provider;
-  anyBot.proxyContract = IPerpetualManager__factory.connect(md.getProxyAddress(), provider);
+  anyBot.proxyContract = IPerpetualManager__factory.connect(proxyAddr, provider);
   anyBot.multicall = Multicall3__factory.connect(anyBot.config.multicall ?? MULTICALL_ADDRESS, provider);
   if (anyBot.signer) {
     anyBot.signer = anyBot.signer.connect(provider) as typeof anyBot.signer;
