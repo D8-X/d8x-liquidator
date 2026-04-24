@@ -35,7 +35,7 @@ export async function initMarketDataWithCache(
   }
   const cached = await loadSDKState(redis, {
     chainId: md.config.chainId,
-    proxyAddr: md.getProxyAddress(),
+    proxyAddr: md.config.proxyAddr,
   });
   if (cached) {
     let lastCacheErr: unknown;
