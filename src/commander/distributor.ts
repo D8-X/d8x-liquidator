@@ -314,11 +314,7 @@ export default class Distributor {
     const pxSubmission = this.pxSubmission.get(symbol)!;
     const account = await this.md
       .getReadOnlyProxyInstance()
-      .getTraderState(perpetualId, address, [
-        floatToABK64x64(pxSubmission.s2),
-        floatToABK64x64(pxSubmission.s3 ?? 0),
-        floatToABK64x64(pxSubmission.rho ?? 0),
-      ]);
+      .getTraderState(perpetualId, address, [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0), floatToABK64x64(pxSubmission.rho ?? 0)]);
 
     const position: Position = {
       perpetualId: perpetualId,
@@ -410,11 +406,7 @@ export default class Distributor {
         callData: proxy.interface.encodeFunctionData("getTraderState", [
           perpId,
           addr,
-          [
-            floatToABK64x64(pxSubmission.s2),
-            floatToABK64x64(pxSubmission.s3 ?? 0),
-            floatToABK64x64(pxSubmission.rho ?? 0),
-          ],
+          [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0), floatToABK64x64(pxSubmission.rho ?? 0)],
         ]),
       }));
       promises2.push(multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls));
@@ -435,7 +427,7 @@ export default class Distributor {
               if (result.success) {
                 const account = proxy.interface.decodeFunctionResult(
                   "getTraderState",
-                  result.returnData,
+                  result.returnData
                 )[0] as BigNumberish[];
                 /**
                  * 0 marginBalance : number; // current margin balance
