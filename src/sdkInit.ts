@@ -57,6 +57,11 @@ export async function initLiquidatorsFromMarketData(
   }
 }
 
+// TODO: to drop this hack once the SDK's `WriteAccessHandler.createProxyInstance(marketData)` overload accepts an
+// explicit provider. 
+// The MarketData path currently discards any provider attached to the MarketData 
+// and builds a single URL JsonRpcProvider from `md.config.nodeURL`, which kills multi URL failover on reads like `proxyContract.staticCall(...)`.
+// Until that SDK change lands we rebind the bot's contract handles and signer to our multURL provider here here
 function rebindBotProvider(bot: LiquidatorTool, md: MarketData, provider: Provider): void {
   const anyBot = bot as unknown as {
     provider: Provider;
