@@ -92,10 +92,11 @@ export default class Distributor {
    * If none of the RPCs work, it sleeps before crashing.
    */
   public async initialize() {
-    // Create a proxy instance to access the blockchain
+    // RPC URL randomization happens at config load time using the `shuffle()` in
+    // utils.loadConfig, `this.config.rpcWatch` is already a shuffled list by
+    // the time it reaches the MultiUrlJsonRpcProvider constructor
     let success = false;
     let i = 0;
-    this.providers = this.providers.sort(() => Math.random() - 0.5);
     while (!success && i < this.providers.length) {
       const results = (await Promise.allSettled([this.md.createProxyInstance(this.providers[i])]))[0];
       success = results.status === "fulfilled";
