@@ -81,10 +81,9 @@ export interface UpdateMarkPriceMsg extends RedisMsg {
   spotIndexPrice: number;
 }
 
-export interface UpdateUnitAccumulatedFundingMsg extends RedisMsg {
+export interface PerpEmergencyMsg extends RedisMsg {
   perpetualId: number;
   symbol: string;
-  unitAccumulatedFundingCC: number;
 }
 
 export interface LiquidateTraderMsg {
