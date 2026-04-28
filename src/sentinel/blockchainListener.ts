@@ -2,7 +2,13 @@ import { ABK64x64ToFloat, IPerpetualManager__factory, MarketData, PerpetualDataH
 import { Redis } from "ioredis";
 import SturdyWebSocket from "sturdy-websocket";
 import Websocket from "ws";
-import { LiquidateMsg, LiquidatorConfig, UpdateMarginAccountMsg, UpdateMarkPriceMsg } from "../types.js";
+import {
+  LiquidateMsg,
+  LiquidatorConfig,
+  PerpEmergencyMsg,
+  UpdateMarginAccountMsg,
+  UpdateMarkPriceMsg,
+} from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 
 import { JsonRpcProvider, Network, SocketProvider, WebSocketProvider } from "ethers";
@@ -361,6 +367,24 @@ export default class BlockhainListener {
           mode: ListeningMode,
           ...msg,
         });
+      }
+    );
+
+    proxy.on(
+      proxy.filters.SetEmergencyState,
+      (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
+        const perpId = Number(perpetualId);
+        const symbol = this.md.getSymbolFromPerpId(perpId);
+        if (symbol === undefined) return;
+        const msg: PerpEmergencyMsg = {
+          perpetualId: perpId,
+          symbol,
+          block: event.log.blockNumber,
+          hash: event.log.transactionHash,
+          id: `${event.log.transactionHash}:${event.log.index}`,
+        };
+        this.redisPubClient.publish("PerpEmergency", JSON.stringify(msg));
+        console.log({ event: "SetEmergencyState", time: new Date().toISOString(), ...msg });
       }
     );
   }

@@ -5,6 +5,7 @@ import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { formatCacheAgeSuffix, initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
+import { loadWatchlist, watchlistChannel } from "../watchlist.js";
 import { Metrics } from "./metrics.js";
 
 // Liquidation result status
@@ -38,6 +39,7 @@ export default class Liquidator {
   // Set of symbol:traderAddr elements which are currently being processed.
   private locked: Set<string> = new Set();
   private timesTried: Map<string, number> = new Map();
+  private allowedSymbols: Set<string> | null = null;
 
   protected metrics: Metrics;
 
@@ -111,14 +113,29 @@ export default class Liquidator {
     );
     await initLiquidatorsFromMarketData(this.bots, md, this.providers[result.providerIndex]);
 
+    const initial = await loadWatchlist(this.redisPubClient, this.chainId);
+    if (initial !== null) {
+      this.allowedSymbols = new Set(initial);
+      console.log({
+        info: "executor: loaded initial watchlist from redis",
+        time: new Date(Date.now()).toISOString(),
+        size: initial.length,
+      });
+    }
+
     // Subscribe to relayed events
     // console.log(`${new Date(Date.now()).toISOString()}: subscribing to account streamer...`);
-    await this.redisSubClient.subscribe("block", "LiquidateTrader", (err, count) => {
-      if (err) {
-        console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
-        process.exit(1);
+    await this.redisSubClient.subscribe(
+      "block",
+      "LiquidateTrader",
+      watchlistChannel(this.chainId),
+      (err, count) => {
+        if (err) {
+          console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
+          process.exit(1);
+        }
       }
-    });
+    );
     console.log("initialized");
   }
 
@@ -136,7 +153,17 @@ export default class Liquidator {
         }
       });
 
+      const watchlistCh = watchlistChannel(this.chainId);
       this.redisSubClient.on("message", async (channel, msg) => {
+        if (channel === watchlistCh) {
+          try {
+            const list = JSON.parse(msg);
+            if (Array.isArray(list)) {
+              this.allowedSymbols = new Set(list.filter((s): s is string => typeof s === "string"));
+            }
+          } catch {}
+          return;
+        }
         switch (channel) {
           case "LiquidateTrader": {
             const prevCount = this.q.size;
@@ -168,7 +195,17 @@ export default class Liquidator {
     if (this.bots[botIdx].busy || this.locked.has(`${symbol}:${trader}`)) {
       return LiquidationStatus.NoOp;
     }
-    // lock
+    if (this.allowedSymbols === null || !this.allowedSymbols.has(symbol)) {
+      console.log({
+        info: this.allowedSymbols === null
+          ? "executor: skipping - watchlist not yet received"
+          : "executor: skipping - not in watchlist",
+        time: new Date(Date.now()).toISOString(),
+        symbol,
+        trader,
+      });
+      return LiquidationStatus.NoOp;
+    }
     const id = `${symbol}:${trader}`;
     this.bots[botIdx].busy = true;
     this.locked.add(id);
