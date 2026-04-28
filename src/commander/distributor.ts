@@ -27,7 +27,7 @@ import {
 } from "../types.js";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { SDK_STATE_REPUBLISH_SECONDS, publishSDKState, refreshSDKStateTTL } from "../sdkState.js";
-import { publishWatchlist } from "../watchlist.js";
+import { loadWatchlist, PerpStates, publishWatchlist, serializePerpStates } from "../watchlist.js";
 
 export default class Distributor {
   // objects
@@ -208,7 +208,21 @@ export default class Distributor {
   }
 
   private async broadcastWatchlist(): Promise<void> {
-    const payload = JSON.stringify([...this.symbols].sort());
+    let info;
+    try {
+      info = await this.md.exchangeInfo();
+    } catch (e) {
+      console.log({ info: "broadcastWatchlist: exchangeInfo failed", error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+    const states: PerpStates = {};
+    for (const pool of info.pools) {
+      if (!pool.isRunning) continue;
+      for (const p of pool.perpetuals) {
+        states[`${p.baseCurrency}-${p.quoteCurrency}-${pool.poolSymbol}`] = p.state;
+      }
+    }
+    const payload = serializePerpStates(states);
     if (payload === this.lastPublishedWatchlist) return;
     try {
       await publishWatchlist(this.redisPubClient, this.chainId, payload);
@@ -517,24 +531,39 @@ export default class Distributor {
         console.log({ info: "reconcile failed", error: e instanceof Error ? e.message : String(e) });
         return;
       }
-      const desired = info.pools
-        .filter(({ isRunning }) => isRunning)
-        .flatMap((pool) =>
-          pool.perpetuals
-            .filter(({ state }) => state === "NORMAL")
-            .map((p) => `${p.baseCurrency}-${p.quoteCurrency}-${pool.poolSymbol}`)
-        );
-      const before = JSON.stringify([...this.symbols].sort());
-      for (const s of [...this.symbols]) this.dropSymbol(s);
+      const sdkStates: PerpStates = {};
+      for (const pool of info.pools) {
+        if (!pool.isRunning) continue;
+        for (const p of pool.perpetuals) {
+          sdkStates[`${p.baseCurrency}-${p.quoteCurrency}-${pool.poolSymbol}`] = p.state;
+        }
+      }
+      const sdkPayload = serializePerpStates(sdkStates);
+      let redisPayload: string | null = null;
+      try {
+        const redisStates = await loadWatchlist(this.redisPubClient, this.chainId);
+        if (redisStates) redisPayload = serializePerpStates(redisStates);
+      } catch (e) {
+        console.log({ info: "reconcile: loadWatchlist failed", error: e instanceof Error ? e.message : String(e) });
+      }
+      if (redisPayload === sdkPayload && this.lastPublishedWatchlist === sdkPayload) return;
+      try {
+        await publishWatchlist(this.redisPubClient, this.chainId, sdkPayload);
+        this.lastPublishedWatchlist = sdkPayload;
+      } catch (e) {
+        console.log({ info: "reconcile: publish failed", error: e instanceof Error ? e.message : String(e) });
+        return;
+      }
+      const desired = Object.keys(sdkStates).filter((s) => sdkStates[s] === "NORMAL");
+      const desiredSet = new Set(desired);
+      const currentSet = new Set(this.symbols);
+      for (const s of [...this.symbols]) if (!desiredSet.has(s)) this.dropSymbol(s);
       for (const s of desired) {
+        if (currentSet.has(s)) continue;
         try { await this.addSymbol(s); }
         catch (e) { console.log({ info: "addSymbol failed", symbol: s, error: e instanceof Error ? e.message : String(e) }); }
       }
-      const after = JSON.stringify([...this.symbols].sort());
-      if (before !== after) {
-        console.log({ info: "watchlist reconciled", size: this.symbols.length });
-        await this.broadcastWatchlist();
-      }
+      console.log({ info: "watchlist reconciled", size: this.symbols.length });
     })().finally(() => {
       this.reconcileInflight = null;
     });
