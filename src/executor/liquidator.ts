@@ -5,7 +5,7 @@ import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { formatCacheAgeSuffix, initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
-import { loadWatchlist, watchlistChannel } from "../watchlist.js";
+import { loadWatchlist, parsePerpStates, watchlistChannel } from "../watchlist.js";
 import { Metrics } from "./metrics.js";
 
 // Liquidation result status
@@ -115,11 +115,11 @@ export default class Liquidator {
 
     const initial = await loadWatchlist(this.redisPubClient, this.chainId);
     if (initial !== null) {
-      this.allowedSymbols = new Set(initial);
+      this.allowedSymbols = new Set(Object.keys(initial).filter((s) => initial[s] === "NORMAL"));
       console.log({
         info: "executor: loaded initial watchlist from redis",
         time: new Date(Date.now()).toISOString(),
-        size: initial.length,
+        size: this.allowedSymbols.size,
       });
     }
 
@@ -156,12 +156,10 @@ export default class Liquidator {
       const watchlistCh = watchlistChannel(this.chainId);
       this.redisSubClient.on("message", async (channel, msg) => {
         if (channel === watchlistCh) {
-          try {
-            const list = JSON.parse(msg);
-            if (Array.isArray(list)) {
-              this.allowedSymbols = new Set(list.filter((s): s is string => typeof s === "string"));
-            }
-          } catch {}
+          const states = parsePerpStates(msg);
+          if (states) {
+            this.allowedSymbols = new Set(Object.keys(states).filter((s) => states[s] === "NORMAL"));
+          }
           return;
         }
         switch (channel) {
