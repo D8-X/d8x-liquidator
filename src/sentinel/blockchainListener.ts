@@ -387,5 +387,19 @@ export default class BlockhainListener {
         console.log({ event: "SetEmergencyState", time: new Date().toISOString(), ...msg });
       }
     );
+
+    proxy.on(proxy.filters.SetNormalState, (perpetualId: bigint, event: any) => {
+      const perpId = Number(perpetualId);
+      this.redisPubClient.publish(
+        "PerpNormal",
+        JSON.stringify({
+          perpetualId: perpId,
+          block: event.log.blockNumber,
+          hash: event.log.transactionHash,
+          id: `${event.log.transactionHash}:${event.log.index}`,
+        })
+      );
+      console.log({ event: "SetNormalState", time: new Date().toISOString(), perpetualId: perpId });
+    });
   }
 }

@@ -54,6 +54,10 @@ export default class Distributor {
   private lastPublishedState: string | undefined;
   private lastPublishedWatchlist: string | undefined;
   private reconcileInflight: Promise<void> | null = null;
+  private lastReconcileAt = 0;
+  private static readonly RECONCILE_TICK_MS = 60 * 1_000;
+  private static readonly RECONCILE_STALE_MS = 30 * 60 * 1_000;
+  private static readonly RECONCILE_EVENT_MIN_GAP_MS = 2_000;
   public ready: boolean = false;
 
   // static info
@@ -133,6 +137,7 @@ export default class Distributor {
       "UpdateMarginAccountEvent",
       "LiquidateEvent",
       "PerpEmergency",
+      "PerpNormal",
       "listener-error",
       "switch-mode",
       (err, count) => {
@@ -268,8 +273,14 @@ export default class Distributor {
       }, 10_000);
 
       setInterval(() => {
-        void this.reconcileWatchlist();
-      }, 60 * 1_000);
+        if (this.symbols.length === 0) {
+          void this.reconcileWatchlist();
+          return;
+        }
+        if (Date.now() - this.lastReconcileAt > Distributor.RECONCILE_STALE_MS) {
+          void this.reconcileWatchlist();
+        }
+      }, Distributor.RECONCILE_TICK_MS);
 
       this.redisSubClient.on("message", async (channel, msg) => {
         switch (channel) {
@@ -308,6 +319,16 @@ export default class Distributor {
 
           case "PerpEmergency": {
             await this.onPerpEmergency(JSON.parse(msg) as PerpEmergencyMsg);
+            break;
+          }
+
+          case "PerpNormal": {
+            if (
+              !this.reconcileInflight &&
+              Date.now() - this.lastReconcileAt > Distributor.RECONCILE_EVENT_MIN_GAP_MS
+            ) {
+              void this.reconcileWatchlist();
+            }
             break;
           }
 
@@ -522,6 +543,7 @@ export default class Distributor {
 
   private async reconcileWatchlist(): Promise<void> {
     if (this.reconcileInflight) return this.reconcileInflight;
+    this.lastReconcileAt = Date.now();
     this.reconcileInflight = (async () => {
       let info;
       try {
