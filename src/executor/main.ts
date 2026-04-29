@@ -35,7 +35,12 @@ async function run() {
   }
   await liquidator.initialize();
 
-  liquidator.run();
+  await liquidator.run();
 }
 
-run();
+run().catch((err) => {
+  console.error(
+    `${new Date().toISOString()}: executor fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}`
+  );
+  process.exit(1);
+});

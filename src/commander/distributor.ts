@@ -15,7 +15,7 @@ import {
 } from "@d8-x/d8x-node-sdk";
 import { BigNumberish } from "ethers";
 import { Redis } from "ioredis";
-import { constructRedis } from "../utils.js";
+import { constructRedis, stableStringify } from "../utils.js";
 import {
   LiquidateMsg,
   LiquidateTraderMsg,
@@ -26,6 +26,7 @@ import {
   UpdateUnitAccumulatedFundingMsg,
 } from "../types.js";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
+import { SDK_STATE_REPUBLISH_SECONDS, publishSDKState, refreshSDKStateTTL } from "../sdkState.js";
 
 export default class Distributor {
   // objects
@@ -51,6 +52,7 @@ export default class Distributor {
   private unitAccumulatedFunding: Map<string, number> = new Map();
   private messageSentAt: Map<string, number> = new Map();
   private pricesFetchedAt: Map<string, number> = new Map();
+  private lastPublishedState: string | undefined;
   public ready: boolean = false;
 
   // static info
@@ -90,20 +92,25 @@ export default class Distributor {
    * If none of the RPCs work, it sleeps before crashing.
    */
   public async initialize() {
-    // Create a proxy instance to access the blockchain
+    // RPC URL randomization happens at config load time using the `shuffle()` in
+    // utils.loadConfig, `this.config.rpcWatch` is already a shuffled list by
+    // the time it reaches the MultiUrlJsonRpcProvider constructor
     let success = false;
     let i = 0;
-    this.providers = this.providers.sort(() => Math.random() - 0.5);
     while (!success && i < this.providers.length) {
       const results = (await Promise.allSettled([this.md.createProxyInstance(this.providers[i])]))[0];
       success = results.status === "fulfilled";
       i++;
     }
     if (!success) {
-      console.log(`${new Date(Date.now()).toISOString()}: all rpcs are down ${this.config.rpcWatch.join(", ")}`);
+      throw new Error(
+        `commander: all RPCs are down (${this.config.rpcWatch.join(", ")})`
+      );
     }
-
+    
     const info = await this.md.exchangeInfo();
+    await this.publishState();
+    setInterval(() => void this.publishState(), SDK_STATE_REPUBLISH_SECONDS * 1000).unref();
 
     this.symbols = info.pools
       .filter(({ isRunning }) => isRunning)
@@ -165,10 +172,29 @@ export default class Distributor {
           console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
           process.exit(1);
         }
-      }
+      },
     );
 
     this.ready = true;
+  }
+
+  private async publishState(): Promise<void> {
+    try {
+      const state = this.md.exportState();
+      const serialized = stableStringify(state);
+      if (serialized === this.lastPublishedState) {
+        const refreshed = await refreshSDKStateTTL(this.redisPubClient, this.chainId);
+        if (refreshed) return;
+      }
+      await publishSDKState(this.redisPubClient, this.chainId, state);
+      this.lastPublishedState = serialized;
+    } catch (e) {
+      console.log(
+        `${new Date(Date.now()).toISOString()}: failed to publish SDK state: ${
+          e instanceof Error ? e.stack ?? e.message : String(e)
+        }`
+      );
+    }
   }
 
   private requireReady() {
@@ -225,7 +251,7 @@ export default class Distributor {
             sleepForSec(5).then(() =>
               this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
                 this.updatePosition(pos).then();
-              })
+              }),
             );
             break;
           }
