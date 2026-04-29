@@ -10,7 +10,12 @@ async function start() {
   const cfg = await loadConfig(sdkConfig);
   const obj = new Distributor(cfg);
   await obj.initialize();
-  obj.run();
+  await obj.run();
 }
 
-start();
+start().catch((err) => {
+  console.error(
+    `${new Date().toISOString()}: commander fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}`
+  );
+  process.exit(1);
+});
