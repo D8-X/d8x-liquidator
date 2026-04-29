@@ -268,8 +268,8 @@ export default class Distributor {
       }, 10_000);
 
       setInterval(() => {
-        if (this.symbols.length === 0) void this.reconcileWatchlist();
-      }, 30_000);
+        void this.reconcileWatchlist();
+      }, 60 * 1_000);
 
       this.redisSubClient.on("message", async (channel, msg) => {
         switch (channel) {
