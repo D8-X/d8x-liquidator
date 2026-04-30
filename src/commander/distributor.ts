@@ -20,13 +20,14 @@ import {
   LiquidateMsg,
   LiquidateTraderMsg,
   LiquidatorConfig,
+  PerpEmergencyMsg,
   Position,
   UpdateMarginAccountMsg,
   UpdateMarkPriceMsg,
-  UpdateUnitAccumulatedFundingMsg,
 } from "../types.js";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { SDK_STATE_REPUBLISH_SECONDS, publishSDKState, refreshSDKStateTTL } from "../sdkState.js";
+import { loadWatchlist, PerpStates, publishWatchlist, serializePerpStates } from "../watchlist.js";
 
 export default class Distributor {
   // objects
@@ -45,14 +46,18 @@ export default class Distributor {
 
   // state
   private lastRefreshTime: Map<string, number> = new Map();
-  private lastFundingFetchTime: Map<string, number> = new Map();
   private openPositions: Map<string, Map<string, Position>> = new Map();
   private pxSubmission: Map<string, IdxPriceInfo> = new Map();
   private markPremium: Map<string, number> = new Map();
-  private unitAccumulatedFunding: Map<string, number> = new Map();
-  private messageSentAt: Map<string, number> = new Map();
+  private messageSentAt: Map<string, Map<string, number>> = new Map();
   private pricesFetchedAt: Map<string, number> = new Map();
   private lastPublishedState: string | undefined;
+  private lastPublishedWatchlist: string | undefined;
+  private reconcileInflight: Promise<void> | null = null;
+  private lastReconcileAt = 0;
+  private static readonly RECONCILE_TICK_MS = 60 * 1_000;
+  private static readonly RECONCILE_STALE_MS = 30 * 60 * 1_000;
+  private static readonly RECONCILE_EVENT_MIN_GAP_MS = 2_000;
   public ready: boolean = false;
 
   // static info
@@ -121,43 +126,9 @@ export default class Distributor {
       )
       .flat();
 
-    for (const symbol of this.symbols) {
-      // static info
-      this.maintenanceRate.set(
-        symbol,
-        PerpetualDataHandler.getMaintenanceMarginRate(this.md.getPerpetualStaticInfo(symbol))
-      );
-      this.isQuote.set(
-        symbol,
-        this.md.getPerpetualStaticInfo(symbol).collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE
-      );
-      // price info
-      try {
-        const priceInfo = await this.md.fetchPricesForPerpetual(symbol);
-        this.pxSubmission.set(symbol, priceInfo);
-      } catch (e) {
-        this.pxSubmission.set(symbol, {
-          s2: 1,
-          ema: 1,
-          s2MktClosed: true,
-          conf: BigInt(1),
-          predMktCLOBParams: BigInt(1),
-        });
-      }
-      // mark premium, accumulated funding per BC unit
-      const perpState = await this.md.getReadOnlyProxyInstance().getPerpetual(this.md.getPerpIdFromSymbol(symbol));
-      this.markPremium.set(symbol, ABK64x64ToFloat(perpState.currentMarkPremiumRate.fPrice));
-      this.unitAccumulatedFunding.set(symbol, ABK64x64ToFloat(perpState.fUnitAccumulatedFunding));
-      // "preallocate" trader set
-      this.openPositions.set(symbol, new Map());
-      // dummy values
-      this.lastRefreshTime.set(symbol, 0);
-      console.log({
-        symbol: symbol,
-        markPremium: this.markPremium.get(symbol),
-        unitAccumulatedFunding: this.unitAccumulatedFunding.get(symbol),
-      });
-    }
+    const initial = this.symbols;
+    this.symbols = [];
+    for (const symbol of initial) await this.addSymbol(symbol);
 
     // Subscribe to blockchain events
     await this.redisSubClient.subscribe(
@@ -165,6 +136,8 @@ export default class Distributor {
       "UpdateMarkPriceEvent",
       "UpdateMarginAccountEvent",
       "LiquidateEvent",
+      "PerpEmergency",
+      "PerpNormal",
       "listener-error",
       "switch-mode",
       (err, count) => {
@@ -175,7 +148,49 @@ export default class Distributor {
       },
     );
 
+    await this.broadcastWatchlist();
     this.ready = true;
+  }
+
+  private async addSymbol(symbol: string): Promise<void> {
+    let priceInfo: IdxPriceInfo | undefined;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        priceInfo = await this.md.fetchPricesForPerpetual(symbol);
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 3) await sleepForSec(attempt);
+      }
+    }
+    if (!priceInfo) {
+      console.log({
+        info: "addSymbol: skipping - price fetch failed after retries",
+        time: new Date().toISOString(),
+        symbol,
+        error: lastErr instanceof Error ? lastErr.message : String(lastErr),
+      });
+      return;
+    }
+    const info = this.md.getPerpetualStaticInfo(symbol);
+    this.maintenanceRate.set(symbol, PerpetualDataHandler.getMaintenanceMarginRate(info));
+    this.isQuote.set(symbol, info.collateralCurrencyType == COLLATERAL_CURRENCY_QUOTE);
+    this.pxSubmission.set(symbol, priceInfo);
+    this.openPositions.set(symbol, new Map());
+    this.lastRefreshTime.set(symbol, 0);
+    if (!this.symbols.includes(symbol)) this.symbols.push(symbol);
+  }
+
+  private dropSymbol(symbol: string): boolean {
+    const idx = this.symbols.indexOf(symbol);
+    if (idx < 0) return false;
+    this.symbols.splice(idx, 1);
+    this.openPositions.delete(symbol);
+    this.lastRefreshTime.delete(symbol);
+    this.pricesFetchedAt.delete(symbol);
+    this.messageSentAt.delete(symbol);
+    return true;
   }
 
   private async publishState(): Promise<void> {
@@ -197,10 +212,45 @@ export default class Distributor {
     }
   }
 
+  private async broadcastWatchlist(): Promise<void> {
+    let info;
+    try {
+      info = await this.md.exchangeInfo();
+    } catch (e) {
+      console.log({ info: "broadcastWatchlist: exchangeInfo failed", error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+    const states: PerpStates = {};
+    for (const pool of info.pools) {
+      if (!pool.isRunning) continue;
+      for (const p of pool.perpetuals) {
+        states[`${p.baseCurrency}-${p.quoteCurrency}-${pool.poolSymbol}`] = p.state;
+      }
+    }
+    const payload = serializePerpStates(states);
+    if (payload === this.lastPublishedWatchlist) return;
+    try {
+      await publishWatchlist(this.redisPubClient, this.chainId, payload);
+      this.lastPublishedWatchlist = payload;
+    } catch (e) {
+      console.log(
+        `${new Date(Date.now()).toISOString()}: failed to publish watchlist: ${
+          e instanceof Error ? e.stack ?? e.message : String(e)
+        }`
+      );
+    }
+  }
+
   private requireReady() {
     if (!this.ready) {
       throw new Error("not ready: await distributor.initialize()");
     }
+  }
+
+  private async onPerpEmergency(msg: PerpEmergencyMsg): Promise<void> {
+    if (!this.dropSymbol(msg.symbol)) return;
+    console.log({ info: "perp dropped", time: new Date().toISOString(), ...msg });
+    await this.broadcastWatchlist();
   }
 
   /**
@@ -222,10 +272,15 @@ export default class Distributor {
         await this.refreshAllAccounts();
       }, 10_000);
 
-      // fetch accumulated funding so that it's fresh often enough
-      setInterval(async () => {
-        await this.refreshUnitAccumulatedFunding();
-      }, 10_000);
+      setInterval(() => {
+        if (this.symbols.length === 0) {
+          void this.reconcileWatchlist();
+          return;
+        }
+        if (Date.now() - this.lastReconcileAt > Distributor.RECONCILE_STALE_MS) {
+          void this.reconcileWatchlist();
+        }
+      }, Distributor.RECONCILE_TICK_MS);
 
       this.redisSubClient.on("message", async (channel, msg) => {
         switch (channel) {
@@ -262,9 +317,18 @@ export default class Distributor {
             break;
           }
 
-          case "UpdateUnitAccumulatedFundingEvent": {
-            const { symbol, unitAccumulatedFundingCC }: UpdateUnitAccumulatedFundingMsg = JSON.parse(msg);
-            this.unitAccumulatedFunding.set(symbol, unitAccumulatedFundingCC);
+          case "PerpEmergency": {
+            await this.onPerpEmergency(JSON.parse(msg) as PerpEmergencyMsg);
+            break;
+          }
+
+          case "PerpNormal": {
+            if (
+              !this.reconcileInflight &&
+              Date.now() - this.lastReconcileAt > Distributor.RECONCILE_EVENT_MIN_GAP_MS
+            ) {
+              void this.reconcileWatchlist();
+            }
             break;
           }
 
@@ -273,6 +337,7 @@ export default class Distributor {
             await this.fetchPosition(perpetualId, traderAddr).then((pos) => {
               this.updatePosition(pos);
             });
+            break;
           }
 
           case "listener-error":
@@ -326,17 +391,6 @@ export default class Distributor {
       unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
     };
     return position;
-  }
-
-  private async refreshUnitAccumulatedFunding() {
-    for (const symbol of this.symbols) {
-      if (Date.now() - (this.lastFundingFetchTime.get(symbol) ?? 0) < this.config.liquidateIntervalSecondsMax * 1_000) {
-        return;
-      }
-      this.lastFundingFetchTime.set(symbol, Date.now());
-      const perp = await this.md.getReadOnlyProxyInstance().getPerpetual(this.md.getPerpIdFromSymbol(symbol)!);
-      this.unitAccumulatedFunding.set(symbol, ABK64x64ToFloat(perp.fUnitAccumulatedFunding));
-    }
   }
 
   private async refreshAllAccounts() {
@@ -487,6 +541,57 @@ export default class Distributor {
     return true;
   }
 
+  private async reconcileWatchlist(): Promise<void> {
+    if (this.reconcileInflight) return this.reconcileInflight;
+    this.lastReconcileAt = Date.now();
+    this.reconcileInflight = (async () => {
+      let info;
+      try {
+        await this.md.refreshSymbols(true);
+        info = await this.md.exchangeInfo();
+      } catch (e) {
+        console.log({ info: "reconcile failed", error: e instanceof Error ? e.message : String(e) });
+        return;
+      }
+      const sdkStates: PerpStates = {};
+      for (const pool of info.pools) {
+        if (!pool.isRunning) continue;
+        for (const p of pool.perpetuals) {
+          sdkStates[`${p.baseCurrency}-${p.quoteCurrency}-${pool.poolSymbol}`] = p.state;
+        }
+      }
+      const sdkPayload = serializePerpStates(sdkStates);
+      let redisPayload: string | null = null;
+      try {
+        const redisStates = await loadWatchlist(this.redisPubClient, this.chainId);
+        if (redisStates) redisPayload = serializePerpStates(redisStates);
+      } catch (e) {
+        console.log({ info: "reconcile: loadWatchlist failed", error: e instanceof Error ? e.message : String(e) });
+      }
+      if (redisPayload === sdkPayload && this.lastPublishedWatchlist === sdkPayload) return;
+      try {
+        await publishWatchlist(this.redisPubClient, this.chainId, sdkPayload);
+        this.lastPublishedWatchlist = sdkPayload;
+      } catch (e) {
+        console.log({ info: "reconcile: publish failed", error: e instanceof Error ? e.message : String(e) });
+        return;
+      }
+      const desired = Object.keys(sdkStates).filter((s) => sdkStates[s] === "NORMAL");
+      const desiredSet = new Set(desired);
+      const currentSet = new Set(this.symbols);
+      for (const s of [...this.symbols]) if (!desiredSet.has(s)) this.dropSymbol(s);
+      for (const s of desired) {
+        if (currentSet.has(s)) continue;
+        try { await this.addSymbol(s); }
+        catch (e) { console.log({ info: "addSymbol failed", symbol: s, error: e instanceof Error ? e.message : String(e) }); }
+      }
+      console.log({ info: "watchlist reconciled", size: this.symbols.length });
+    })().finally(() => {
+      this.reconcileInflight = null;
+    });
+    return this.reconcileInflight;
+  }
+
   /**
    * Checks if any accounts can be liquidated and publishes them via redis.
    * No RPC calls are made here, only price service
@@ -503,21 +608,31 @@ export default class Distributor {
     const curPx = this.pxSubmission.get(symbol)!;
     const accountsSent: Set<string> = new Set();
 
+    const candidates: string[] = [];
     for (const trader of positions.keys()) {
-      const position = positions.get(trader)!;
-      if (!this.isMarginSafe(position, curPx)) {
-        const msg = JSON.stringify({
-          chainId: this.chainId,
-          symbol: symbol,
-          traderAddr: trader,
-        });
-        if (Date.now() - (this.messageSentAt.get(msg) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
-          // this.logPosition(position, [curPx.s2, curPx.s3]);
-          await this.redisPubClient.publish("LiquidateTrader", msg);
-          this.messageSentAt.set(msg, Date.now());
-        }
-        accountsSent.add(msg);
+      if (!this.isMarginSafe(positions.get(trader)!, curPx)) candidates.push(trader);
+    }
+    if (candidates.length === 0) return false;
+
+    await this.reconcileWatchlist();
+    if (!this.symbols.includes(symbol)) return false;
+
+    let perSymbol = this.messageSentAt.get(symbol);
+    if (!perSymbol) {
+      perSymbol = new Map();
+      this.messageSentAt.set(symbol, perSymbol);
+    }
+    for (const trader of candidates) {
+      const msg = JSON.stringify({
+        chainId: this.chainId,
+        symbol: symbol,
+        traderAddr: trader,
+      });
+      if (Date.now() - (perSymbol.get(trader) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
+        await this.redisPubClient.publish("LiquidateTrader", msg);
+        perSymbol.set(trader, Date.now());
       }
+      accountsSent.add(msg);
     }
     return accountsSent.size > 0;
   }
