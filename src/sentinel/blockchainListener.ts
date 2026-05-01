@@ -41,6 +41,7 @@ export default class BlockhainListener {
   private lastBlockReceivedAt: number;
   private lastRpcIndex = { http: -1, ws: -1 };
   private switchingRPC = false;
+  private emergencyPublished: Set<number> = new Set();
 
   constructor(config: LiquidatorConfig) {
     if (config.rpcListenHttp.length <= 0) {
@@ -374,8 +375,10 @@ export default class BlockhainListener {
       proxy.filters.SetEmergencyState,
       (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
         const perpId = Number(perpetualId);
+        if (this.emergencyPublished.has(perpId)) return;
         const symbol = this.md.getSymbolFromPerpId(perpId);
         if (symbol === undefined) return;
+        this.emergencyPublished.add(perpId);
         const msg: PerpEmergencyMsg = {
           perpetualId: perpId,
           symbol,
@@ -390,6 +393,7 @@ export default class BlockhainListener {
 
     proxy.on(proxy.filters.SetNormalState, (perpetualId: bigint, event: any) => {
       const perpId = Number(perpetualId);
+      this.emergencyPublished.delete(perpId);
       this.redisPubClient.publish(
         "PerpNormal",
         JSON.stringify({
