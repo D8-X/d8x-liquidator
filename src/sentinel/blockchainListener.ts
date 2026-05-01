@@ -373,12 +373,25 @@ export default class BlockhainListener {
 
     proxy.on(
       proxy.filters.SetEmergencyState,
-      (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
+      async (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
         const perpId = Number(perpetualId);
         if (this.emergencyPublished.has(perpId)) return;
-        const symbol = this.md.getSymbolFromPerpId(perpId);
-        if (symbol === undefined) return;
+        let symbol = this.md.getSymbolFromPerpId(perpId);
+        if (symbol === undefined) {
+          try {
+            await this.md.refreshSymbols(true);
+          } catch (e) {
+            console.log({
+              info: "refreshSymbols failed in On SetEmergencyState",
+              time: new Date().toISOString(),
+              perpetualId: perpId,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+          symbol = this.md.getSymbolFromPerpId(perpId);
+        }
         this.emergencyPublished.add(perpId);
+        if (symbol === undefined) return;
         const msg: PerpEmergencyMsg = {
           perpetualId: perpId,
           symbol,
@@ -404,6 +417,10 @@ export default class BlockhainListener {
         })
       );
       console.log({ event: "SetNormalState", time: new Date().toISOString(), perpetualId: perpId });
+    });
+
+    proxy.on(proxy.filters.SettlementComplete, (perpetualId: bigint, _event: any) => {
+      this.emergencyPublished.delete(Number(perpetualId));
     });
   }
 }
