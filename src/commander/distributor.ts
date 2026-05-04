@@ -295,24 +295,22 @@ export default class Distributor {
 
         case "UpdateMarginAccountEvent": {
           const account: UpdateMarginAccountMsg = JSON.parse(msg);
-          if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
-            return;
+          if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) return;
+
+          try {
+            const pos = await this.fetchPosition(account.perpetualId, account.traderAddr, account.block);
+            await this.updatePosition(pos);
+          } catch (e) {
+            console.log({
+              info: "[@run-UpdateMarginAccountEvent] handler failed",
+              time: new Date().toISOString(),
+              perpetualId: account.perpetualId,
+              traderAddr: account.traderAddr,
+              block: account.block,
+              error: e instanceof Error ? e.stack ?? e.message : String(e),
+            });
           }
-          void (async () => {
-            try {
-              const pos = await this.fetchPosition(account.perpetualId, account.traderAddr, account.block);
-              await this.updatePosition(pos);
-            } catch (e) {
-              console.log({
-                info: "[@run-UpdateMarginAccountEvent] handler failed",
-                time: new Date().toISOString(),
-                perpetualId: account.perpetualId,
-                traderAddr: account.traderAddr,
-                block: account.block,
-                error: e instanceof Error ? e.stack ?? e.message : String(e),
-              });
-            }
-          })();
+
           break;
         }
 
