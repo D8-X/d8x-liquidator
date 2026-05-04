@@ -484,7 +484,9 @@ export default class Distributor {
           ],
         ]),
       }));
-      promises2.push(multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls));
+      promises2.push(
+        multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls, { blockTag: refreshBlock }),
+      );
       addressChunks.push(addressChunk);
       providerIdx = (providerIdx + 1) % rpcProviders.length;
     }
