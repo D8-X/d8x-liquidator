@@ -190,6 +190,10 @@ export default class Distributor {
     this.lastRefreshTime.delete(symbol);
     this.pricesFetchedAt.delete(symbol);
     this.messageSentAt.delete(symbol);
+    this.pxSubmission.delete(symbol);
+    this.maintenanceRate.delete(symbol);
+    this.isQuote.delete(symbol);
+    this.markPremium.delete(symbol);
     return true;
   }
 
@@ -303,6 +307,10 @@ export default class Distributor {
             if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
               return;
             }
+            const symbol = this.md.getSymbolFromPerpId(account.perpetualId);
+            if (!symbol || !this.symbols.includes(symbol)) {
+              return;
+            }
             sleepForSec(5).then(() =>
               this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
                 this.updatePosition(pos).then();
@@ -334,6 +342,10 @@ export default class Distributor {
 
           case "LiquidateEvent": {
             const { perpetualId, traderAddr }: LiquidateMsg = JSON.parse(msg);
+            const symbol = this.md.getSymbolFromPerpId(perpetualId);
+            if (!symbol || !this.symbols.includes(symbol)) {
+              break;
+            }
             await this.fetchPosition(perpetualId, traderAddr).then((pos) => {
               this.updatePosition(pos);
             });
