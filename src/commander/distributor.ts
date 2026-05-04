@@ -453,17 +453,18 @@ export default class Distributor {
       providerIdx = (providerIdx + 1) % rpcProviders.length;
     }
     let addresses: Set<string> = new Set();
-    for (let i = 0; i < promises.length; i += rpcProviders.length) {
-      try {
-        tsStart = Date.now();
-        const chunks = await Promise.allSettled(promises.slice(i, i + rpcProviders.length));
-        for (const result of chunks) {
-          if (result.status === "fulfilled") {
-            result.value.map((addr) => addresses.add(addr));
-          }
-        }
-      } catch (e) {
-        console.log(`${symbol} ${new Date(Date.now()).toISOString()}: error`);
+    tsStart = Date.now();
+    const addrChunks = await Promise.allSettled(promises);
+    for (const result of addrChunks) {
+      if (result.status === "fulfilled") {
+        for (const addr of result.value) addresses.add(addr);
+      } else {
+        console.log({
+          info: "getActivePerpAccountsByChunks failed",
+          symbol,
+          time: new Date().toISOString(),
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
       }
     }
 
@@ -496,51 +497,50 @@ export default class Distributor {
     }
 
     tsStart = Date.now();
-    for (let i = 0; i < promises2.length; i += rpcProviders.length) {
-      try {
-        const addressChunkBin = addressChunks.slice(i, i + rpcProviders.length);
-        const accountChunk = await Promise.allSettled(promises2.slice(i, i + rpcProviders.length));
-
-        accountChunk.map((results, j) => {
-          if (results.status === "fulfilled") {
-            const addressChunk = addressChunkBin[j];
-            results.value.map((result, k) => {
-              if (result.success) {
-                const account = proxy.interface.decodeFunctionResult(
-                  "getTraderState",
-                  result.returnData,
-                )[0] as BigNumberish[];
-                /**
-                 * 0 marginBalance : number; // current margin balance
-                 * 1 availableMargin : number; // amount over initial margin
-                 * 2 availableCashCC : number; // cash minus unpaid funding
-                 * 3 marginAccountCashCC : number;
-                 * 4 marginAccountPositionBC : number;
-                 * 5 marginAccountLockedInValueQC : number;
-                 * 6 fUnitAccumulatedFundingStart
-                 * 7 leverage
-                 * 8 fMarkPrice
-                 * 9 CollateralToQuoteConversion
-                 * 10 maintenance margin rate
-                 */
-                const position: Position = {
-                  perpetualId: perpId,
-                  address: addressChunk[k],
-                  positionBC: ABK64x64ToFloat(BigInt(account[4])),
-                  cashCC: ABK64x64ToFloat(BigInt(account[3])),
-                  lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
-                  unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
-                  block: refreshBlock,
-                };
-                this.updatePosition(position);
-              }
-            });
-          }
+    const accountResults = await Promise.allSettled(promises2);
+    accountResults.forEach((results, j) => {
+      if (results.status !== "fulfilled") {
+        console.log({
+          info: "multicall chunk failed",
+          symbol,
+          chunkIndex: j,
+          time: new Date().toISOString(),
+          error: results.reason instanceof Error ? results.reason.message : String(results.reason),
         });
-      } catch (e) {
-        console.log("Error fetching account chunk (RPC?)", e);
+        return;
       }
-    }
+      const addressChunk = addressChunks[j];
+      results.value.forEach((result, k) => {
+        if (!result.success) return;
+        const account = proxy.interface.decodeFunctionResult(
+          "getTraderState",
+          result.returnData,
+        )[0] as BigNumberish[];
+        /**
+         * 0 marginBalance : number; // current margin balance
+         * 1 availableMargin : number; // amount over initial margin
+         * 2 availableCashCC : number; // cash minus unpaid funding
+         * 3 marginAccountCashCC : number;
+         * 4 marginAccountPositionBC : number;
+         * 5 marginAccountLockedInValueQC : number;
+         * 6 fUnitAccumulatedFundingStart
+         * 7 leverage
+         * 8 fMarkPrice
+         * 9 CollateralToQuoteConversion
+         * 10 maintenance margin rate
+         */
+        const position: Position = {
+          perpetualId: perpId,
+          address: addressChunk[k],
+          positionBC: ABK64x64ToFloat(BigInt(account[4])),
+          cashCC: ABK64x64ToFloat(BigInt(account[3])),
+          lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
+          unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
+          block: refreshBlock,
+        };
+        this.updatePosition(position);
+      });
+    });
     console.log({
       symbol: symbol,
       time: new Date(Date.now()).toISOString(),
