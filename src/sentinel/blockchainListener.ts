@@ -175,8 +175,8 @@ export default class BlockhainListener {
         await this.multiUrlWsProvider.startNextWebsocket();
         console.log(
           `[${new Date(
-            Date.now()
-          ).toISOString()}] attempting to switch to WS ${this.multiUrlWsProvider.getCurrentRpcUrl()}`
+            Date.now(),
+          ).toISOString()}] attempting to switch to WS ${this.multiUrlWsProvider.getCurrentRpcUrl()}`,
         );
         const blockReceivedCb = () => {
           console.log("block received", this.multiUrlWsProvider.getCurrentRpcUrl());
@@ -192,7 +192,7 @@ export default class BlockhainListener {
             // Otherwise just stop the multi url ws provider and try again later
             await this.multiUrlWsProvider.stop();
             console.log(
-              `[${new Date(Date.now()).toISOString()}] attempting to switch to WS failed - block not received`
+              `[${new Date(Date.now()).toISOString()}] attempting to switch to WS failed - block not received`,
             );
           }
         }, this.config.waitForBlockSeconds * 1_000);
@@ -220,13 +220,13 @@ export default class BlockhainListener {
       // Use at least 2X timeout of HTTP provider in case some of the rpc are
       // slow to respond.
       40_000,
-      "could not establish http connection"
+      "could not establish http connection",
     );
 
     const result = await initMarketDataWithCache(this.md, [this.httpProvider], this.redisPubClient);
     console.log(
       `${new Date(Date.now()).toISOString()}: sentinel MarketData initialized ` +
-        `(cache=${result.usedCache}${formatCacheAgeSuffix(result)})`
+        `(cache=${result.usedCache}${formatCacheAgeSuffix(result)})`,
     );
 
     if (this.config.rpcListenWs.length > 0) {
@@ -260,7 +260,7 @@ export default class BlockhainListener {
     this.listeningProvider.on("error", (e) => {
       console.log(
         `${new Date(Date.now()).toISOString()} BlockchainListener received error msg in ${this.mode} mode:`,
-        e
+        e,
       );
       // Submit last block received ts to executor/distributor to take action if
       // needed.
@@ -289,7 +289,7 @@ export default class BlockhainListener {
         newPositionSizeBC: bigint,
         fFeeCC: bigint,
         fPnlCC: bigint,
-        event: any
+        event: any,
       ) => {
         const perpId = Number(perpetualId);
         const symbol = this.md.getSymbolFromPerpId(perpId)!;
@@ -308,7 +308,7 @@ export default class BlockhainListener {
         };
         this.redisPubClient.publish("LiquidateEvent", JSON.stringify(msg));
         console.log({ event: "Liquidate", time: new Date(Date.now()).toISOString(), mode: ListeningMode, ...msg });
-      }
+      },
     );
 
     proxy.on(
@@ -320,7 +320,7 @@ export default class BlockhainListener {
         _fCashCC: bigint,
         _fPositionBC: bigint,
         fFundingPaymentCC: bigint,
-        event: any
+        event: any,
       ) => {
         const perpId = Number(perpetualId);
         const symbol = this.md.getSymbolFromPerpId(perpId)!;
@@ -341,12 +341,18 @@ export default class BlockhainListener {
           mode: ListeningMode,
           ...msg,
         });
-      }
+      },
     );
 
     proxy.on(
       proxy.filters.UpdateMarkPrice,
-      (perpetualId: bigint, fMidPricePremium: bigint, fMarkPricePremium: bigint, fSpotIndexPrice: bigint, event: any) => {
+      (
+        perpetualId: bigint,
+        fMidPricePremium: bigint,
+        fMarkPricePremium: bigint,
+        fSpotIndexPrice: bigint,
+        event: any,
+      ) => {
         const perpId = Number(perpetualId);
         const symbol = this.md.getSymbolFromPerpId(perpId)!;
         const msg: UpdateMarkPriceMsg = {
@@ -367,7 +373,7 @@ export default class BlockhainListener {
           mode: ListeningMode,
           ...msg,
         });
-      }
+      },
     );
 
     proxy.on(
@@ -385,7 +391,7 @@ export default class BlockhainListener {
         };
         this.redisPubClient.publish("PerpEmergency", JSON.stringify(msg));
         console.log({ event: "SetEmergencyState", time: new Date().toISOString(), ...msg });
-      }
+      },
     );
 
     proxy.on(proxy.filters.SetNormalState, (perpetualId: bigint, event: any) => {
@@ -397,7 +403,7 @@ export default class BlockhainListener {
           block: event.log.blockNumber,
           hash: event.log.transactionHash,
           id: `${event.log.transactionHash}:${event.log.index}`,
-        })
+        }),
       );
       console.log({ event: "SetNormalState", time: new Date().toISOString(), perpetualId: perpId });
     });
