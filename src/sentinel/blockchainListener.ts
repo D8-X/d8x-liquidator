@@ -376,6 +376,7 @@ export default class BlockhainListener {
       async (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
         const perpId = Number(perpetualId);
         if (this.emergencyPublished.has(perpId)) return;
+        this.emergencyPublished.add(perpId);
         let symbol = this.md.getSymbolFromPerpId(perpId);
         if (symbol === undefined) {
           try {
@@ -390,8 +391,10 @@ export default class BlockhainListener {
           }
           symbol = this.md.getSymbolFromPerpId(perpId);
         }
-        this.emergencyPublished.add(perpId);
-        if (symbol === undefined) return;
+        if (symbol === undefined) {
+          this.emergencyPublished.delete(perpId);
+          return;
+        }
         const msg: PerpEmergencyMsg = {
           perpetualId: perpId,
           symbol,
