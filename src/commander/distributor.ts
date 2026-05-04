@@ -176,6 +176,10 @@ export default class Distributor {
     this.lastRefreshTime.delete(symbol);
     this.pricesFetchedAt.delete(symbol);
     this.messageSentAt.delete(symbol);
+    this.pxSubmission.delete(symbol);
+    this.maintenanceRate.delete(symbol);
+    this.isQuote.delete(symbol);
+    this.markPremium.delete(symbol);
     return true;
   }
 
