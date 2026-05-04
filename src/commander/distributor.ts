@@ -108,11 +108,9 @@ export default class Distributor {
       i++;
     }
     if (!success) {
-      throw new Error(
-        `commander: all RPCs are down (${this.config.rpcWatch.join(", ")})`
-      );
+      throw new Error(`commander: all RPCs are down (${this.config.rpcWatch.join(", ")})`);
     }
-    
+
     const info = await this.md.exchangeInfo();
     await this.publishState();
     setInterval(() => void this.publishState(), SDK_STATE_REPUBLISH_SECONDS * 1000).unref();
@@ -202,7 +200,7 @@ export default class Distributor {
       console.log(
         `${new Date(Date.now()).toISOString()}: failed to publish SDK state: ${
           e instanceof Error ? e.stack ?? e.message : String(e)
-        }`
+        }`,
       );
     }
   }
@@ -212,7 +210,10 @@ export default class Distributor {
     try {
       info = await this.md.exchangeInfo();
     } catch (e) {
-      console.log({ info: "broadcastWatchlist: exchangeInfo failed", error: e instanceof Error ? e.message : String(e) });
+      console.log({
+        info: "broadcastWatchlist: exchangeInfo failed",
+        error: e instanceof Error ? e.message : String(e),
+      });
       return;
     }
     const states: PerpStates = {};
@@ -231,7 +232,7 @@ export default class Distributor {
       console.log(
         `${new Date(Date.now()).toISOString()}: failed to publish watchlist: ${
           e instanceof Error ? e.stack ?? e.message : String(e)
-        }`
+        }`,
       );
     }
   }
@@ -257,102 +258,99 @@ export default class Distributor {
     this.requireReady();
 
     setInterval(async () => {
-        if (
-          Date.now() - Math.min(...this.lastRefreshTime.values()) <
-          this.config.refreshAccountsIntervalSecondsMax * 1_000
-        ) {
-          return;
-        }
-        await this.refreshAllAccounts();
-      }, 10_000);
-
-      setInterval(() => {
-        if (this.symbols.size === 0) {
-          void this.reconcileWatchlist();
-          return;
-        }
-        if (Date.now() - this.lastReconcileAt > Distributor.RECONCILE_STALE_MS) {
-          void this.reconcileWatchlist();
-        }
-      }, Distributor.RECONCILE_TICK_MS);
-
-      this.redisSubClient.on("message", async (channel, msg) => {
-        switch (channel) {
-          case "block": {
-            for (const symbol of this.symbols) {
-              this.checkPositions(symbol);
-            }
-            if (
-              Date.now() - Math.min(...this.lastRefreshTime.values()) <
-              this.config.refreshAccountsIntervalSecondsMax * 1_000
-            ) {
-              return;
-            }
-            await this.refreshAllAccounts();
-            break;
-          }
-
-          case "UpdateMarginAccountEvent": {
-            const account: UpdateMarginAccountMsg = JSON.parse(msg);
-            if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
-              return;
-            }
-            void (async () => {
-              const pos = await this.fetchPosition(account.perpetualId, account.traderAddr, account.block);
-              await this.updatePosition(pos);
-            })();
-            break;
-          }
-
-          case "UpdateMarkPriceEvent": {
-            const { symbol, markPremium }: UpdateMarkPriceMsg = JSON.parse(msg);
-            this.markPremium.set(symbol, markPremium);
-            break;
-          }
-
-          case "PerpEmergency": {
-            await this.onPerpEmergency(JSON.parse(msg) as PerpEmergencyMsg);
-            break;
-          }
-
-          case "PerpNormal": {
-            if (
-              !this.reconcileInflight &&
-              Date.now() - this.lastReconcileAt > Distributor.RECONCILE_EVENT_MIN_GAP_MS
-            ) {
-              void this.reconcileWatchlist();
-            }
-            break;
-          }
-
-          case "LiquidateEvent": {
-            const { perpetualId, traderAddr, block }: LiquidateMsg = JSON.parse(msg);
-            const pos = await this.fetchPosition(perpetualId, traderAddr, block);
-            await this.updatePosition(pos);
-            break;
-          }
-
-          case "listener-error":
-          case "switch-mode":
-            // Whenever something wrong happens on sentinel, refresh orders if
-            // they were not refreshed recently in the last 30 (should be more
-            // than refreshOrdersIntervalSecondsMin) seconds. Sentinel might
-            // have missed events and executed orders might still be held in
-            // memory in distributor.
-            if (new Date(Date.now() - 30_000) > this.lastRefreshOfAllActiveAccounts) {
-              console.log({
-                message: "Refreshing all active accounts due to sentinel error",
-                time: new Date(Date.now()).toISOString(),
-                lastRefreshOfAllOpenOrders: this.lastRefreshOfAllActiveAccounts.toISOString(),
-                sentinelReason: channel,
-              });
-              this.refreshAllAccounts();
-            }
-            break;
-        }
-      });
-
+      if (
+        Date.now() - Math.min(...this.lastRefreshTime.values()) <
+        this.config.refreshAccountsIntervalSecondsMax * 1_000
+      ) {
+        return;
+      }
       await this.refreshAllAccounts();
+    }, 10_000);
+
+    setInterval(() => {
+      if (this.symbols.size === 0) {
+        void this.reconcileWatchlist();
+        return;
+      }
+      if (Date.now() - this.lastReconcileAt > Distributor.RECONCILE_STALE_MS) {
+        void this.reconcileWatchlist();
+      }
+    }, Distributor.RECONCILE_TICK_MS);
+
+    this.redisSubClient.on("message", async (channel, msg) => {
+      switch (channel) {
+        case "block": {
+          for (const symbol of this.symbols) {
+            this.checkPositions(symbol);
+          }
+          if (
+            Date.now() - Math.min(...this.lastRefreshTime.values()) <
+            this.config.refreshAccountsIntervalSecondsMax * 1_000
+          ) {
+            return;
+          }
+          await this.refreshAllAccounts();
+          break;
+        }
+
+        case "UpdateMarginAccountEvent": {
+          const account: UpdateMarginAccountMsg = JSON.parse(msg);
+          if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
+            return;
+          }
+          void (async () => {
+            const pos = await this.fetchPosition(account.perpetualId, account.traderAddr, account.block);
+            await this.updatePosition(pos);
+          })();
+          break;
+        }
+
+        case "UpdateMarkPriceEvent": {
+          const { symbol, markPremium }: UpdateMarkPriceMsg = JSON.parse(msg);
+          this.markPremium.set(symbol, markPremium);
+          break;
+        }
+
+        case "PerpEmergency": {
+          await this.onPerpEmergency(JSON.parse(msg) as PerpEmergencyMsg);
+          break;
+        }
+
+        case "PerpNormal": {
+          if (!this.reconcileInflight && Date.now() - this.lastReconcileAt > Distributor.RECONCILE_EVENT_MIN_GAP_MS) {
+            void this.reconcileWatchlist();
+          }
+          break;
+        }
+
+        case "LiquidateEvent": {
+          const { perpetualId, traderAddr, block }: LiquidateMsg = JSON.parse(msg);
+          const pos = await this.fetchPosition(perpetualId, traderAddr, block);
+          await this.updatePosition(pos);
+          break;
+        }
+
+        case "listener-error":
+        case "switch-mode":
+          // Whenever something wrong happens on sentinel, refresh orders if
+          // they were not refreshed recently in the last 30 (should be more
+          // than refreshOrdersIntervalSecondsMin) seconds. Sentinel might
+          // have missed events and executed orders might still be held in
+          // memory in distributor.
+          if (new Date(Date.now() - 30_000) > this.lastRefreshOfAllActiveAccounts) {
+            console.log({
+              message: "Refreshing all active accounts due to sentinel error",
+              time: new Date(Date.now()).toISOString(),
+              lastRefreshOfAllOpenOrders: this.lastRefreshOfAllActiveAccounts.toISOString(),
+              sentinelReason: channel,
+            });
+            this.refreshAllAccounts();
+          }
+          break;
+      }
+    });
+
+    await this.refreshAllAccounts();
   }
 
   private async updatePosition(position: Position) {
@@ -376,9 +374,7 @@ export default class Distributor {
       floatToABK64x64(pxSubmission.s3 ?? 0),
       floatToABK64x64(pxSubmission.rho ?? 0),
     ];
-    const account = await this.md
-      .getReadOnlyProxyInstance()
-      .getTraderState(perpetualId, address, prices, { blockTag });
+    const account = await this.md.getReadOnlyProxyInstance().getTraderState(perpetualId, address, prices, { blockTag });
 
     const position: Position = {
       perpetualId: perpetualId,
@@ -461,7 +457,11 @@ export default class Distributor {
         callData: proxy.interface.encodeFunctionData("getTraderState", [
           perpId,
           addr,
-          [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0), floatToABK64x64(pxSubmission.rho ?? 0)],
+          [
+            floatToABK64x64(pxSubmission.s2),
+            floatToABK64x64(pxSubmission.s3 ?? 0),
+            floatToABK64x64(pxSubmission.rho ?? 0),
+          ],
         ]),
       }));
       promises2.push(multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls));
@@ -482,7 +482,7 @@ export default class Distributor {
               if (result.success) {
                 const account = proxy.interface.decodeFunctionResult(
                   "getTraderState",
-                  result.returnData
+                  result.returnData,
                 )[0] as BigNumberish[];
                 /**
                  * 0 marginBalance : number; // current margin balance
@@ -583,8 +583,11 @@ export default class Distributor {
       for (const s of [...this.symbols]) if (!desiredSet.has(s)) this.dropSymbol(s);
       for (const s of desired) {
         if (currentSet.has(s)) continue;
-        try { await this.addSymbol(s); }
-        catch (e) { console.log({ info: "addSymbol failed", symbol: s, error: e instanceof Error ? e.message : String(e) }); }
+        try {
+          await this.addSymbol(s);
+        } catch (e) {
+          console.log({ info: "addSymbol failed", symbol: s, error: e instanceof Error ? e.message : String(e) });
+        }
       }
       console.log({ info: "watchlist reconciled", size: this.symbols.size });
     })().finally(() => {
