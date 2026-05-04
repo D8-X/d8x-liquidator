@@ -299,8 +299,19 @@ export default class Distributor {
             return;
           }
           void (async () => {
-            const pos = await this.fetchPosition(account.perpetualId, account.traderAddr, account.block);
-            await this.updatePosition(pos);
+            try {
+              const pos = await this.fetchPosition(account.perpetualId, account.traderAddr, account.block);
+              await this.updatePosition(pos);
+            } catch (e) {
+              console.log({
+                info: "[@run-UpdateMarginAccountEvent] handler failed",
+                time: new Date().toISOString(),
+                perpetualId: account.perpetualId,
+                traderAddr: account.traderAddr,
+                block: account.block,
+                error: e instanceof Error ? e.stack ?? e.message : String(e),
+              });
+            }
           })();
           break;
         }
@@ -325,8 +336,19 @@ export default class Distributor {
 
         case "LiquidateEvent": {
           const { perpetualId, traderAddr, block }: LiquidateMsg = JSON.parse(msg);
-          const pos = await this.fetchPosition(perpetualId, traderAddr, block);
-          await this.updatePosition(pos);
+          try {
+            const pos = await this.fetchPosition(perpetualId, traderAddr, block);
+            await this.updatePosition(pos);
+          } catch (e) {
+            console.log({
+              info: "[@run-LiquidateEvent] handler failed",
+              time: new Date().toISOString(),
+              perpetualId,
+              traderAddr,
+              block,
+              error: e instanceof Error ? e.stack ?? e.message : String(e),
+            });
+          }
           break;
         }
 
