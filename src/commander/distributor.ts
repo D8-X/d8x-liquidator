@@ -278,7 +278,16 @@ export default class Distributor {
       switch (channel) {
         case "block": {
           for (const symbol of this.symbols) {
-            this.checkPositions(symbol);
+            try {
+              await this.checkPositions(symbol);
+            } catch (e) {
+              console.log({
+                info: "checkPositions failed",
+                symbol,
+                time: new Date().toISOString(),
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
           }
           if (
             Date.now() - Math.min(...this.lastRefreshTime.values()) <
