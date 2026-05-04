@@ -36,13 +36,9 @@ export default class Distributor {
   private redisPubClient: Redis;
 
   /**
-   * There will be only 1 instance of provider in this array. Historically we
-   * used a list of JsonRpcProvider's, therefore we have array here until we
-   * cleanup.
-   *
-   * Use this.config.rpcWatch for distributor providers.
+   * Single MultiUrlJsonRpcProvider that internally rotates across the URLs in
    */
-  private providers: MultiUrlJsonRpcProvider[];
+  private provider: MultiUrlJsonRpcProvider;
 
   // state
   private lastRefreshTime: Map<string, number> = new Map();
@@ -80,16 +76,14 @@ export default class Distributor {
     const sdkConfig = PerpetualDataHandler.readSDKConfig(config.sdkConfig);
     this.chainId = sdkConfig.chainId;
     this.md = new MarketData(sdkConfig);
-    this.providers = [
-      new MultiUrlJsonRpcProvider(this.config.rpcWatch, this.md.network, {
-        timeoutSeconds: 25,
-        logErrors: true,
-        logRpcSwitches: true,
-        // Distributor uses free rpcs, make sure to switch on each call.
-        switchRpcOnEachRequest: true,
-        staticNetwork: true,
-      }),
-    ];
+    this.provider = new MultiUrlJsonRpcProvider(this.config.rpcWatch, this.md.network, {
+      timeoutSeconds: 25,
+      logErrors: true,
+      logRpcSwitches: true,
+      // Distributor uses free rpcs, make sure to switch on each call.
+      switchRpcOnEachRequest: true,
+      staticNetwork: true,
+    });
   }
 
   /**
@@ -100,15 +94,14 @@ export default class Distributor {
     // RPC URL randomization happens at config load time using the `shuffle()` in
     // utils.loadConfig, `this.config.rpcWatch` is already a shuffled list by
     // the time it reaches the MultiUrlJsonRpcProvider constructor
-    let success = false;
-    let i = 0;
-    while (!success && i < this.providers.length) {
-      const results = (await Promise.allSettled([this.md.createProxyInstance(this.providers[i])]))[0];
-      success = results.status === "fulfilled";
-      i++;
-    }
-    if (!success) {
-      throw new Error(`commander: all RPCs are down (${this.config.rpcWatch.join(", ")})`);
+    try {
+      await this.md.createProxyInstance(this.provider);
+    } catch (e) {
+      throw new Error(
+        `commander: all RPCs are down (${this.config.rpcWatch.join(", ")}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
     }
 
     const info = await this.md.exchangeInfo();
@@ -434,10 +427,12 @@ export default class Distributor {
     const chunkSize2 = 2 ** 8; // for margin accounts
     const perpId = this.md.getPerpIdFromSymbol(symbol)!;
     const proxy = this.md.getReadOnlyProxyInstance() as any as IPerpetualManager;
-    const rpcProviders = this.providers;
-    let providerIdx = Math.floor(Math.random() * rpcProviders.length);
     this.lastRefreshTime.set(symbol, Date.now());
-    const refreshBlock = await rpcProviders[providerIdx].getBlockNumber();
+    const blockHeights = await this.provider.getBlockNumberPerUrl();
+    if (blockHeights.size === 0) {
+      throw new Error(`${symbol}: no rpc returned a block number`);
+    }
+    const refreshBlock = Math.min(...blockHeights.values());
 
     let tsStart: number;
     console.log(`${symbol}: fetching number of accounts ... `);
@@ -449,8 +444,7 @@ export default class Distributor {
     // fetch addresses
     const promises: Promise<string[]>[] = [];
     for (let i = 0; i < numAccounts; i += chunkSize1) {
-      promises.push(proxy.connect(rpcProviders[providerIdx]).getActivePerpAccountsByChunks(perpId, i, i + chunkSize1));
-      providerIdx = (providerIdx + 1) % rpcProviders.length;
+      promises.push(proxy.connect(this.provider).getActivePerpAccountsByChunks(perpId, i, i + chunkSize1));
     }
     let addresses: Set<string> = new Set();
     tsStart = Date.now();
@@ -471,7 +465,7 @@ export default class Distributor {
     // fech accounts
     const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];
     const addressChunks: string[][] = [];
-    const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, rpcProviders[providerIdx]);
+    const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, this.provider);
     const traderList = [...addresses];
     const pxSubmission = this.pxSubmission.get(symbol)!;
     for (let i = 0; i < traderList.length; i += chunkSize2) {
@@ -489,11 +483,8 @@ export default class Distributor {
           ],
         ]),
       }));
-      promises2.push(
-        multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls, { blockTag: refreshBlock }),
-      );
+      promises2.push(multicall.aggregate3.staticCall(calls, { blockTag: refreshBlock }));
       addressChunks.push(addressChunk);
-      providerIdx = (providerIdx + 1) % rpcProviders.length;
     }
 
     tsStart = Date.now();
@@ -512,10 +503,7 @@ export default class Distributor {
       const addressChunk = addressChunks[j];
       results.value.forEach((result, k) => {
         if (!result.success) return;
-        const account = proxy.interface.decodeFunctionResult(
-          "getTraderState",
-          result.returnData,
-        )[0] as BigNumberish[];
+        const account = proxy.interface.decodeFunctionResult("getTraderState", result.returnData)[0] as BigNumberish[];
         /**
          * 0 marginBalance : number; // current margin balance
          * 1 availableMargin : number; // amount over initial margin
