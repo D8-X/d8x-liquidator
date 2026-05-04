@@ -383,7 +383,11 @@ export default class Distributor {
     }
     const existing = perSymbol.get(position.address);
     if (existing && existing.block > position.block) return;
-    perSymbol.set(position.address, position);
+    if (position.positionBC === 0) {
+      perSymbol.delete(position.address);
+    } else {
+      perSymbol.set(position.address, position);
+    }
   }
 
   private async fetchPosition(perpetualId: number, address: string, blockTag: number): Promise<Position> {
