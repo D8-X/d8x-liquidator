@@ -190,6 +190,10 @@ export default class Distributor {
     this.lastRefreshTime.delete(symbol);
     this.pricesFetchedAt.delete(symbol);
     this.messageSentAt.delete(symbol);
+    this.pxSubmission.delete(symbol);
+    this.maintenanceRate.delete(symbol);
+    this.isQuote.delete(symbol);
+    this.markPremium.delete(symbol);
     return true;
   }
 
@@ -303,11 +307,16 @@ export default class Distributor {
             if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
               return;
             }
-            sleepForSec(5).then(() =>
+            const symbol = this.md.getSymbolFromPerpId(account.perpetualId);
+            if (!symbol || !this.symbols.includes(symbol)) {
+              return;
+            }
+            sleepForSec(5).then(() => {
+              if (!this.symbols.includes(symbol)) return;
               this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
                 this.updatePosition(pos).then();
-              }),
-            );
+              });
+            });
             break;
           }
 
@@ -334,6 +343,10 @@ export default class Distributor {
 
           case "LiquidateEvent": {
             const { perpetualId, traderAddr }: LiquidateMsg = JSON.parse(msg);
+            const symbol = this.md.getSymbolFromPerpId(perpetualId);
+            if (!symbol || !this.symbols.includes(symbol)) {
+              break;
+            }
             await this.fetchPosition(perpetualId, traderAddr).then((pos) => {
               this.updatePosition(pos);
             });
@@ -447,6 +460,7 @@ export default class Distributor {
       }
     }
 
+    if (!this.symbols.includes(symbol)) return;
     // fech accounts
     const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];
     const addressChunks: string[][] = [];
@@ -514,6 +528,7 @@ export default class Distributor {
         console.log("Error fetching account chunk (RPC?)", e);
       }
     }
+    if (!this.symbols.includes(symbol)) return;
     console.log({
       symbol: symbol,
       time: new Date(Date.now()).toISOString(),
@@ -601,9 +616,8 @@ export default class Distributor {
   private async checkPositions(symbol: string) {
     this.requireReady();
 
-    if (!(await this.refreshPrices(symbol))) {
-      return false;
-    }
+    if (!(await this.refreshPrices(symbol))) return false;
+    if (!this.symbols.includes(symbol)) return false;
     const positions = this.openPositions.get(symbol)!;
     const curPx = this.pxSubmission.get(symbol)!;
     const accountsSent: Set<string> = new Set();
