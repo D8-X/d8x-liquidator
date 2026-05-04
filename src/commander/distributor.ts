@@ -63,7 +63,7 @@ export default class Distributor {
   // static info
   private config: LiquidatorConfig;
   private isQuote: Map<string, boolean> = new Map();
-  private symbols: string[] = [];
+  private symbols: Set<string> = new Set();
   private maintenanceRate: Map<string, number> = new Map();
   private chainId: number;
 
@@ -117,17 +117,14 @@ export default class Distributor {
     await this.publishState();
     setInterval(() => void this.publishState(), SDK_STATE_REPUBLISH_SECONDS * 1000).unref();
 
-    this.symbols = info.pools
+    const initial = info.pools
       .filter(({ isRunning }) => isRunning)
-      .map((pool) =>
+      .flatMap((pool) =>
         pool.perpetuals
           .filter(({ state }) => state === "NORMAL")
-          .map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`)
-      )
-      .flat();
+          .map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`),
+      );
 
-    const initial = this.symbols;
-    this.symbols = [];
     for (const symbol of initial) await this.addSymbol(symbol);
 
     // Subscribe to blockchain events
@@ -179,13 +176,11 @@ export default class Distributor {
     this.pxSubmission.set(symbol, priceInfo);
     this.openPositions.set(symbol, new Map());
     this.lastRefreshTime.set(symbol, 0);
-    if (!this.symbols.includes(symbol)) this.symbols.push(symbol);
+    this.symbols.add(symbol);
   }
 
   private dropSymbol(symbol: string): boolean {
-    const idx = this.symbols.indexOf(symbol);
-    if (idx < 0) return false;
-    this.symbols.splice(idx, 1);
+    if (!this.symbols.delete(symbol)) return false;
     this.openPositions.delete(symbol);
     this.lastRefreshTime.delete(symbol);
     this.pricesFetchedAt.delete(symbol);
@@ -260,9 +255,8 @@ export default class Distributor {
    */
   public async run(): Promise<void> {
     this.requireReady();
-    return new Promise<void>(async (resolve, reject) => {
-      // fetch all accounts
-      setInterval(async () => {
+
+    setInterval(async () => {
         if (
           Date.now() - Math.min(...this.lastRefreshTime.values()) <
           this.config.refreshAccountsIntervalSecondsMax * 1_000
@@ -273,7 +267,7 @@ export default class Distributor {
       }, 10_000);
 
       setInterval(() => {
-        if (this.symbols.length === 0) {
+        if (this.symbols.size === 0) {
           void this.reconcileWatchlist();
           return;
         }
@@ -303,11 +297,10 @@ export default class Distributor {
             if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
               return;
             }
-            sleepForSec(5).then(() =>
-              this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
-                this.updatePosition(pos).then();
-              }),
-            );
+            void (async () => {
+              const pos = await this.fetchPosition(account.perpetualId, account.traderAddr, account.block);
+              await this.updatePosition(pos);
+            })();
             break;
           }
 
@@ -333,10 +326,9 @@ export default class Distributor {
           }
 
           case "LiquidateEvent": {
-            const { perpetualId, traderAddr }: LiquidateMsg = JSON.parse(msg);
-            await this.fetchPosition(perpetualId, traderAddr).then((pos) => {
-              this.updatePosition(pos);
-            });
+            const { perpetualId, traderAddr, block }: LiquidateMsg = JSON.parse(msg);
+            const pos = await this.fetchPosition(perpetualId, traderAddr, block);
+            await this.updatePosition(pos);
             break;
           }
 
@@ -359,28 +351,34 @@ export default class Distributor {
             break;
         }
       });
+
       await this.refreshAllAccounts();
-    });
   }
 
   private async updatePosition(position: Position) {
-    const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
-    if (!this.openPositions.has(symbol)) {
-      this.openPositions.set(symbol, new Map());
+    const symbol = this.md.getSymbolFromPerpId(position.perpetualId);
+    if (!symbol) return;
+    let perSymbol = this.openPositions.get(symbol);
+    if (!perSymbol) {
+      perSymbol = new Map();
+      this.openPositions.set(symbol, perSymbol);
     }
-    if (position.positionBC !== 0) {
-      this.openPositions.get(symbol)!.set(position.address, position);
-    } else {
-      this.openPositions.get(symbol)!.delete(position.address);
-    }
+    const existing = perSymbol.get(position.address);
+    if (existing && existing.block > position.block) return;
+    perSymbol.set(position.address, position);
   }
 
-  private async fetchPosition(perpetualId: number, address: string) {
+  private async fetchPosition(perpetualId: number, address: string, blockTag: number): Promise<Position> {
     const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
     const pxSubmission = this.pxSubmission.get(symbol)!;
+    const prices: [bigint, bigint, bigint] = [
+      floatToABK64x64(pxSubmission.s2),
+      floatToABK64x64(pxSubmission.s3 ?? 0),
+      floatToABK64x64(pxSubmission.rho ?? 0),
+    ];
     const account = await this.md
       .getReadOnlyProxyInstance()
-      .getTraderState(perpetualId, address, [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0), floatToABK64x64(pxSubmission.rho ?? 0)]);
+      .getTraderState(perpetualId, address, prices, { blockTag });
 
     const position: Position = {
       perpetualId: perpetualId,
@@ -389,13 +387,14 @@ export default class Distributor {
       cashCC: ABK64x64ToFloat(BigInt(account[3])),
       lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
       unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
+      block: blockTag,
     };
     return position;
   }
 
   private async refreshAllAccounts() {
     this.lastRefreshOfAllActiveAccounts = new Date();
-    await Promise.allSettled(this.symbols.map((symbol) => this.refreshActiveAccounts(symbol)));
+    await Promise.allSettled([...this.symbols].map((symbol) => this.refreshActiveAccounts(symbol)));
   }
 
   /**
@@ -418,6 +417,7 @@ export default class Distributor {
     const rpcProviders = this.providers;
     let providerIdx = Math.floor(Math.random() * rpcProviders.length);
     this.lastRefreshTime.set(symbol, Date.now());
+    const refreshBlock = await rpcProviders[providerIdx].getBlockNumber();
 
     let tsStart: number;
     console.log(`${symbol}: fetching number of accounts ... `);
@@ -504,6 +504,7 @@ export default class Distributor {
                   cashCC: ABK64x64ToFloat(BigInt(account[3])),
                   lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
                   unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
+                  block: refreshBlock,
                 };
                 this.updatePosition(position);
               }
@@ -585,7 +586,7 @@ export default class Distributor {
         try { await this.addSymbol(s); }
         catch (e) { console.log({ info: "addSymbol failed", symbol: s, error: e instanceof Error ? e.message : String(e) }); }
       }
-      console.log({ info: "watchlist reconciled", size: this.symbols.length });
+      console.log({ info: "watchlist reconciled", size: this.symbols.size });
     })().finally(() => {
       this.reconcileInflight = null;
     });
@@ -596,45 +597,37 @@ export default class Distributor {
    * Checks if any accounts can be liquidated and publishes them via redis.
    * No RPC calls are made here, only price service
    * @param symbol Perpetual symbol
-   * @returns number of accounts that can be liquidated
+   * @returns number of LiquidateTrader messages successfully published
    */
-  private async checkPositions(symbol: string) {
-    this.requireReady();
-
-    if (!(await this.refreshPrices(symbol))) {
-      return false;
-    }
+  private async checkPositions(symbol: string): Promise<number> {
+    if (!(await this.refreshPrices(symbol))) return 0;
     const positions = this.openPositions.get(symbol)!;
     const curPx = this.pxSubmission.get(symbol)!;
-    const accountsSent: Set<string> = new Set();
 
     const candidates: string[] = [];
     for (const trader of positions.keys()) {
       if (!this.isMarginSafe(positions.get(trader)!, curPx)) candidates.push(trader);
     }
-    if (candidates.length === 0) return false;
-
-    await this.reconcileWatchlist();
-    if (!this.symbols.includes(symbol)) return false;
+    if (candidates.length === 0) return 0;
 
     let perSymbol = this.messageSentAt.get(symbol);
     if (!perSymbol) {
       perSymbol = new Map();
       this.messageSentAt.set(symbol, perSymbol);
     }
-    for (const trader of candidates) {
-      const msg = JSON.stringify({
-        chainId: this.chainId,
-        symbol: symbol,
-        traderAddr: trader,
-      });
-      if (Date.now() - (perSymbol.get(trader) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
+    const now = Date.now();
+    const cooldownMs = this.config.liquidateIntervalSecondsMin * 1_000;
+    const dueTraders = candidates.filter((t) => now - (perSymbol!.get(t) ?? 0) > cooldownMs);
+    if (dueTraders.length === 0) return 0;
+
+    await Promise.all(
+      dueTraders.map(async (trader) => {
+        const msg = JSON.stringify({ chainId: this.chainId, symbol, traderAddr: trader });
         await this.redisPubClient.publish("LiquidateTrader", msg);
-        perSymbol.set(trader, Date.now());
-      }
-      accountsSent.add(msg);
-    }
-    return accountsSent.size > 0;
+        perSymbol!.set(trader, now);
+      }),
+    );
+    return dueTraders.length;
   }
 
   private logPosition(position: Position, pxS2S3: [number, number | undefined]) {
