@@ -42,6 +42,7 @@ export default class BlockhainListener {
   private lastRpcIndex = { http: -1, ws: -1 };
   private switchingRPC = false;
   private emergencyPublished: Set<number> = new Set();
+  private refreshSymbolsInFlight: Promise<void> | null = null;
 
   constructor(config: LiquidatorConfig) {
     if (config.rpcListenHttp.length <= 0) {
@@ -252,6 +253,15 @@ export default class BlockhainListener {
     this.resetHealthChecks();
   }
 
+  private refreshSymbolsCoalesced(): Promise<void> {
+    if (!this.refreshSymbolsInFlight) {
+      this.refreshSymbolsInFlight = this.md.refreshSymbols(true).finally(() => {
+        this.refreshSymbolsInFlight = null;
+      });
+    }
+    return this.refreshSymbolsInFlight;
+  }
+
   private async addListeners() {
     if (this.listeningProvider === undefined) {
       throw new Error("No provider ready to listen.");
@@ -380,10 +390,11 @@ export default class BlockhainListener {
         let symbol = this.md.getSymbolFromPerpId(perpId);
         if (symbol === undefined) {
           try {
-            await this.md.refreshSymbols(true);
+            await this.refreshSymbolsCoalesced();
           } catch (e) {
             console.log({
-              info: "refreshSymbols failed in On SetEmergencyState",
+              event: "refreshSymbolsFailed",
+              level: "warn",
               time: new Date().toISOString(),
               perpetualId: perpId,
               error: e instanceof Error ? e.message : String(e),
@@ -395,6 +406,7 @@ export default class BlockhainListener {
           this.emergencyPublished.delete(perpId);
           return;
         }
+        if (!this.emergencyPublished.has(perpId)) return;
         const msg: PerpEmergencyMsg = {
           perpetualId: perpId,
           symbol,
