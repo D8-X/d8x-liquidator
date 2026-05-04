@@ -442,14 +442,16 @@ export default class Distributor {
     console.log({ symbol: symbol, time: new Date(Date.now()).toISOString(), activeAccounts: numAccounts });
 
     // fetch addresses
-    const promises: Promise<string[]>[] = [];
+    const addressFetchPromises: Promise<string[]>[] = [];
     for (let i = 0; i < numAccounts; i += chunkSize1) {
-      promises.push(proxy.connect(this.provider).getActivePerpAccountsByChunks(perpId, i, i + chunkSize1));
+      addressFetchPromises.push(
+        proxy.connect(this.provider).getActivePerpAccountsByChunks(perpId, i, i + chunkSize1),
+      );
     }
     let addresses: Set<string> = new Set();
     tsStart = Date.now();
-    const addrChunks = await Promise.allSettled(promises);
-    for (const result of addrChunks) {
+    const addressFetchResults = await Promise.allSettled(addressFetchPromises);
+    for (const result of addressFetchResults) {
       if (result.status === "fulfilled") {
         for (const addr of result.value) addresses.add(addr);
       } else {
@@ -462,8 +464,8 @@ export default class Distributor {
       }
     }
 
-    // fech accounts
-    const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];
+    // fetch accounts
+    const traderStatePromises: Promise<Multicall3.ResultStructOutput[]>[] = [];
     const addressChunks: string[][] = [];
     const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, this.provider);
     const traderList = [...addresses];
@@ -483,13 +485,13 @@ export default class Distributor {
           ],
         ]),
       }));
-      promises2.push(multicall.aggregate3.staticCall(calls, { blockTag: refreshBlock }));
+      traderStatePromises.push(multicall.aggregate3.staticCall(calls, { blockTag: refreshBlock }));
       addressChunks.push(addressChunk);
     }
 
     tsStart = Date.now();
-    const accountResults = await Promise.allSettled(promises2);
-    accountResults.forEach((results, j) => {
+    const traderStateResults = await Promise.allSettled(traderStatePromises);
+    traderStateResults.forEach((results, j) => {
       if (results.status !== "fulfilled") {
         console.log({
           info: "multicall chunk failed",
