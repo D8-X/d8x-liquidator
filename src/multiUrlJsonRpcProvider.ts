@@ -4,6 +4,7 @@ import {
   JsonRpcApiProvider,
   JsonRpcApiProviderOptions,
   JsonRpcPayload,
+  JsonRpcProvider,
   JsonRpcResult,
   Networkish,
 } from "ethers";
@@ -44,6 +45,7 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
   private options: MultiUrlJsonRpcProviderOptions;
   private rpcUrls: string[] = [];
   private currentRpcUrlIndex: number = 0;
+  private networkish: Networkish | undefined;
   // Resets when a request is successful
   private currentNumberOfErrors: number = 0;
 
@@ -53,6 +55,7 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
     }
 
     super(network, options);
+    this.networkish = network;
 
     // Setup options with sane defaults
     this.options = {
@@ -72,6 +75,22 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
 
   public _getConnection(): FetchRequest {
     return this.currentConnection.clone();
+  }
+
+  /**
+   * Query each underlying RPC URL independently for its current block number.
+   * Returns a map of url -> block height. 
+   */
+  public async getBlockNumberPerUrl(): Promise<Map<string, number>> {
+    const entries = await Promise.allSettled(
+      this.rpcUrls.map(async (url) => {
+        const tmp = new JsonRpcProvider(url, this.networkish, { staticNetwork: true });
+        return [url, await tmp.getBlockNumber()] as const;
+      }),
+    );
+    const result = new Map<string, number>();
+    for (const r of entries) if (r.status === "fulfilled") result.set(r.value[0], r.value[1]);
+    return result;
   }
 
   async send(method: string, params: Array<any> | Record<string, any>): Promise<any> {
