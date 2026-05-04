@@ -311,11 +311,12 @@ export default class Distributor {
             if (!symbol || !this.symbols.includes(symbol)) {
               return;
             }
-            sleepForSec(5).then(() =>
+            sleepForSec(5).then(() => {
+              if (!this.symbols.includes(symbol)) return;
               this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
                 this.updatePosition(pos).then();
-              }),
-            );
+              });
+            });
             break;
           }
 
@@ -459,6 +460,7 @@ export default class Distributor {
       }
     }
 
+    if (!this.symbols.includes(symbol)) return;
     // fech accounts
     const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];
     const addressChunks: string[][] = [];
@@ -526,6 +528,7 @@ export default class Distributor {
         console.log("Error fetching account chunk (RPC?)", e);
       }
     }
+    if (!this.symbols.includes(symbol)) return;
     console.log({
       symbol: symbol,
       time: new Date(Date.now()).toISOString(),
@@ -613,9 +616,8 @@ export default class Distributor {
   private async checkPositions(symbol: string) {
     this.requireReady();
 
-    if (!(await this.refreshPrices(symbol))) {
-      return false;
-    }
+    if (!(await this.refreshPrices(symbol))) return false;
+    if (!this.symbols.includes(symbol)) return false;
     const positions = this.openPositions.get(symbol)!;
     const curPx = this.pxSubmission.get(symbol)!;
     const accountsSent: Set<string> = new Set();
