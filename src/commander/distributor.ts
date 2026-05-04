@@ -292,6 +292,7 @@ export default class Distributor {
 
           try {
             const pos = await this.fetchPosition(account.perpetualId, account.traderAddr, account.block);
+            if (!pos) break;
             await this.updatePosition(pos);
           } catch (e) {
             console.log({
@@ -329,6 +330,7 @@ export default class Distributor {
           const { perpetualId, traderAddr, block }: LiquidateMsg = JSON.parse(msg);
           try {
             const pos = await this.fetchPosition(perpetualId, traderAddr, block);
+            if (!pos) break;
             await this.updatePosition(pos);
           } catch (e) {
             console.log({
@@ -383,9 +385,11 @@ export default class Distributor {
     }
   }
 
-  private async fetchPosition(perpetualId: number, address: string, blockTag: number): Promise<Position> {
-    const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
-    const pxSubmission = this.pxSubmission.get(symbol)!;
+  private async fetchPosition(perpetualId: number, address: string, blockTag: number): Promise<Position | undefined> {
+    const symbol = this.md.getSymbolFromPerpId(perpetualId);
+    if (!symbol) return undefined;
+    const pxSubmission = this.pxSubmission.get(symbol);
+    if (!pxSubmission) return undefined;
     const prices: [bigint, bigint, bigint] = [
       floatToABK64x64(pxSubmission.s2),
       floatToABK64x64(pxSubmission.s3 ?? 0),
@@ -444,9 +448,7 @@ export default class Distributor {
     // fetch addresses
     const addressFetchPromises: Promise<string[]>[] = [];
     for (let i = 0; i < numAccounts; i += chunkSize1) {
-      addressFetchPromises.push(
-        proxy.connect(this.provider).getActivePerpAccountsByChunks(perpId, i, i + chunkSize1),
-      );
+      addressFetchPromises.push(proxy.connect(this.provider).getActivePerpAccountsByChunks(perpId, i, i + chunkSize1));
     }
     let addresses: Set<string> = new Set();
     tsStart = Date.now();
