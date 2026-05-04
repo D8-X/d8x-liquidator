@@ -540,7 +540,7 @@ export default class Distributor {
     console.log({
       symbol: symbol,
       time: new Date(Date.now()).toISOString(),
-      accounts: this.openPositions.get(symbol)!.size,
+      accounts: this.openPositions.get(symbol)?.size ?? 0,
       waited: `${Date.now() - tsStart} ms`,
     });
   }
@@ -626,7 +626,8 @@ export default class Distributor {
    */
   private async checkPositions(symbol: string): Promise<number> {
     if (!(await this.refreshPrices(symbol))) return 0;
-    const positions = this.openPositions.get(symbol)!;
+    const positions = this.openPositions.get(symbol);
+    if (!positions) return 0;
     const curPx = this.pxSubmission.get(symbol)!;
 
     const candidates: string[] = [];
