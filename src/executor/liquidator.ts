@@ -2,11 +2,14 @@ import { LiquidatorTool, MarketData, NodeSDKConfig, PerpetualDataHandler } from 
 import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "ethers";
 import { Redis } from "ioredis";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
-import { formatCacheAgeSuffix, initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
+import { initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 import { loadWatchlist, parsePerpStates, watchlistChannel } from "../watchlist.js";
 import { Metrics } from "./metrics.js";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("liquidator");
 
 // Liquidation result status
 export enum LiquidationStatus {
@@ -72,11 +75,11 @@ export default class Liquidator {
     // Use price feed endpoints from user specified config
     if (this.config.priceFeedEndpoints.length > 0) {
       sdkConfig.priceFeedEndpoints = this.config.priceFeedEndpoints;
-      console.log("Using user specified price feed endpoints", sdkConfig.priceFeedEndpoints);
+      log.info({ priceFeedEndpoints: sdkConfig.priceFeedEndpoints }, "Using user specified price feed endpoints");
     } else {
-      console.warn(
-        "No price feed endpoints specified in config. Using default endpoints from SDK.",
-        sdkConfig.priceFeedEndpoints
+      log.warn(
+        { priceFeedEndpoints: sdkConfig.priceFeedEndpoints },
+        "No price feed endpoints specified in config. Using default endpoints from SDK."
       );
     }
     this.bots = this.privateKey.map((pk) => ({
@@ -106,37 +109,34 @@ export default class Liquidator {
   public async initialize() {
     const md = new MarketData(this.sdkConfig);
     const result = await initMarketDataWithCache(md, this.providers, this.redisPubClient);
-    // TODO: use a proper logger
-    console.log(
-      `${new Date(Date.now()).toISOString()}: executor MarketData initialized ` +
-        `(cache=${result.usedCache}${formatCacheAgeSuffix(result)}, providerIndex=${result.providerIndex})`
+    log.info(
+      { cache: result.usedCache, cacheAgeMs: result.cacheAgeMs, providerIndex: result.providerIndex },
+      "executor MarketData initialized"
     );
     await initLiquidatorsFromMarketData(this.bots, md, this.providers[result.providerIndex]);
 
     const initial = await loadWatchlist(this.redisPubClient, this.chainId);
     if (initial !== null) {
       this.allowedSymbols = new Set(Object.keys(initial).filter((s) => initial[s] === "NORMAL"));
-      console.log({
-        info: "executor: loaded initial watchlist from redis",
-        time: new Date(Date.now()).toISOString(),
-        size: this.allowedSymbols.size,
-      });
+      log.info(
+        { size: this.allowedSymbols.size },
+        "executor: loaded initial watchlist from redis"
+      );
     }
 
     // Subscribe to relayed events
-    // console.log(`${new Date(Date.now()).toISOString()}: subscribing to account streamer...`);
     await this.redisSubClient.subscribe(
       "block",
       "LiquidateTrader",
       watchlistChannel(this.chainId),
       (err, count) => {
         if (err) {
-          console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
+          log.error({ err }, "redis subscription failed");
           process.exit(1);
         }
       }
     );
-    console.log("initialized");
+    log.info("initialized");
   }
 
   /**
@@ -194,14 +194,12 @@ export default class Liquidator {
       return LiquidationStatus.NoOp;
     }
     if (this.allowedSymbols === null || !this.allowedSymbols.has(symbol)) {
-      console.log({
-        info: this.allowedSymbols === null
+      log.warn(
+        { symbol, trader },
+        this.allowedSymbols === null
           ? "executor: skipping - watchlist not yet received"
-          : "executor: skipping - not in watchlist",
-        time: new Date(Date.now()).toISOString(),
-        symbol,
-        trader,
-      });
+          : "executor: skipping - not in watchlist"
+      );
       return LiquidationStatus.NoOp;
     }
     const id = `${symbol}:${trader}`;
@@ -211,7 +209,7 @@ export default class Liquidator {
 
     // Check if trader is margin safe before liquidating.
     let isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch((e) => {
-      console.log(e);
+      log.error({ err: e, symbol, trader }, "isMaintenanceMarginSafe failed");
       return undefined;
     });
 
@@ -220,26 +218,28 @@ export default class Liquidator {
       if (this.timesTried.get(id)! > 10) {
         throw new Error("too many false positives");
       }
-      console.log({
-        info: "trader is margin safe",
-        symbol: symbol,
-        executor: this.bots[botIdx].api.getAddress(),
-        trader: trader,
-        timestamp: new Date().toISOString(),
-      });
+      log.info(
+        {
+          symbol: symbol,
+          executor: this.bots[botIdx].api.getAddress(),
+          trader: trader,
+        },
+        "trader is margin safe"
+      );
       this.bots[botIdx].busy = false;
       this.locked.delete(`${symbol}:${trader}`);
       return LiquidationStatus.NoOp;
     }
 
     // submit txn
-    console.log({
-      info: "submitting txn...",
-      symbol: symbol,
-      executor: this.bots[botIdx].api.getAddress(),
-      trader: trader,
-      timestamp: new Date().toISOString(),
-    });
+    log.info(
+      {
+        symbol: symbol,
+        executor: this.bots[botIdx].api.getAddress(),
+        trader: trader,
+      },
+      "submitting txn..."
+    );
     let tx: TransactionResponse;
     try {
       this.metrics.incrTxSubmissions();
@@ -255,14 +255,16 @@ export default class Liquidator {
         `liquidateTrader timed out for ${symbol}:${trader}`
       );
     } catch (e: any) {
-      console.log({
-        info: "txn rejected",
-        reason: e.toString(),
-        symbol: symbol,
-        executor: this.bots[botIdx].api.getAddress(),
-        trader: trader,
-        timestamp: new Date().toISOString(),
-      });
+      log.error(
+        {
+          err: e,
+          reason: e.toString(),
+          symbol: symbol,
+          executor: this.bots[botIdx].api.getAddress(),
+          trader: trader,
+        },
+        "txn rejected"
+      );
       this.metrics.incrTxRejects();
       this.bots[botIdx].busy = false;
       if (isMarginSafe === undefined) {
@@ -272,19 +274,20 @@ export default class Liquidator {
       this.locked.delete(`${symbol}:${trader}`);
       return LiquidationStatus.Rejection;
     }
-    console.log({
-      info: "txn accepted",
-      symbol: symbol,
-      orderBook: tx.to,
-      executor: tx.from,
-      trader: trader,
-      gasLimit: tx.gasLimit ? `${formatUnits(tx.gasLimit, "wei")} gas` : undefined,
-      gasPrice: tx.gasPrice ? `${formatUnits(tx.gasPrice)} wei` : undefined,
-      maxFeePerGas: tx.maxFeePerGas ? `${formatUnits(tx.maxFeePerGas)} wei` : undefined,
-      maxPriorityFeePerGas: tx.maxPriorityFeePerGas ? `${formatUnits(tx.maxPriorityFeePerGas)} wei` : undefined,
-      hash: tx.hash,
-      timestamp: new Date().toISOString(),
-    });
+    log.info(
+      {
+        symbol: symbol,
+        orderBook: tx.to,
+        executor: tx.from,
+        trader: trader,
+        gasLimit: tx.gasLimit ? `${formatUnits(tx.gasLimit, "wei")} gas` : undefined,
+        gasPrice: tx.gasPrice ? `${formatUnits(tx.gasPrice)} wei` : undefined,
+        maxFeePerGas: tx.maxFeePerGas ? `${formatUnits(tx.maxFeePerGas)} wei` : undefined,
+        maxPriorityFeePerGas: tx.maxPriorityFeePerGas ? `${formatUnits(tx.maxPriorityFeePerGas)} wei` : undefined,
+        hash: tx.hash,
+      },
+      "txn accepted"
+    );
 
     // confirm execution
     let result = LiquidationStatus.Success;
@@ -294,36 +297,39 @@ export default class Liquidator {
         throw new Error("tx confirmation receipt is null");
       }
       this.metrics.incrTxConfirmations();
-      console.log({
-        info: "txn confirmed",
-        symbol: symbol,
-        orderBook: receipt.to,
-        executor: receipt.from,
-        trader: trader,
-        block: receipt.blockNumber,
-        gasUsed: `${formatUnits(receipt.cumulativeGasUsed, "wei")} wei`,
-        hash: receipt.hash,
-        timestamp: new Date().toISOString(),
-      });
+      log.info(
+        {
+          symbol: symbol,
+          orderBook: receipt.to,
+          executor: receipt.from,
+          trader: trader,
+          block: receipt.blockNumber,
+          gasUsed: `${formatUnits(receipt.cumulativeGasUsed, "wei")} wei`,
+          hash: receipt.hash,
+        },
+        "txn confirmed"
+      );
       this.locked.delete(`${symbol}:${trader}`);
     } catch (e: any) {
       let error = e?.toString() || "";
       this.metrics.incrTxFailures();
-      console.log({
-        info: "txn reverted",
-        reason: error,
-        symbol: symbol,
-        executor: this.bots[botIdx].api.getAddress(),
-        trader: trader,
-        timestamp: new Date().toISOString(),
-      });
+      log.error(
+        {
+          err: e,
+          reason: error,
+          symbol: symbol,
+          executor: this.bots[botIdx].api.getAddress(),
+          trader: trader,
+        },
+        "txn reverted"
+      );
       this.locked.delete(`${symbol}:${trader}`);
       const bot = this.bots[botIdx].api.getAddress();
       if (error.includes("insufficient funds for intrinsic transaction cost")) {
         try {
           await this.fundWallets([bot]);
         } catch (e: any) {
-          console.log(`failed to fund bot ${bot}`);
+          log.error({ err: e, bot }, "failed to fund bot");
         }
       }
       if (this.timesTried.get(id)! > 10) {
@@ -391,10 +397,7 @@ export default class Liquidator {
             break;
         }
       } else {
-        console.log({
-          error: `uncaught error: ${result.reason.toString()}`,
-          timestamp: new Date().toISOString(),
-        });
+        log.error({ err: result.reason }, "uncaught error");
       }
     }
 
@@ -452,7 +455,7 @@ export default class Liquidator {
     for (let addr of addressArray) {
       const botBalance = await provider.getBalance(addr);
       const treasuryBalance = await provider.getBalance(treasury.address);
-      console.log({
+      log.info({
         treasuryAddr: treasury.address,
         treasuryBalance: formatUnits(treasuryBalance),
         botAddress: addr,
@@ -464,17 +467,19 @@ export default class Liquidator {
         // transfer twice the min so it doesn't transfer every time
         const transferAmount = minBalance * BigInt(2) - botBalance;
         if (transferAmount < treasuryBalance) {
-          console.log({
-            info: "transferring funds...",
-            to: addr,
-            transferAmount: formatUnits(transferAmount),
-          });
+          log.info(
+            {
+              to: addr,
+              transferAmount: formatUnits(transferAmount),
+            },
+            "transferring funds..."
+          );
           const tx = await treasury.sendTransaction({
             to: addr,
             value: transferAmount,
           });
           await tx.wait();
-          console.log({
+          log.info({
             transferAmount: formatUnits(transferAmount),
             txn: tx.hash,
           });

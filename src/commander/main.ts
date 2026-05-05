@@ -1,6 +1,9 @@
 import { loadConfig } from "../utils.js";
 import Distributor from "./distributor.js";
 import "dotenv/config";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("commander");
 
 async function start() {
   const sdkConfig = process.env.SDK_CONFIG;
@@ -14,8 +17,6 @@ async function start() {
 }
 
 start().catch((err) => {
-  console.error(
-    `${new Date().toISOString()}: commander fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}`
-  );
+  log.error({ err }, "commander fatal");
   process.exit(1);
 });

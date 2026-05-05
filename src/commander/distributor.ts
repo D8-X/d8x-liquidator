@@ -28,6 +28,9 @@ import {
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { SDK_STATE_REPUBLISH_SECONDS, publishSDKState, refreshSDKStateTTL } from "../sdkState.js";
 import { loadWatchlist, PerpStates, publishWatchlist, serializePerpStates } from "../watchlist.js";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("commander.distributor");
 
 export default class Distributor {
   // objects
@@ -130,7 +133,7 @@ export default class Distributor {
       "switch-mode",
       (err, count) => {
         if (err) {
-          console.log(`${new Date(Date.now()).toISOString()}: redis subscription failed: ${err}`);
+          log.error({ err }, "redis subscription failed");
           process.exit(1);
         }
       },
@@ -153,12 +156,13 @@ export default class Distributor {
       }
     }
     if (!priceInfo) {
-      console.log({
-        info: "addSymbol: skipping - price fetch failed after retries",
-        time: new Date().toISOString(),
-        symbol,
-        error: lastErr instanceof Error ? lastErr.message : String(lastErr),
-      });
+      log.warn(
+        {
+          symbol,
+          error: lastErr instanceof Error ? lastErr.message : String(lastErr),
+        },
+        "addSymbol: skipping - price fetch failed after retries"
+      );
       return;
     }
     const info = this.md.getPerpetualStaticInfo(symbol);
@@ -194,11 +198,7 @@ export default class Distributor {
       await publishSDKState(this.redisPubClient, this.chainId, state);
       this.lastPublishedState = serialized;
     } catch (e) {
-      console.log(
-        `${new Date(Date.now()).toISOString()}: failed to publish SDK state: ${
-          e instanceof Error ? e.stack ?? e.message : String(e)
-        }`,
-      );
+      log.error({ err: e }, "failed to publish SDK state");
     }
   }
 
@@ -207,10 +207,10 @@ export default class Distributor {
     try {
       info = await this.md.exchangeInfo();
     } catch (e) {
-      console.log({
-        info: "broadcastWatchlist: exchangeInfo failed",
-        error: e instanceof Error ? e.message : String(e),
-      });
+      log.error(
+        { error: e instanceof Error ? e.message : String(e) },
+        "broadcastWatchlist: exchangeInfo failed"
+      );
       return;
     }
     const states: PerpStates = {};
@@ -226,11 +226,7 @@ export default class Distributor {
       await publishWatchlist(this.redisPubClient, this.chainId, payload);
       this.lastPublishedWatchlist = payload;
     } catch (e) {
-      console.log(
-        `${new Date(Date.now()).toISOString()}: failed to publish watchlist: ${
-          e instanceof Error ? e.stack ?? e.message : String(e)
-        }`,
-      );
+      log.error({ err: e }, "failed to publish watchlist");
     }
   }
 
@@ -242,7 +238,7 @@ export default class Distributor {
 
   private async onPerpEmergency(msg: PerpEmergencyMsg): Promise<void> {
     if (!this.dropSymbol(msg.symbol)) return;
-    console.log({ info: "perp dropped", time: new Date().toISOString(), ...msg });
+    log.info({ ...msg }, "perp dropped");
     await this.broadcastWatchlist();
   }
 
@@ -281,12 +277,13 @@ export default class Distributor {
             try {
               await this.checkPositions(symbol);
             } catch (e) {
-              console.log({
-                info: "checkPositions failed",
-                symbol,
-                time: new Date().toISOString(),
-                error: e instanceof Error ? e.message : String(e),
-              });
+              log.error(
+                {
+                  symbol,
+                  error: e instanceof Error ? e.message : String(e),
+                },
+                "checkPositions failed"
+              );
             }
           }
           if (
@@ -308,14 +305,15 @@ export default class Distributor {
             if (!pos) break;
             await this.updatePosition(pos);
           } catch (e) {
-            console.log({
-              info: "[@run-UpdateMarginAccountEvent] handler failed",
-              time: new Date().toISOString(),
-              perpetualId: account.perpetualId,
-              traderAddr: account.traderAddr,
-              block: account.block,
-              error: e instanceof Error ? e.stack ?? e.message : String(e),
-            });
+            log.error(
+              {
+                perpetualId: account.perpetualId,
+                traderAddr: account.traderAddr,
+                block: account.block,
+                error: e instanceof Error ? e.stack ?? e.message : String(e),
+              },
+              "[@run-UpdateMarginAccountEvent] handler failed"
+            );
           }
 
           break;
@@ -346,14 +344,15 @@ export default class Distributor {
             if (!pos) break;
             await this.updatePosition(pos);
           } catch (e) {
-            console.log({
-              info: "[@run-LiquidateEvent] handler failed",
-              time: new Date().toISOString(),
-              perpetualId,
-              traderAddr,
-              block,
-              error: e instanceof Error ? e.stack ?? e.message : String(e),
-            });
+            log.error(
+              {
+                perpetualId,
+                traderAddr,
+                block,
+                error: e instanceof Error ? e.stack ?? e.message : String(e),
+              },
+              "[@run-LiquidateEvent] handler failed"
+            );
           }
           break;
         }
@@ -366,12 +365,13 @@ export default class Distributor {
           // have missed events and executed orders might still be held in
           // memory in distributor.
           if (new Date(Date.now() - 30_000) > this.lastRefreshOfAllActiveAccounts) {
-            console.log({
-              message: "Refreshing all active accounts due to sentinel error",
-              time: new Date(Date.now()).toISOString(),
-              lastRefreshOfAllOpenOrders: this.lastRefreshOfAllActiveAccounts.toISOString(),
-              sentinelReason: channel,
-            });
+            log.warn(
+              {
+                lastRefreshOfAllOpenOrders: this.lastRefreshOfAllActiveAccounts.toISOString(),
+                sentinelReason: channel,
+              },
+              "Refreshing all active accounts due to sentinel error"
+            );
             this.refreshAllAccounts();
           }
           break;
@@ -433,11 +433,13 @@ export default class Distributor {
   public async refreshActiveAccounts(symbol: string) {
     this.requireReady();
     if (Date.now() - (this.lastRefreshTime.get(symbol) ?? 0) < this.config.refreshAccountsIntervalSecondsMin * 1_000) {
-      console.log("[refreshActiveAccounts] called too soon", {
-        symbol: symbol,
-        time: new Date(Date.now()).toISOString(),
-        lastRefresh: new Date(this.lastRefreshTime.get(symbol) ?? 0),
-      });
+      log.warn(
+        {
+          symbol: symbol,
+          lastRefresh: new Date(this.lastRefreshTime.get(symbol) ?? 0),
+        },
+        "[refreshActiveAccounts] called too soon"
+      );
       return;
     }
     const chunkSize1 = 2 ** 16; // for addresses
@@ -452,11 +454,11 @@ export default class Distributor {
     const refreshBlock = Math.min(...blockHeights.values());
 
     let tsStart: number;
-    console.log(`${symbol}: fetching number of accounts ... `);
+    log.debug({ symbol }, "fetching number of accounts");
     tsStart = Date.now();
 
     const numAccounts = Number(await proxy.countActivePerpAccounts(perpId));
-    console.log({ symbol: symbol, time: new Date(Date.now()).toISOString(), activeAccounts: numAccounts });
+    log.debug({ symbol, activeAccounts: numAccounts }, "fetched active account count");
 
     // fetch addresses
     const addressFetchPromises: Promise<string[]>[] = [];
@@ -470,12 +472,13 @@ export default class Distributor {
       if (result.status === "fulfilled") {
         for (const addr of result.value) addresses.add(addr);
       } else {
-        console.log({
-          info: "getActivePerpAccountsByChunks failed",
-          symbol,
-          time: new Date().toISOString(),
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        });
+        log.error(
+          {
+            symbol,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          },
+          "getActivePerpAccountsByChunks failed"
+        );
       }
     }
 
@@ -508,13 +511,14 @@ export default class Distributor {
     const traderStateResults = await Promise.allSettled(traderStatePromises);
     traderStateResults.forEach((results, j) => {
       if (results.status !== "fulfilled") {
-        console.log({
-          info: "multicall chunk failed",
-          symbol,
-          chunkIndex: j,
-          time: new Date().toISOString(),
-          error: results.reason instanceof Error ? results.reason.message : String(results.reason),
-        });
+        log.error(
+          {
+            symbol,
+            chunkIndex: j,
+            error: results.reason instanceof Error ? results.reason.message : String(results.reason),
+          },
+          "multicall chunk failed"
+        );
         return;
       }
       const addressChunk = addressChunks[j];
@@ -546,12 +550,10 @@ export default class Distributor {
         this.updatePosition(position);
       });
     });
-    console.log({
-      symbol: symbol,
-      time: new Date(Date.now()).toISOString(),
-      accounts: this.openPositions.get(symbol)?.size ?? 0,
-      waited: `${Date.now() - tsStart} ms`,
-    });
+    log.debug(
+      { symbol, accounts: this.openPositions.get(symbol)?.size ?? 0, waitedMs: Date.now() - tsStart },
+      "refreshed active accounts",
+    );
   }
 
   private async refreshPrices(symbol: string) {
@@ -566,8 +568,7 @@ export default class Distributor {
       // }
       this.pxSubmission.set(symbol, newPxSubmission);
     } catch (e) {
-      console.log("error fetching from price service:");
-      console.log(e);
+      log.error({ err: e }, "error fetching from price service");
       return false;
     }
     return true;
@@ -582,7 +583,10 @@ export default class Distributor {
         await this.md.refreshSymbols(true);
         info = await this.md.exchangeInfo();
       } catch (e) {
-        console.log({ info: "reconcile failed", error: e instanceof Error ? e.message : String(e) });
+        log.error(
+          { error: e instanceof Error ? e.message : String(e) },
+          "reconcile failed"
+        );
         return;
       }
       const sdkStates: PerpStates = {};
@@ -598,14 +602,20 @@ export default class Distributor {
         const redisStates = await loadWatchlist(this.redisPubClient, this.chainId);
         if (redisStates) redisPayload = serializePerpStates(redisStates);
       } catch (e) {
-        console.log({ info: "reconcile: loadWatchlist failed", error: e instanceof Error ? e.message : String(e) });
+        log.error(
+          { error: e instanceof Error ? e.message : String(e) },
+          "reconcile: loadWatchlist failed"
+        );
       }
       if (redisPayload === sdkPayload && this.lastPublishedWatchlist === sdkPayload) return;
       try {
         await publishWatchlist(this.redisPubClient, this.chainId, sdkPayload);
         this.lastPublishedWatchlist = sdkPayload;
       } catch (e) {
-        console.log({ info: "reconcile: publish failed", error: e instanceof Error ? e.message : String(e) });
+        log.error(
+          { error: e instanceof Error ? e.message : String(e) },
+          "reconcile: publish failed"
+        );
         return;
       }
       const desired = Object.keys(sdkStates).filter((s) => sdkStates[s] === "NORMAL");
@@ -617,10 +627,13 @@ export default class Distributor {
         try {
           await this.addSymbol(s);
         } catch (e) {
-          console.log({ info: "addSymbol failed", symbol: s, error: e instanceof Error ? e.message : String(e) });
+          log.error(
+            { symbol: s, error: e instanceof Error ? e.message : String(e) },
+            "addSymbol failed"
+          );
         }
       }
-      console.log({ info: "watchlist reconciled", size: this.symbols.size });
+      log.info({ size: this.symbols.size }, "watchlist reconciled");
     })().finally(() => {
       this.reconcileInflight = null;
     });
@@ -676,14 +689,7 @@ export default class Distributor {
     let cash = position.cashCC - position.unpaidFundingCC;
     let balance = cash + (pos * Sm - lockedIn) / S3;
     let leverage = (Math.abs(pos) * (Sm / S3)) / balance;
-    console.log({
-      time: new Date(Date.now()).toISOString(),
-      pxS2SmS3: [S2, Sm, S3],
-      symbol: symbol,
-      balance: balance,
-      leverage: leverage,
-      ...position,
-    });
+    log.debug({ pxS2SmS3: [S2, Sm, S3], symbol, balance, leverage, ...position }, "position margin");
   }
 
   private isMarginSafe(position: Position, px: IdxPriceInfo) {
@@ -705,30 +711,11 @@ export default class Distributor {
       // Skip prediction markets for now
       const excessBalance = pmExcessBalance(pos, Sm, S3, lockedIn, cash, this.maintenanceRate.get(symbol)!);
       const isSafe = excessBalance >= 0;
-      // if (!isSafe) {
-      //   console.log({
-      //     info: "Prediction market liquidation would occur, ignoring for now",
-      //     position,
-      //     excessBalance,
-      //     pmExcessBalanceParams: [pos, Sm, S3, lockedIn, cash, this.maintenanceRate.get(symbol)],
-      //   });
-      // }
-      // // Return true to skip prediction markets for now
-      // return true;
       return isSafe;
     }
     // usual calculation
     let maintenanceMargin = ((Math.abs(pos) * Sm) / S3) * this.maintenanceRate.get(symbol)!;
     let balance = cash + (pos * Sm - lockedIn) / S3;
-    // if (balance < maintenanceMargin) {
-    //   console.log({
-    //     trader: position.address,
-    //     symbol: symbol,
-    //     cash: cash,
-    //     balance: balance,
-    //     leverage: Math.abs(balance) > 1e-12 ? (Math.abs(pos) * Sm) / S3 / balance : -Infinity,
-    //   });
-    // }
     return balance >= maintenanceMargin;
   }
 
