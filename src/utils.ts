@@ -3,6 +3,9 @@ import { RedisConfig, LiquidatorConfig } from "./types.js";
 import { HDNodeWallet, Mnemonic } from "ethers";
 import "dotenv/config";
 import { readFile } from "node:fs/promises";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("utils");
 
 const shuffle = (array: string[]) => {
   for (let i = array.length - 1; i > 0; i--) {
@@ -69,7 +72,7 @@ export function constructRedis(name: string): Redis {
   let client;
   let redisConfig = getRedisConfig();
   client = new Redis(redisConfig);
-  client.on("error", (err) => console.log(`${name} Redis Client Error:` + err));
+  client.on("error", (err) => log.error({ err, name }, "Redis Client Error"));
   return client;
 }
 

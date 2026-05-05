@@ -1,5 +1,8 @@
 import * as promClient from "prom-client";
 import express from "express";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("executor.metrics");
 
 export enum OrderExecutionError {
   insufficient_funds = "insufficient_funds",
@@ -57,7 +60,7 @@ export class Metrics {
       res.set("Content-Type", promClient.register.contentType);
       res.end(await promClient.register.metrics());
     });
-    console.log(`Starting metrics endpoint available at http://localhost:${port}/${endpoint}`);
+    log.info({ port, endpoint, url: `http://localhost:${port}/${endpoint}` }, "Starting metrics endpoint");
     app.listen(port);
   }
 
