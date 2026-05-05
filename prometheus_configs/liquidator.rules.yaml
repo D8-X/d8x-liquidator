@@ -32,12 +32,12 @@ groups:
           server_info: "Deployment {{ $externalLabels.deployment_name }} | Server IP {{ $externalLabels.server_ip }}"
 
       - alert: BotLowBalance
-        expr: liquidator_bot_balance_eth < 0.005
+        expr: liquidator_bot_balance_eth < on(chain) group_left() liquidator_min_balance_eth
         for: 5m
         labels:
           severity: warning
         annotations:
-          title: "Bot wallet low on gas (Liquidator)"
+          title: "Bot wallet below per-chain minimum gas balance (Liquidator)"
           server_info: "Deployment {{ $externalLabels.deployment_name }} | Server IP {{ $externalLabels.server_ip }}"
 
       - alert: BotIdle
