@@ -1,16 +1,4 @@
-import { PriceFeedEndpointsItem, floatToABK64x64 } from "@d8-x/d8x-node-sdk";
-
-export const ZERO_POSITION = floatToABK64x64(0);
-
-export interface Position {
-  address: string;
-  perpetualId: number;
-  positionBC: number;
-  cashCC: number;
-  lockedInQC: number;
-  unpaidFundingCC: number;
-  block: number;
-}
+import { PriceFeedEndpointsItem } from "@d8-x/d8x-node-sdk";
 
 export interface RedisConfig {
   host: string;
@@ -37,8 +25,6 @@ export interface LiquidatorConfig {
   maxGasPriceGWei: number;
   gasLimit: number;
   priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
-  addressChunkSize?: number;
-  accountChunkSize?: number;
   maxConcurrentChecks?: number;
 }
 
