@@ -339,7 +339,6 @@ export default class BlockhainListener {
         };
         this.redisPubClient.publish("LiquidateEvent", JSON.stringify(msg));
         console.log({ event: "Liquidate", time: new Date(Date.now()).toISOString(), mode: ListeningMode, ...msg });
-
       },
     );
 
@@ -412,7 +411,7 @@ export default class BlockhainListener {
       proxy.filters.SetEmergencyState,
       async (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
         const perpId = Number(perpetualId);
-
+        // already published setEmergy event withing the last 10min are ignored
         if (this.emergency.shouldIgnore(perpId)) return;
         this.emergency.markPublished(perpId);
         const symbol = await this.resolveSymbol(perpId);
