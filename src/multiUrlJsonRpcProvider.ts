@@ -9,6 +9,9 @@ import {
   Networkish,
 } from "ethers";
 import { executeWithTimeout } from "./utils.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("rpc.http");
 
 // Common methods among multi url providers
 export interface MultiUrlProvider {
@@ -27,9 +30,9 @@ export interface MultiUrlJsonRpcProviderOptions extends JsonRpcApiProviderOption
   // Maximum number of rpc errors until send starts throwing errors. Defaults to
   // number of provided rpc urls.
   maxRetries?: number;
-  // Whether to console.log errors. Defaults to false.
+  // Whether to log errors. Defaults to false.
   logErrors?: boolean;
-  // Whether to console.log the switch of rpc urls. Defaults to false.
+  // Whether to log the switch of rpc urls. Defaults to false.
   logRpcSwitches?: boolean;
 }
 
@@ -120,9 +123,7 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
     this.currentConnection = new FetchRequest(this.getCurrentRpcUrl());
 
     if (this.options.logRpcSwitches) {
-      console.log(
-        `[(${new Date().toISOString()}) MultiUrlJsonRpcProvider]  switched rpc to ${this.getCurrentRpcUrl()}`
-      );
+      log.warn({ rpcUrl: this.getCurrentRpcUrl() }, "switched rpc");
     }
   }
 
@@ -161,13 +162,13 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
       }
     } catch (err) {
       if (this.options.logErrors) {
-        console.error(`[(${new Date().toISOString()}) MultiUrlJsonRpcProvider@${currentRpcUrl}] request error: `, err);
+        log.error({ err, rpcUrl: currentRpcUrl }, "request error");
       }
       this.switchRpcOnError();
 
       // When max number of errors is reached - throw.
       if (this.currentNumberOfErrors >= this.options.maxRetries!) {
-        console.error(`[(${new Date().toISOString()}) MultiUrlJsonRpcProvider@${currentRpcUrl}] Max retries reached`);
+        log.error({ rpcUrl: currentRpcUrl }, "max retries reached");
         throw err;
       }
 
@@ -182,9 +183,9 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
     // JSON-RPC error might be returned inside a correct response. Check for it.
     if (resp.length > 0 && Object.hasOwnProperty.call(resp[0], "error")) {
       if (this.options.logErrors) {
-        console.error(
-          `[(${new Date().toISOString()}) MultiUrlJsonRpcProvider@${currentRpcUrl}] JSON-RPC response error: `,
-          resp[0].error
+        log.error(
+          { err: resp[0].error, rpcUrl: currentRpcUrl },
+          "JSON-RPC response error"
         );
       }
       this.switchRpcOnError();
