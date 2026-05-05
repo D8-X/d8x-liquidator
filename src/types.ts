@@ -37,6 +37,8 @@ export interface LiquidatorConfig {
   maxGasPriceGWei: number;
   gasLimit: number;
   priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
+  addressChunkSize?: number;
+  accountChunkSize?: number;
 }
 
 export interface RedisMsg {
