@@ -87,6 +87,7 @@ export default class Liquidator {
       api: new LiquidatorTool(sdkConfig, pk),
       busy: false,
     }));
+    this.bots.forEach((bot, idx) => this.metrics.registerBot(idx, bot.api.getAddress()));
     if (this.config.rewardsAddress != "" && this.config.rewardsAddress.startsWith("0x")) {
       this.earnings = this.config.rewardsAddress;
     } else {
