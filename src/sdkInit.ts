@@ -2,6 +2,9 @@ import { LiquidatorTool, MarketData } from "@d8-x/d8x-node-sdk";
 import { Provider } from "ethers";
 import { Redis } from "ioredis";
 import { loadSDKState } from "./sdkState.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("sdk");
 
 export interface MarketDataInitResult {
   usedCache: boolean;
@@ -42,8 +45,9 @@ export async function initMarketDataWithCache(
         lastCacheErr = e;
       }
     }
-    console.log(
-      `${new Date(Date.now()).toISOString()}: cached SDK state unusable across all providers, falling back to full init: ${String(lastCacheErr)}`
+    log.warn(
+      { err: lastCacheErr },
+      "cached SDK state unusable across all providers, falling back to full init"
     );
   }
   let lastErr: unknown;

@@ -1,6 +1,9 @@
 import { loadConfig } from "../utils.js";
 import BlockhainListener from "./blockchainListener.js";
 import "dotenv/config";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("sentinel");
 
 async function start() {
   const sdkConfig = process.env.SDK_CONFIG;
@@ -13,8 +16,6 @@ async function start() {
 }
 
 start().catch((err) => {
-  console.error(
-    `${new Date().toISOString()}: sentinel fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}`
-  );
+  log.error({ err }, "sentinel exiting with error on startup");
   process.exit(1);
 });
