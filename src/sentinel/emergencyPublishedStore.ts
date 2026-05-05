@@ -15,4 +15,8 @@ export class EmergencyPublishedStore {
     }
     this.lastPublished.set(perpId, now);
   }
+
+  clear(perpId: number): void {
+    this.lastPublished.delete(perpId);
+  }
 }
