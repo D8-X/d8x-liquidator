@@ -9,6 +9,10 @@ export class EmergencyPublishedStore {
   }
 
   markPublished(perpId: number): void {
-    this.lastPublished.set(perpId, Date.now());
+    const now = Date.now();
+    for (const [id, ts] of this.lastPublished) {
+      if (now - ts >= EMERGENCY_DEDUPE_MS) this.lastPublished.delete(id);
+    }
+    this.lastPublished.set(perpId, now);
   }
 }
