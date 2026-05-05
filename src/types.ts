@@ -16,8 +16,6 @@ export interface LiquidatorConfig {
   rpcListenWs: string[];
   waitForBlockSeconds: number;
   healthCheckSeconds: number;
-  refreshAccountsIntervalSecondsMax: number;
-  refreshAccountsIntervalSecondsMin: number;
   liquidateIntervalSecondsMax: number;
   liquidateIntervalSecondsMin: number;
   fetchPricesIntervalSecondsMin: number;
