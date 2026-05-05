@@ -30,7 +30,7 @@ export function categorizeRejectReason(err: unknown): RejectReason {
 
 export function categorizeFailReason(err: unknown): FailReason {
   const msg = String(err ?? "").toLowerCase();
-  if (msg.includes("null receipt") || msg.includes("dropped")) return "tx_dropped";
+  if (msg.includes("receipt is null") || msg.includes("dropped")) return "tx_dropped";
   if (msg.includes("timed out") || msg.includes("timeout")) return "wait_timeout";
   if (msg.includes("margin safe") || msg.includes("not unsafe")) return "margin_safe_at_mine";
   if (msg.includes("already liquidated") || msg.includes("trader liquidated") || msg.includes("no position")) {
@@ -81,6 +81,11 @@ export class Metrics {
         help: "Static bot identity gauge, value is always 1. One series per worker wallet.",
         labelNames: ["chain", "bot_idx", "bot_addr"] as const,
       }),
+      minBalance: new promClient.Gauge({
+        name: "liquidator_min_balance_eth",
+        help: "Minimum native-token balance required for a bot to operate, computed as gasPrice * gasLimit * 5.",
+        labelNames: ["chain"] as const,
+      }),
     },
   ) {
     this.chain = chain;
@@ -129,5 +134,9 @@ export class Metrics {
 
   public registerBot(botIdx: number, botAddr: string) {
     this.metricsList.botInfo.labels(this.chain, String(botIdx), botAddr.toLowerCase()).set(1);
+  }
+
+  public setMinBalance(eth: number) {
+    this.metricsList.minBalance.labels(this.chain).set(eth);
   }
 }
