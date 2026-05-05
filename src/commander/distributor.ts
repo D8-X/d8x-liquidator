@@ -161,7 +161,7 @@ export default class Distributor {
           symbol,
           error: lastErr instanceof Error ? lastErr.message : String(lastErr),
         },
-        "addSymbol: skipping - price fetch failed after retries"
+        "addSymbol: skipping - price fetch failed after retries",
       );
       return;
     }
@@ -207,10 +207,7 @@ export default class Distributor {
     try {
       info = await this.md.exchangeInfo();
     } catch (e) {
-      log.error(
-        { error: e instanceof Error ? e.message : String(e) },
-        "broadcastWatchlist: exchangeInfo failed"
-      );
+      log.error({ error: e instanceof Error ? e.message : String(e) }, "broadcastWatchlist: exchangeInfo failed");
       return;
     }
     const states: PerpStates = {};
@@ -282,7 +279,7 @@ export default class Distributor {
                   symbol,
                   error: e instanceof Error ? e.message : String(e),
                 },
-                "checkPositions failed"
+                "checkPositions failed",
               );
             }
           }
@@ -312,7 +309,7 @@ export default class Distributor {
                 block: account.block,
                 error: e instanceof Error ? e.stack ?? e.message : String(e),
               },
-              "[@run-UpdateMarginAccountEvent] handler failed"
+              "[@run-UpdateMarginAccountEvent] handler failed",
             );
           }
 
@@ -351,7 +348,7 @@ export default class Distributor {
                 block,
                 error: e instanceof Error ? e.stack ?? e.message : String(e),
               },
-              "[@run-LiquidateEvent] handler failed"
+              "[@run-LiquidateEvent] handler failed",
             );
           }
           break;
@@ -370,7 +367,7 @@ export default class Distributor {
                 lastRefreshOfAllOpenOrders: this.lastRefreshOfAllActiveAccounts.toISOString(),
                 sentinelReason: channel,
               },
-              "Refreshing all active accounts due to sentinel error"
+              "Refreshing all active accounts due to sentinel error",
             );
             this.refreshAllAccounts();
           }
@@ -438,7 +435,7 @@ export default class Distributor {
           symbol: symbol,
           lastRefresh: new Date(this.lastRefreshTime.get(symbol) ?? 0),
         },
-        "[refreshActiveAccounts] called too soon"
+        "[refreshActiveAccounts] called too soon",
       );
       return;
     }
@@ -477,7 +474,7 @@ export default class Distributor {
             symbol,
             error: result.reason instanceof Error ? result.reason.message : String(result.reason),
           },
-          "getActivePerpAccountsByChunks failed"
+          "getActivePerpAccountsByChunks failed",
         );
       }
     }
@@ -517,7 +514,7 @@ export default class Distributor {
             chunkIndex: j,
             error: results.reason instanceof Error ? results.reason.message : String(results.reason),
           },
-          "multicall chunk failed"
+          "multicall chunk failed",
         );
         return;
       }
@@ -583,10 +580,7 @@ export default class Distributor {
         await this.md.refreshSymbols(true);
         info = await this.md.exchangeInfo();
       } catch (e) {
-        log.error(
-          { error: e instanceof Error ? e.message : String(e) },
-          "reconcile failed"
-        );
+        log.error({ error: e instanceof Error ? e.message : String(e) }, "reconcile failed");
         return;
       }
       const sdkStates: PerpStates = {};
@@ -602,20 +596,14 @@ export default class Distributor {
         const redisStates = await loadWatchlist(this.redisPubClient, this.chainId);
         if (redisStates) redisPayload = serializePerpStates(redisStates);
       } catch (e) {
-        log.error(
-          { error: e instanceof Error ? e.message : String(e) },
-          "reconcile: loadWatchlist failed"
-        );
+        log.error({ error: e instanceof Error ? e.message : String(e) }, "reconcile: loadWatchlist failed");
       }
       if (redisPayload === sdkPayload && this.lastPublishedWatchlist === sdkPayload) return;
       try {
         await publishWatchlist(this.redisPubClient, this.chainId, sdkPayload);
         this.lastPublishedWatchlist = sdkPayload;
       } catch (e) {
-        log.error(
-          { error: e instanceof Error ? e.message : String(e) },
-          "reconcile: publish failed"
-        );
+        log.error({ error: e instanceof Error ? e.message : String(e) }, "reconcile: publish failed");
         return;
       }
       const desired = Object.keys(sdkStates).filter((s) => sdkStates[s] === "NORMAL");
@@ -627,10 +615,7 @@ export default class Distributor {
         try {
           await this.addSymbol(s);
         } catch (e) {
-          log.error(
-            { symbol: s, error: e instanceof Error ? e.message : String(e) },
-            "addSymbol failed"
-          );
+          log.error({ symbol: s, error: e instanceof Error ? e.message : String(e) }, "addSymbol failed");
         }
       }
       log.info({ size: this.symbols.size }, "watchlist reconciled");

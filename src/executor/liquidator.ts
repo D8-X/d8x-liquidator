@@ -6,7 +6,7 @@ import { initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkIn
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 import { loadWatchlist, parsePerpStates, watchlistChannel } from "../watchlist.js";
-import { Metrics } from "./metrics.js";
+import { categorizeFailReason, categorizeRejectReason, Metrics } from "./metrics.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("liquidator");
@@ -43,11 +43,12 @@ export default class Liquidator {
   private locked: Set<string> = new Set();
   private timesTried: Map<string, number> = new Map();
   private allowedSymbols: Set<string> | null = null;
+  private botBalances: Map<string, bigint> = new Map();
 
   protected metrics: Metrics;
 
   constructor(pkTreasury: string, pkLiquidators: string[], config: LiquidatorConfig) {
-    this.metrics = new Metrics();
+    this.metrics = new Metrics(config.sdkConfig);
     this.metrics.start();
 
     this.treasury = pkTreasury;
@@ -79,13 +80,14 @@ export default class Liquidator {
     } else {
       log.warn(
         { priceFeedEndpoints: sdkConfig.priceFeedEndpoints },
-        "No price feed endpoints specified in config. Using default endpoints from SDK."
+        "No price feed endpoints specified in config. Using default endpoints from SDK.",
       );
     }
     this.bots = this.privateKey.map((pk) => ({
       api: new LiquidatorTool(sdkConfig, pk),
       busy: false,
     }));
+    this.bots.forEach((bot, idx) => this.metrics.registerBot(idx, bot.api.getAddress()));
     if (this.config.rewardsAddress != "" && this.config.rewardsAddress.startsWith("0x")) {
       this.earnings = this.config.rewardsAddress;
     } else {
@@ -111,31 +113,23 @@ export default class Liquidator {
     const result = await initMarketDataWithCache(md, this.providers, this.redisPubClient);
     log.info(
       { cache: result.usedCache, cacheAgeMs: result.cacheAgeMs, providerIndex: result.providerIndex },
-      "executor MarketData initialized"
+      "executor MarketData initialized",
     );
     await initLiquidatorsFromMarketData(this.bots, md, this.providers[result.providerIndex]);
 
     const initial = await loadWatchlist(this.redisPubClient, this.chainId);
     if (initial !== null) {
       this.allowedSymbols = new Set(Object.keys(initial).filter((s) => initial[s] === "NORMAL"));
-      log.info(
-        { size: this.allowedSymbols.size },
-        "executor: loaded initial watchlist from redis"
-      );
+      log.info({ size: this.allowedSymbols.size }, "executor: loaded initial watchlist from redis");
     }
 
     // Subscribe to relayed events
-    await this.redisSubClient.subscribe(
-      "block",
-      "LiquidateTrader",
-      watchlistChannel(this.chainId),
-      (err, count) => {
-        if (err) {
-          log.error({ err }, "redis subscription failed");
-          process.exit(1);
-        }
+    await this.redisSubClient.subscribe("block", "LiquidateTrader", watchlistChannel(this.chainId), (err, count) => {
+      if (err) {
+        log.error({ err }, "redis subscription failed");
+        process.exit(1);
       }
-    );
+    });
     log.info("initialized");
   }
 
@@ -198,7 +192,7 @@ export default class Liquidator {
         { symbol, trader },
         this.allowedSymbols === null
           ? "executor: skipping - watchlist not yet received"
-          : "executor: skipping - not in watchlist"
+          : "executor: skipping - not in watchlist",
       );
       return LiquidationStatus.NoOp;
     }
@@ -224,7 +218,7 @@ export default class Liquidator {
           executor: this.bots[botIdx].api.getAddress(),
           trader: trader,
         },
-        "trader is margin safe"
+        "trader is margin safe",
       );
       this.bots[botIdx].busy = false;
       this.locked.delete(`${symbol}:${trader}`);
@@ -238,11 +232,10 @@ export default class Liquidator {
         executor: this.bots[botIdx].api.getAddress(),
         trader: trader,
       },
-      "submitting txn..."
+      "submitting txn...",
     );
     let tx: TransactionResponse;
     try {
-      this.metrics.incrTxSubmissions();
       const p = this.getNextRpc();
       const feeData = await this.getFeeData(p);
       // Wrap liquidateTrader with timeout to prevent hanging on slow price feeds or unresponsive RPCs
@@ -252,7 +245,7 @@ export default class Liquidator {
           rpcURL: p._getConnection().url,
         }),
         30_000, // 30 second timeout
-        `liquidateTrader timed out for ${symbol}:${trader}`
+        `liquidateTrader timed out for ${symbol}:${trader}`,
       );
     } catch (e: any) {
       log.error(
@@ -263,9 +256,9 @@ export default class Liquidator {
           executor: this.bots[botIdx].api.getAddress(),
           trader: trader,
         },
-        "txn rejected"
+        "txn rejected",
       );
-      this.metrics.incrTxRejects();
+      this.metrics.incLiquidation(symbol, "rejected", categorizeRejectReason(e));
       this.bots[botIdx].busy = false;
       if (isMarginSafe === undefined) {
         // tried without knowing and failed - keep locked
@@ -286,7 +279,7 @@ export default class Liquidator {
         maxPriorityFeePerGas: tx.maxPriorityFeePerGas ? `${formatUnits(tx.maxPriorityFeePerGas)} wei` : undefined,
         hash: tx.hash,
       },
-      "txn accepted"
+      "txn accepted",
     );
 
     // confirm execution
@@ -296,7 +289,12 @@ export default class Liquidator {
       if (receipt === null) {
         throw new Error("tx confirmation receipt is null");
       }
-      this.metrics.incrTxConfirmations();
+      if (receipt.status === 0) {
+        throw new Error("tx reverted on-chain (status=0)");
+      }
+      this.metrics.observeLastLiquidation(botIdx, receipt.from);
+      this.metrics.incLiquidation(symbol, "confirmed", "ok");
+      this.applyGasSpent(botIdx, receipt.from, receipt.gasUsed, receipt.gasPrice ?? 0n);
       log.info(
         {
           symbol: symbol,
@@ -307,12 +305,12 @@ export default class Liquidator {
           gasUsed: `${formatUnits(receipt.cumulativeGasUsed, "wei")} wei`,
           hash: receipt.hash,
         },
-        "txn confirmed"
+        "txn confirmed",
       );
       this.locked.delete(`${symbol}:${trader}`);
     } catch (e: any) {
       let error = e?.toString() || "";
-      this.metrics.incrTxFailures();
+      this.metrics.incLiquidation(symbol, "failed", categorizeFailReason(e));
       log.error(
         {
           err: e,
@@ -321,7 +319,7 @@ export default class Liquidator {
           executor: this.bots[botIdx].api.getAddress(),
           trader: trader,
         },
-        "txn reverted"
+        "txn reverted",
       );
       this.locked.delete(`${symbol}:${trader}`);
       const bot = this.bots[botIdx].api.getAddress();
@@ -452,9 +450,15 @@ export default class Liquidator {
     const { gasPrice: gasPriceWei } = await provider.getFeeData();
     // min balance should cover 1e7 gas
     const minBalance = gasPriceWei! * BigInt(this.config.gasLimit * 5);
+    this.metrics.setMinBalance(Number(formatUnits(minBalance, 18)));
     for (let addr of addressArray) {
       const botBalance = await provider.getBalance(addr);
       const treasuryBalance = await provider.getBalance(treasury.address);
+      const botIdx = this.botIdxFromAddress(addr);
+      if (botIdx >= 0) {
+        this.botBalances.set(addr.toLowerCase(), botBalance);
+        this.metrics.setBotBalance(botIdx, addr, Number(formatUnits(botBalance, 18)));
+      }
       log.info({
         treasuryAddr: treasury.address,
         treasuryBalance: formatUnits(treasuryBalance),
@@ -472,26 +476,48 @@ export default class Liquidator {
               to: addr,
               transferAmount: formatUnits(transferAmount),
             },
-            "transferring funds..."
+            "transferring funds...",
           );
           const tx = await treasury.sendTransaction({
             to: addr,
             value: transferAmount,
           });
           await tx.wait();
+          if (botIdx >= 0) {
+            const newBalance = botBalance + transferAmount;
+            this.botBalances.set(addr.toLowerCase(), newBalance);
+            this.metrics.setBotBalance(botIdx, addr, Number(formatUnits(newBalance, 18)));
+          }
           log.info({
             transferAmount: formatUnits(transferAmount),
             txn: tx.hash,
           });
         } else {
-          this.metrics.incFundingFailure();
+          if (botIdx >= 0) {
+            this.metrics.incFundingFailure(botIdx, addr, "treasury_insufficient");
+          }
           throw new Error(
             `insufficient balance in treasury (${formatUnits(treasuryBalance)}); send at least ${formatUnits(
-              transferAmount
-            )} to ${treasury.address}`
+              transferAmount,
+            )} to ${treasury.address}`,
           );
         }
       }
     }
+  }
+
+  private botIdxFromAddress(addr: string): number {
+    const target = addr.toLowerCase();
+    return this.bots.findIndex((b) => b.api.getAddress().toLowerCase() === target);
+  }
+
+  private applyGasSpent(botIdx: number, botAddr: string, gasUsed: bigint, gasPrice: bigint) {
+    const key = botAddr.toLowerCase();
+    const cached = this.botBalances.get(key);
+    if (cached === undefined) return;
+    const cost = gasUsed * gasPrice;
+    const next = cost > cached ? 0n : cached - cost;
+    this.botBalances.set(key, next);
+    this.metrics.setBotBalance(botIdx, botAddr, Number(formatUnits(next, 18)));
   }
 }
