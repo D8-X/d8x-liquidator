@@ -249,9 +249,7 @@ export default class BlockhainListener {
       listenerType: this.listeningProvider instanceof MultiUrlWebSocketProvider ? "Websocket" : "Http",
     });
 
-    this.emergency = new EmergencyPublishedStore(this.redisPubClient, this.network.chainId);
-    await this.emergency.hydrate();
-    this.emergency.startSweepTimer();
+    this.emergency = new EmergencyPublishedStore();
 
     this.connectWsOrSwitchToHttp();
     this.addListeners();
@@ -397,8 +395,9 @@ export default class BlockhainListener {
       proxy.filters.SetEmergencyState,
       async (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
         const perpId = Number(perpetualId);
-        if (this.emergency.has(perpId)) return;
-        const stamp = this.emergency.add(perpId);
+
+        if (this.emergency.shouldIgnore(perpId)) return;
+        this.emergency.markPublished(perpId);
         let symbol = this.md.getSymbolFromPerpId(perpId);
         if (symbol === undefined) {
           try {
@@ -414,13 +413,7 @@ export default class BlockhainListener {
           }
           symbol = this.md.getSymbolFromPerpId(perpId);
         }
-        if (symbol === undefined) {
-          if (this.emergency.isOwned(perpId, stamp)) {
-            this.emergency.delete(perpId);
-          }
-          return;
-        }
-        if (!this.emergency.isOwned(perpId, stamp)) return;
+        if (symbol === undefined) return;
         const msg: PerpEmergencyMsg = {
           perpetualId: perpId,
           symbol,
@@ -435,7 +428,7 @@ export default class BlockhainListener {
 
     proxy.on(proxy.filters.SetNormalState, (perpetualId: bigint, event: any) => {
       const perpId = Number(perpetualId);
-      this.emergency.delete(perpId);
+      this.emergency.clear(perpId);
       this.redisPubClient.publish(
         "PerpNormal",
         JSON.stringify({
@@ -446,10 +439,6 @@ export default class BlockhainListener {
         }),
       );
       console.log({ event: "SetNormalState", time: new Date().toISOString(), perpetualId: perpId });
-    });
-
-    proxy.on(proxy.filters.SettlementComplete, (perpetualId: bigint, _event: any) => {
-      this.emergency.delete(Number(perpetualId));
     });
   }
 }
