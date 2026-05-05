@@ -39,6 +39,7 @@ export interface LiquidatorConfig {
   priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
   addressChunkSize?: number;
   accountChunkSize?: number;
+  maxConcurrentChecks?: number;
 }
 
 export interface RedisMsg {
