@@ -36,13 +36,9 @@ export default class Distributor {
   private redisPubClient: Redis;
 
   /**
-   * There will be only 1 instance of provider in this array. Historically we
-   * used a list of JsonRpcProvider's, therefore we have array here until we
-   * cleanup.
-   *
-   * Use this.config.rpcWatch for distributor providers.
+   * Single MultiUrlJsonRpcProvider that internally rotates across the URLs in
    */
-  private providers: MultiUrlJsonRpcProvider[];
+  private provider: MultiUrlJsonRpcProvider;
 
   // state
   private lastRefreshTime: Map<string, number> = new Map();
@@ -63,7 +59,7 @@ export default class Distributor {
   // static info
   private config: LiquidatorConfig;
   private isQuote: Map<string, boolean> = new Map();
-  private symbols: string[] = [];
+  private symbols: Set<string> = new Set();
   private maintenanceRate: Map<string, number> = new Map();
   private chainId: number;
 
@@ -80,16 +76,14 @@ export default class Distributor {
     const sdkConfig = PerpetualDataHandler.readSDKConfig(config.sdkConfig);
     this.chainId = sdkConfig.chainId;
     this.md = new MarketData(sdkConfig);
-    this.providers = [
-      new MultiUrlJsonRpcProvider(this.config.rpcWatch, this.md.network, {
-        timeoutSeconds: 25,
-        logErrors: true,
-        logRpcSwitches: true,
-        // Distributor uses free rpcs, make sure to switch on each call.
-        switchRpcOnEachRequest: true,
-        staticNetwork: true,
-      }),
-    ];
+    this.provider = new MultiUrlJsonRpcProvider(this.config.rpcWatch, this.md.network, {
+      timeoutSeconds: 25,
+      logErrors: true,
+      logRpcSwitches: true,
+      // Distributor uses free rpcs, make sure to switch on each call.
+      switchRpcOnEachRequest: true,
+      staticNetwork: true,
+    });
   }
 
   /**
@@ -100,34 +94,28 @@ export default class Distributor {
     // RPC URL randomization happens at config load time using the `shuffle()` in
     // utils.loadConfig, `this.config.rpcWatch` is already a shuffled list by
     // the time it reaches the MultiUrlJsonRpcProvider constructor
-    let success = false;
-    let i = 0;
-    while (!success && i < this.providers.length) {
-      const results = (await Promise.allSettled([this.md.createProxyInstance(this.providers[i])]))[0];
-      success = results.status === "fulfilled";
-      i++;
-    }
-    if (!success) {
+    try {
+      await this.md.createProxyInstance(this.provider);
+    } catch (e) {
       throw new Error(
-        `commander: all RPCs are down (${this.config.rpcWatch.join(", ")})`
+        `commander: all RPCs are down (${this.config.rpcWatch.join(", ")}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
     }
-    
+
     const info = await this.md.exchangeInfo();
     await this.publishState();
     setInterval(() => void this.publishState(), SDK_STATE_REPUBLISH_SECONDS * 1000).unref();
 
-    this.symbols = info.pools
+    const initial = info.pools
       .filter(({ isRunning }) => isRunning)
-      .map((pool) =>
+      .flatMap((pool) =>
         pool.perpetuals
           .filter(({ state }) => state === "NORMAL")
-          .map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`)
-      )
-      .flat();
+          .map((perpetual) => `${perpetual.baseCurrency}-${perpetual.quoteCurrency}-${pool.poolSymbol}`),
+      );
 
-    const initial = this.symbols;
-    this.symbols = [];
     for (const symbol of initial) await this.addSymbol(symbol);
 
     // Subscribe to blockchain events
@@ -179,17 +167,19 @@ export default class Distributor {
     this.pxSubmission.set(symbol, priceInfo);
     this.openPositions.set(symbol, new Map());
     this.lastRefreshTime.set(symbol, 0);
-    if (!this.symbols.includes(symbol)) this.symbols.push(symbol);
+    this.symbols.add(symbol);
   }
 
   private dropSymbol(symbol: string): boolean {
-    const idx = this.symbols.indexOf(symbol);
-    if (idx < 0) return false;
-    this.symbols.splice(idx, 1);
+    if (!this.symbols.delete(symbol)) return false;
     this.openPositions.delete(symbol);
     this.lastRefreshTime.delete(symbol);
     this.pricesFetchedAt.delete(symbol);
     this.messageSentAt.delete(symbol);
+    this.pxSubmission.delete(symbol);
+    this.maintenanceRate.delete(symbol);
+    this.isQuote.delete(symbol);
+    this.markPremium.delete(symbol);
     return true;
   }
 
@@ -207,7 +197,7 @@ export default class Distributor {
       console.log(
         `${new Date(Date.now()).toISOString()}: failed to publish SDK state: ${
           e instanceof Error ? e.stack ?? e.message : String(e)
-        }`
+        }`,
       );
     }
   }
@@ -217,7 +207,10 @@ export default class Distributor {
     try {
       info = await this.md.exchangeInfo();
     } catch (e) {
-      console.log({ info: "broadcastWatchlist: exchangeInfo failed", error: e instanceof Error ? e.message : String(e) });
+      console.log({
+        info: "broadcastWatchlist: exchangeInfo failed",
+        error: e instanceof Error ? e.message : String(e),
+      });
       return;
     }
     const states: PerpStates = {};
@@ -236,7 +229,7 @@ export default class Distributor {
       console.log(
         `${new Date(Date.now()).toISOString()}: failed to publish watchlist: ${
           e instanceof Error ? e.stack ?? e.message : String(e)
-        }`
+        }`,
       );
     }
   }
@@ -260,127 +253,162 @@ export default class Distributor {
    */
   public async run(): Promise<void> {
     this.requireReady();
-    return new Promise<void>(async (resolve, reject) => {
-      // fetch all accounts
-      setInterval(async () => {
-        if (
-          Date.now() - Math.min(...this.lastRefreshTime.values()) <
-          this.config.refreshAccountsIntervalSecondsMax * 1_000
-        ) {
-          return;
-        }
-        await this.refreshAllAccounts();
-      }, 10_000);
 
-      setInterval(() => {
-        if (this.symbols.length === 0) {
-          void this.reconcileWatchlist();
-          return;
-        }
-        if (Date.now() - this.lastReconcileAt > Distributor.RECONCILE_STALE_MS) {
-          void this.reconcileWatchlist();
-        }
-      }, Distributor.RECONCILE_TICK_MS);
-
-      this.redisSubClient.on("message", async (channel, msg) => {
-        switch (channel) {
-          case "block": {
-            for (const symbol of this.symbols) {
-              this.checkPositions(symbol);
-            }
-            if (
-              Date.now() - Math.min(...this.lastRefreshTime.values()) <
-              this.config.refreshAccountsIntervalSecondsMax * 1_000
-            ) {
-              return;
-            }
-            await this.refreshAllAccounts();
-            break;
-          }
-
-          case "UpdateMarginAccountEvent": {
-            const account: UpdateMarginAccountMsg = JSON.parse(msg);
-            if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) {
-              return;
-            }
-            sleepForSec(5).then(() =>
-              this.fetchPosition(account.perpetualId, account.traderAddr).then((pos) => {
-                this.updatePosition(pos).then();
-              }),
-            );
-            break;
-          }
-
-          case "UpdateMarkPriceEvent": {
-            const { symbol, markPremium }: UpdateMarkPriceMsg = JSON.parse(msg);
-            this.markPremium.set(symbol, markPremium);
-            break;
-          }
-
-          case "PerpEmergency": {
-            await this.onPerpEmergency(JSON.parse(msg) as PerpEmergencyMsg);
-            break;
-          }
-
-          case "PerpNormal": {
-            if (
-              !this.reconcileInflight &&
-              Date.now() - this.lastReconcileAt > Distributor.RECONCILE_EVENT_MIN_GAP_MS
-            ) {
-              void this.reconcileWatchlist();
-            }
-            break;
-          }
-
-          case "LiquidateEvent": {
-            const { perpetualId, traderAddr }: LiquidateMsg = JSON.parse(msg);
-            await this.fetchPosition(perpetualId, traderAddr).then((pos) => {
-              this.updatePosition(pos);
-            });
-            break;
-          }
-
-          case "listener-error":
-          case "switch-mode":
-            // Whenever something wrong happens on sentinel, refresh orders if
-            // they were not refreshed recently in the last 30 (should be more
-            // than refreshOrdersIntervalSecondsMin) seconds. Sentinel might
-            // have missed events and executed orders might still be held in
-            // memory in distributor.
-            if (new Date(Date.now() - 30_000) > this.lastRefreshOfAllActiveAccounts) {
-              console.log({
-                message: "Refreshing all active accounts due to sentinel error",
-                time: new Date(Date.now()).toISOString(),
-                lastRefreshOfAllOpenOrders: this.lastRefreshOfAllActiveAccounts.toISOString(),
-                sentinelReason: channel,
-              });
-              this.refreshAllAccounts();
-            }
-            break;
-        }
-      });
+    setInterval(async () => {
+      if (
+        Date.now() - Math.min(...this.lastRefreshTime.values()) <
+        this.config.refreshAccountsIntervalSecondsMax * 1_000
+      ) {
+        return;
+      }
       await this.refreshAllAccounts();
+    }, 10_000);
+
+    setInterval(() => {
+      if (this.symbols.size === 0) {
+        void this.reconcileWatchlist();
+        return;
+      }
+      if (Date.now() - this.lastReconcileAt > Distributor.RECONCILE_STALE_MS) {
+        void this.reconcileWatchlist();
+      }
+    }, Distributor.RECONCILE_TICK_MS);
+
+    this.redisSubClient.on("message", async (channel, msg) => {
+      switch (channel) {
+        case "block": {
+          for (const symbol of this.symbols) {
+            try {
+              await this.checkPositions(symbol);
+            } catch (e) {
+              console.log({
+                info: "checkPositions failed",
+                symbol,
+                time: new Date().toISOString(),
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
+          }
+          if (
+            Date.now() - Math.min(...this.lastRefreshTime.values()) <
+            this.config.refreshAccountsIntervalSecondsMax * 1_000
+          ) {
+            return;
+          }
+          await this.refreshAllAccounts();
+          break;
+        }
+
+        case "UpdateMarginAccountEvent": {
+          const account: UpdateMarginAccountMsg = JSON.parse(msg);
+          if (account.traderAddr.toLowerCase() == this.md.getProxyAddress().toLowerCase()) return;
+
+          try {
+            const pos = await this.fetchPosition(account.perpetualId, account.traderAddr, account.block);
+            if (!pos) break;
+            await this.updatePosition(pos);
+          } catch (e) {
+            console.log({
+              info: "[@run-UpdateMarginAccountEvent] handler failed",
+              time: new Date().toISOString(),
+              perpetualId: account.perpetualId,
+              traderAddr: account.traderAddr,
+              block: account.block,
+              error: e instanceof Error ? e.stack ?? e.message : String(e),
+            });
+          }
+
+          break;
+        }
+
+        case "UpdateMarkPriceEvent": {
+          const { symbol, markPremium }: UpdateMarkPriceMsg = JSON.parse(msg);
+          this.markPremium.set(symbol, markPremium);
+          break;
+        }
+
+        case "PerpEmergency": {
+          await this.onPerpEmergency(JSON.parse(msg) as PerpEmergencyMsg);
+          break;
+        }
+
+        case "PerpNormal": {
+          if (!this.reconcileInflight && Date.now() - this.lastReconcileAt > Distributor.RECONCILE_EVENT_MIN_GAP_MS) {
+            void this.reconcileWatchlist();
+          }
+          break;
+        }
+
+        case "LiquidateEvent": {
+          const { perpetualId, traderAddr, block }: LiquidateMsg = JSON.parse(msg);
+          try {
+            const pos = await this.fetchPosition(perpetualId, traderAddr, block);
+            if (!pos) break;
+            await this.updatePosition(pos);
+          } catch (e) {
+            console.log({
+              info: "[@run-LiquidateEvent] handler failed",
+              time: new Date().toISOString(),
+              perpetualId,
+              traderAddr,
+              block,
+              error: e instanceof Error ? e.stack ?? e.message : String(e),
+            });
+          }
+          break;
+        }
+
+        case "listener-error":
+        case "switch-mode":
+          // Whenever something wrong happens on sentinel, refresh orders if
+          // they were not refreshed recently in the last 30 (should be more
+          // than refreshOrdersIntervalSecondsMin) seconds. Sentinel might
+          // have missed events and executed orders might still be held in
+          // memory in distributor.
+          if (new Date(Date.now() - 30_000) > this.lastRefreshOfAllActiveAccounts) {
+            console.log({
+              message: "Refreshing all active accounts due to sentinel error",
+              time: new Date(Date.now()).toISOString(),
+              lastRefreshOfAllOpenOrders: this.lastRefreshOfAllActiveAccounts.toISOString(),
+              sentinelReason: channel,
+            });
+            this.refreshAllAccounts();
+          }
+          break;
+      }
     });
+
+    await this.refreshAllAccounts();
   }
 
   private async updatePosition(position: Position) {
-    const symbol = this.md.getSymbolFromPerpId(position.perpetualId)!;
-    if (!this.openPositions.has(symbol)) {
-      this.openPositions.set(symbol, new Map());
+    const symbol = this.md.getSymbolFromPerpId(position.perpetualId);
+    if (!symbol) return;
+    let perSymbol = this.openPositions.get(symbol);
+    if (!perSymbol) {
+      perSymbol = new Map();
+      this.openPositions.set(symbol, perSymbol);
     }
-    if (position.positionBC !== 0) {
-      this.openPositions.get(symbol)!.set(position.address, position);
+    const existing = perSymbol.get(position.address);
+    if (existing && existing.block > position.block) return;
+    if (position.positionBC === 0) {
+      perSymbol.delete(position.address);
     } else {
-      this.openPositions.get(symbol)!.delete(position.address);
+      perSymbol.set(position.address, position);
     }
   }
 
-  private async fetchPosition(perpetualId: number, address: string) {
-    const symbol = this.md.getSymbolFromPerpId(perpetualId)!;
-    const pxSubmission = this.pxSubmission.get(symbol)!;
-    const account = await this.md
-      .getReadOnlyProxyInstance()
-      .getTraderState(perpetualId, address, [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0), floatToABK64x64(pxSubmission.rho ?? 0)]);
+  private async fetchPosition(perpetualId: number, address: string, blockTag: number): Promise<Position | undefined> {
+    const symbol = this.md.getSymbolFromPerpId(perpetualId);
+    if (!symbol) return undefined;
+    const pxSubmission = this.pxSubmission.get(symbol);
+    if (!pxSubmission) return undefined;
+    const prices: [bigint, bigint, bigint] = [
+      floatToABK64x64(pxSubmission.s2),
+      floatToABK64x64(pxSubmission.s3 ?? 0),
+      floatToABK64x64(pxSubmission.rho ?? 0),
+    ];
+    const account = await this.md.getReadOnlyProxyInstance().getTraderState(perpetualId, address, prices, { blockTag });
 
     const position: Position = {
       perpetualId: perpetualId,
@@ -389,13 +417,14 @@ export default class Distributor {
       cashCC: ABK64x64ToFloat(BigInt(account[3])),
       lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
       unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
+      block: blockTag,
     };
     return position;
   }
 
   private async refreshAllAccounts() {
     this.lastRefreshOfAllActiveAccounts = new Date();
-    await Promise.allSettled(this.symbols.map((symbol) => this.refreshActiveAccounts(symbol)));
+    await Promise.allSettled([...this.symbols].map((symbol) => this.refreshActiveAccounts(symbol)));
   }
 
   /**
@@ -415,9 +444,12 @@ export default class Distributor {
     const chunkSize2 = 2 ** 8; // for margin accounts
     const perpId = this.md.getPerpIdFromSymbol(symbol)!;
     const proxy = this.md.getReadOnlyProxyInstance() as any as IPerpetualManager;
-    const rpcProviders = this.providers;
-    let providerIdx = Math.floor(Math.random() * rpcProviders.length);
     this.lastRefreshTime.set(symbol, Date.now());
+    const blockHeights = await this.provider.getBlockNumberPerUrl();
+    if (blockHeights.size === 0) {
+      throw new Error(`${symbol}: no rpc returned a block number`);
+    }
+    const refreshBlock = Math.min(...blockHeights.values());
 
     let tsStart: number;
     console.log(`${symbol}: fetching number of accounts ... `);
@@ -427,30 +459,30 @@ export default class Distributor {
     console.log({ symbol: symbol, time: new Date(Date.now()).toISOString(), activeAccounts: numAccounts });
 
     // fetch addresses
-    const promises: Promise<string[]>[] = [];
+    const addressFetchPromises: Promise<string[]>[] = [];
     for (let i = 0; i < numAccounts; i += chunkSize1) {
-      promises.push(proxy.connect(rpcProviders[providerIdx]).getActivePerpAccountsByChunks(perpId, i, i + chunkSize1));
-      providerIdx = (providerIdx + 1) % rpcProviders.length;
+      addressFetchPromises.push(proxy.connect(this.provider).getActivePerpAccountsByChunks(perpId, i, i + chunkSize1));
     }
     let addresses: Set<string> = new Set();
-    for (let i = 0; i < promises.length; i += rpcProviders.length) {
-      try {
-        tsStart = Date.now();
-        const chunks = await Promise.allSettled(promises.slice(i, i + rpcProviders.length));
-        for (const result of chunks) {
-          if (result.status === "fulfilled") {
-            result.value.map((addr) => addresses.add(addr));
-          }
-        }
-      } catch (e) {
-        console.log(`${symbol} ${new Date(Date.now()).toISOString()}: error`);
+    tsStart = Date.now();
+    const addressFetchResults = await Promise.allSettled(addressFetchPromises);
+    for (const result of addressFetchResults) {
+      if (result.status === "fulfilled") {
+        for (const addr of result.value) addresses.add(addr);
+      } else {
+        console.log({
+          info: "getActivePerpAccountsByChunks failed",
+          symbol,
+          time: new Date().toISOString(),
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
       }
     }
 
-    // fech accounts
-    const promises2: Promise<Multicall3.ResultStructOutput[]>[] = [];
+    // fetch accounts
+    const traderStatePromises: Promise<Multicall3.ResultStructOutput[]>[] = [];
     const addressChunks: string[][] = [];
-    const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, rpcProviders[providerIdx]);
+    const multicall = Multicall3__factory.connect(MULTICALL_ADDRESS, this.provider);
     const traderList = [...addresses];
     const pxSubmission = this.pxSubmission.get(symbol)!;
     for (let i = 0; i < traderList.length; i += chunkSize2) {
@@ -461,63 +493,63 @@ export default class Distributor {
         callData: proxy.interface.encodeFunctionData("getTraderState", [
           perpId,
           addr,
-          [floatToABK64x64(pxSubmission.s2), floatToABK64x64(pxSubmission.s3 ?? 0), floatToABK64x64(pxSubmission.rho ?? 0)],
+          [
+            floatToABK64x64(pxSubmission.s2),
+            floatToABK64x64(pxSubmission.s3 ?? 0),
+            floatToABK64x64(pxSubmission.rho ?? 0),
+          ],
         ]),
       }));
-      promises2.push(multicall.connect(rpcProviders[providerIdx]).aggregate3.staticCall(calls));
+      traderStatePromises.push(multicall.aggregate3.staticCall(calls, { blockTag: refreshBlock }));
       addressChunks.push(addressChunk);
-      providerIdx = (providerIdx + 1) % rpcProviders.length;
     }
 
     tsStart = Date.now();
-    for (let i = 0; i < promises2.length; i += rpcProviders.length) {
-      try {
-        const addressChunkBin = addressChunks.slice(i, i + rpcProviders.length);
-        const accountChunk = await Promise.allSettled(promises2.slice(i, i + rpcProviders.length));
-
-        accountChunk.map((results, j) => {
-          if (results.status === "fulfilled") {
-            const addressChunk = addressChunkBin[j];
-            results.value.map((result, k) => {
-              if (result.success) {
-                const account = proxy.interface.decodeFunctionResult(
-                  "getTraderState",
-                  result.returnData
-                )[0] as BigNumberish[];
-                /**
-                 * 0 marginBalance : number; // current margin balance
-                 * 1 availableMargin : number; // amount over initial margin
-                 * 2 availableCashCC : number; // cash minus unpaid funding
-                 * 3 marginAccountCashCC : number;
-                 * 4 marginAccountPositionBC : number;
-                 * 5 marginAccountLockedInValueQC : number;
-                 * 6 fUnitAccumulatedFundingStart
-                 * 7 leverage
-                 * 8 fMarkPrice
-                 * 9 CollateralToQuoteConversion
-                 * 10 maintenance margin rate
-                 */
-                const position: Position = {
-                  perpetualId: perpId,
-                  address: addressChunk[k],
-                  positionBC: ABK64x64ToFloat(BigInt(account[4])),
-                  cashCC: ABK64x64ToFloat(BigInt(account[3])),
-                  lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
-                  unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
-                };
-                this.updatePosition(position);
-              }
-            });
-          }
+    const traderStateResults = await Promise.allSettled(traderStatePromises);
+    traderStateResults.forEach((results, j) => {
+      if (results.status !== "fulfilled") {
+        console.log({
+          info: "multicall chunk failed",
+          symbol,
+          chunkIndex: j,
+          time: new Date().toISOString(),
+          error: results.reason instanceof Error ? results.reason.message : String(results.reason),
         });
-      } catch (e) {
-        console.log("Error fetching account chunk (RPC?)", e);
+        return;
       }
-    }
+      const addressChunk = addressChunks[j];
+      results.value.forEach((result, k) => {
+        if (!result.success) return;
+        const account = proxy.interface.decodeFunctionResult("getTraderState", result.returnData)[0] as BigNumberish[];
+        /**
+         * 0 marginBalance : number; // current margin balance
+         * 1 availableMargin : number; // amount over initial margin
+         * 2 availableCashCC : number; // cash minus unpaid funding
+         * 3 marginAccountCashCC : number;
+         * 4 marginAccountPositionBC : number;
+         * 5 marginAccountLockedInValueQC : number;
+         * 6 fUnitAccumulatedFundingStart
+         * 7 leverage
+         * 8 fMarkPrice
+         * 9 CollateralToQuoteConversion
+         * 10 maintenance margin rate
+         */
+        const position: Position = {
+          perpetualId: perpId,
+          address: addressChunk[k],
+          positionBC: ABK64x64ToFloat(BigInt(account[4])),
+          cashCC: ABK64x64ToFloat(BigInt(account[3])),
+          lockedInQC: ABK64x64ToFloat(BigInt(account[5])),
+          unpaidFundingCC: ABK64x64ToFloat(BigInt(account[3]) - BigInt(account[2])),
+          block: refreshBlock,
+        };
+        this.updatePosition(position);
+      });
+    });
     console.log({
       symbol: symbol,
       time: new Date(Date.now()).toISOString(),
-      accounts: this.openPositions.get(symbol)!.size,
+      accounts: this.openPositions.get(symbol)?.size ?? 0,
       waited: `${Date.now() - tsStart} ms`,
     });
   }
@@ -582,10 +614,13 @@ export default class Distributor {
       for (const s of [...this.symbols]) if (!desiredSet.has(s)) this.dropSymbol(s);
       for (const s of desired) {
         if (currentSet.has(s)) continue;
-        try { await this.addSymbol(s); }
-        catch (e) { console.log({ info: "addSymbol failed", symbol: s, error: e instanceof Error ? e.message : String(e) }); }
+        try {
+          await this.addSymbol(s);
+        } catch (e) {
+          console.log({ info: "addSymbol failed", symbol: s, error: e instanceof Error ? e.message : String(e) });
+        }
       }
-      console.log({ info: "watchlist reconciled", size: this.symbols.length });
+      console.log({ info: "watchlist reconciled", size: this.symbols.size });
     })().finally(() => {
       this.reconcileInflight = null;
     });
@@ -596,45 +631,38 @@ export default class Distributor {
    * Checks if any accounts can be liquidated and publishes them via redis.
    * No RPC calls are made here, only price service
    * @param symbol Perpetual symbol
-   * @returns number of accounts that can be liquidated
+   * @returns number of LiquidateTrader messages successfully published
    */
-  private async checkPositions(symbol: string) {
-    this.requireReady();
-
-    if (!(await this.refreshPrices(symbol))) {
-      return false;
-    }
-    const positions = this.openPositions.get(symbol)!;
+  private async checkPositions(symbol: string): Promise<number> {
+    if (!(await this.refreshPrices(symbol))) return 0;
+    const positions = this.openPositions.get(symbol);
+    if (!positions) return 0;
     const curPx = this.pxSubmission.get(symbol)!;
-    const accountsSent: Set<string> = new Set();
 
     const candidates: string[] = [];
     for (const trader of positions.keys()) {
       if (!this.isMarginSafe(positions.get(trader)!, curPx)) candidates.push(trader);
     }
-    if (candidates.length === 0) return false;
-
-    await this.reconcileWatchlist();
-    if (!this.symbols.includes(symbol)) return false;
+    if (candidates.length === 0) return 0;
 
     let perSymbol = this.messageSentAt.get(symbol);
     if (!perSymbol) {
       perSymbol = new Map();
       this.messageSentAt.set(symbol, perSymbol);
     }
-    for (const trader of candidates) {
-      const msg = JSON.stringify({
-        chainId: this.chainId,
-        symbol: symbol,
-        traderAddr: trader,
-      });
-      if (Date.now() - (perSymbol.get(trader) ?? 0) > this.config.liquidateIntervalSecondsMin * 1_000) {
+    const now = Date.now();
+    const cooldownMs = this.config.liquidateIntervalSecondsMin * 1_000;
+    const dueTraders = candidates.filter((t) => now - (perSymbol!.get(t) ?? 0) > cooldownMs);
+    if (dueTraders.length === 0) return 0;
+
+    await Promise.all(
+      dueTraders.map(async (trader) => {
+        const msg = JSON.stringify({ chainId: this.chainId, symbol, traderAddr: trader });
         await this.redisPubClient.publish("LiquidateTrader", msg);
-        perSymbol.set(trader, Date.now());
-      }
-      accountsSent.add(msg);
-    }
-    return accountsSent.size > 0;
+        perSymbol!.set(trader, now);
+      }),
+    );
+    return dueTraders.length;
   }
 
   private logPosition(position: Position, pxS2S3: [number, number | undefined]) {
