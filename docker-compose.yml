@@ -13,7 +13,7 @@ services:
     #   REDIS_ID: ${REDIS_ID}
 
   sentinel-base_sepolia:
-    image: ghcr.io/d8-x/liquidator-sentinel:dev
+    image: ghcr.io/d8-x/liquidator-sentinel:main
     #build:
     #  context: .
     #  dockerfile: ./src/sentinel/Dockerfile
@@ -37,7 +37,7 @@ services:
         max-file: "10"
 
   commander-base_sepolia:
-    image: ghcr.io/d8-x/liquidator-commander:dev
+    image: ghcr.io/d8-x/liquidator-commander:main
     depends_on:
       - cache
     #build:
@@ -61,7 +61,7 @@ services:
         max-file: "10"
 
   executor-base_sepolia:
-    image: ghcr.io/d8-x/liquidator-executor:dev
+    image: ghcr.io/d8-x/liquidator-executor:main
     depends_on:
       - cache
       - commander-base_sepolia
@@ -74,6 +74,71 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_ID: 4
       SDK_CONFIG: base_sepolia
+      SEED_PHRASE: ${SEED_PHRASE}
+      LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+    configs:
+      - source: liquidator_config
+        target: /etc/liquidatorconf.json
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  sentinel-base:
+    image: ghcr.io/d8-x/liquidator-sentinel:main
+    depends_on:
+      - cache
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 5
+      SDK_CONFIG: base
+      LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+    configs:
+      - source: liquidator_config
+        target: /etc/liquidatorconf.json
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  commander-base:
+    image: ghcr.io/d8-x/liquidator-commander:main
+    depends_on:
+      - cache
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 5
+      SDK_CONFIG: base
+      LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+    configs:
+      - source: liquidator_config
+        target: /etc/liquidatorconf.json
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  executor-base:
+    image: ghcr.io/d8-x/liquidator-executor:main
+    depends_on:
+      - cache
+      - commander-base
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 5
+      SDK_CONFIG: base
       SEED_PHRASE: ${SEED_PHRASE}
       LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
     configs:
@@ -105,7 +170,7 @@ services:
       - source: prometheus_yaml
         target: /etc/prometheus/prometheus.yml
       - source: rules_1
-        target: /etc/prometheus/rules/executor.rules.yaml
+        target: /etc/prometheus/rules/liquidator.rules.yaml
     restart: always
     environment:
       PROMETHEUS_DEPLOYMENT_NAME: ${PROMETHEUS_DEPLOYMENT_NAME}
