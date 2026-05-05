@@ -19,10 +19,14 @@ rule_files:
   - /etc/prometheus/rules/*.rules.yaml
 
 scrape_configs:
-  - job_name: "Liquidator service"
+  - job_name: "liquidator-executor"
     static_configs:
       - targets:
-          - executor:9001
+          - executor-base_sepolia:9001
+  - job_name: "liquidator-commander"
+    static_configs:
+      - targets:
+          - commander-base_sepolia:9001
   - job_name: prometheus
     static_configs:
       - targets:
