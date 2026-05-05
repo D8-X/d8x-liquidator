@@ -76,6 +76,11 @@ export class Metrics {
         help: "Cumulative count of treasury-to-bot funding failures, by reason.",
         labelNames: ["chain", "bot_idx", "bot_addr", "reason"] as const,
       }),
+      botInfo: new promClient.Gauge({
+        name: "liquidator_bot_info",
+        help: "Static bot identity gauge, value is always 1. One series per worker wallet.",
+        labelNames: ["chain", "bot_idx", "bot_addr"] as const,
+      }),
     },
   ) {
     this.chain = chain;
@@ -120,5 +125,9 @@ export class Metrics {
   public incFundingFailure(botIdx: number, botAddr: string, reason: FundingFailureReason, n: number = 1) {
     if (n <= 0) return;
     this.metricsList.fundingFailures.labels(this.chain, String(botIdx), botAddr.toLowerCase(), reason).inc(n);
+  }
+
+  public registerBot(botIdx: number, botAddr: string) {
+    this.metricsList.botInfo.labels(this.chain, String(botIdx), botAddr.toLowerCase()).set(1);
   }
 }
