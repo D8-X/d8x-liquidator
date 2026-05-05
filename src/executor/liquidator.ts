@@ -30,7 +30,6 @@ export default class Liquidator {
   private treasury: string;
   private privateKey: string[];
   private config: LiquidatorConfig;
-  private earnings: string | undefined;
   private chainId: number;
   private sdkConfig: NodeSDKConfig;
   private gasPriceBuffer = 100n; // no buffer
@@ -88,11 +87,6 @@ export default class Liquidator {
       busy: false,
     }));
     this.bots.forEach((bot, idx) => this.metrics.registerBot(idx, bot.api.getAddress()));
-    if (this.config.rewardsAddress != "" && this.config.rewardsAddress.startsWith("0x")) {
-      this.earnings = this.config.rewardsAddress;
-    } else {
-      this.earnings = undefined;
-    }
 
     if (this.config.gasPriceMultiplier) {
       if (this.config.gasPriceMultiplier > 0) {

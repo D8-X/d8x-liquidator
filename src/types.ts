@@ -31,18 +31,6 @@ export interface RedisMsg {
   hash: string;
   id: string;
 }
-export interface TradeMsg extends RedisMsg {
-  perpetualId: number;
-  symbol: string;
-  orderId: string;
-  traderAddr: string;
-  tradeAmount: number;
-  pnl: number;
-  fee: number;
-  newPositionSizeBC: number;
-  broker: string;
-}
-
 export interface LiquidateMsg extends RedisMsg {
   perpetualId: number;
   symbol: string;
@@ -78,7 +66,6 @@ export interface LiquidateTraderMsg {
   chainId: number;
   symbol: string;
   traderAddr: string;
-  // px: PriceFeedSubmission;
 }
 
 export enum BotStatus {

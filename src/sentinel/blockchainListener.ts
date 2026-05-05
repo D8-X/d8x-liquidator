@@ -1,7 +1,5 @@
 import { ABK64x64ToFloat, IPerpetualManager__factory, MarketData, PerpetualDataHandler } from "@d8-x/d8x-node-sdk";
 import { Redis } from "ioredis";
-import SturdyWebSocket from "sturdy-websocket";
-import Websocket from "ws";
 import {
   LiquidateMsg,
   LiquidatorConfig,
@@ -11,7 +9,7 @@ import {
 } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 
-import { JsonRpcProvider, Network, SocketProvider, WebSocketProvider } from "ethers";
+import { Network } from "ethers";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { MultiUrlWebSocketProvider } from "../multiUrlWebsocketProvider.js";
 import { initMarketDataWithCache } from "../sdkInit.js";
@@ -43,7 +41,6 @@ export default class BlockhainListener {
   private blockNumber: number | undefined;
   private mode: ListeningMode = ListeningMode.Events;
   private lastBlockReceivedAt: number;
-  private lastRpcIndex = { http: -1, ws: -1 };
   private switchingRPC = false;
   private emergency!: EmergencyPublishedStore;
   private refreshSymbolsInFlight: Promise<void> | null = null;
