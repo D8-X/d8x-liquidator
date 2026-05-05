@@ -439,8 +439,8 @@ export default class Distributor {
       );
       return;
     }
-    const chunkSize1 = 2 ** 16; // for addresses
-    const chunkSize2 = 2 ** 8; // for margin accounts
+    const chunkSize1 = this.config.addressChunkSize ?? 1024; // for addresses
+    const chunkSize2 = this.config.accountChunkSize ?? 128; // for margin accounts
     const perpId = this.md.getPerpIdFromSymbol(symbol)!;
     const proxy = this.md.getReadOnlyProxyInstance() as any as IPerpetualManager;
     this.lastRefreshTime.set(symbol, Date.now());
