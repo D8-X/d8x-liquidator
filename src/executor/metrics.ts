@@ -1,23 +1,11 @@
 import * as promClient from "prom-client";
 import express from "express";
 import { createLogger } from "../logger.js";
-import {
-  FundingFailureReason,
-  LiquidationOutcome,
-  Reason,
-  RejectReason,
-  FailReason,
-} from "./metricsTypes.js";
+import { FundingFailureReason, LiquidationOutcome, Reason, RejectReason, FailReason } from "./metricsTypes.js";
 
 const log = createLogger("executor.metrics");
 
-export {
-  LiquidationOutcome,
-  RejectReason,
-  FailReason,
-  FundingFailureReason,
-  Reason,
-} from "./metricsTypes.js";
+export { LiquidationOutcome, RejectReason, FailReason, FundingFailureReason, Reason } from "./metricsTypes.js";
 
 export function categorizeRejectReason(err: unknown): RejectReason {
   const msg = String(err ?? "").toLowerCase();
@@ -26,12 +14,7 @@ export function categorizeRejectReason(err: unknown): RejectReason {
   if (msg.includes("intrinsic gas")) return "intrinsic_gas";
   if (msg.includes("timed out") || msg.includes("timeout")) return "submit_timeout";
   if (msg.includes("margin safe") || msg.includes("not unsafe")) return "margin_safe_at_estimate";
-  if (
-    msg.includes("pyth") ||
-    msg.includes("odin") ||
-    msg.includes("price feed") ||
-    msg.includes("stale")
-  ) {
+  if (msg.includes("pyth") || msg.includes("odin") || msg.includes("price feed") || msg.includes("stale")) {
     return "price_feed_unavailable";
   }
   if (
@@ -50,11 +33,7 @@ export function categorizeFailReason(err: unknown): FailReason {
   if (msg.includes("null receipt") || msg.includes("dropped")) return "tx_dropped";
   if (msg.includes("timed out") || msg.includes("timeout")) return "wait_timeout";
   if (msg.includes("margin safe") || msg.includes("not unsafe")) return "margin_safe_at_mine";
-  if (
-    msg.includes("already liquidated") ||
-    msg.includes("trader liquidated") ||
-    msg.includes("no position")
-  ) {
+  if (msg.includes("already liquidated") || msg.includes("trader liquidated") || msg.includes("no position")) {
     return "already_liquidated";
   }
   if (msg.includes("market closed") || msg.includes("perp paused") || msg.includes("paused")) {
@@ -97,7 +76,7 @@ export class Metrics {
         help: "Cumulative count of treasury-to-bot funding failures, by reason.",
         labelNames: ["chain", "bot_idx", "bot_addr", "reason"] as const,
       }),
-    }
+    },
   ) {
     this.chain = chain;
   }
@@ -125,9 +104,7 @@ export class Metrics {
 
   public incLiquidation(symbol: string, outcome: LiquidationOutcome, reason: Reason, n: number = 1) {
     if (n <= 0) return;
-    this.metricsList.liquidationsTotal
-      .labels(this.chain, symbol, outcome, reason)
-      .inc(n);
+    this.metricsList.liquidationsTotal.labels(this.chain, symbol, outcome, reason).inc(n);
   }
 
   public observeLastLiquidation(botIdx: number, botAddr: string, when: Date = new Date()) {
@@ -137,15 +114,11 @@ export class Metrics {
   }
 
   public setBotBalance(botIdx: number, botAddr: string, eth: number) {
-    this.metricsList.botBalance
-      .labels(this.chain, String(botIdx), botAddr.toLowerCase())
-      .set(eth);
+    this.metricsList.botBalance.labels(this.chain, String(botIdx), botAddr.toLowerCase()).set(eth);
   }
 
   public incFundingFailure(botIdx: number, botAddr: string, reason: FundingFailureReason, n: number = 1) {
     if (n <= 0) return;
-    this.metricsList.fundingFailures
-      .labels(this.chain, String(botIdx), botAddr.toLowerCase(), reason)
-      .inc(n);
+    this.metricsList.fundingFailures.labels(this.chain, String(botIdx), botAddr.toLowerCase(), reason).inc(n);
   }
 }
