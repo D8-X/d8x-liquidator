@@ -323,7 +323,8 @@ export default class BlockhainListener {
           id: `${event.log.transactionHash}:${event.log.index}`,
         };
         this.redisPubClient.publish("LiquidateEvent", JSON.stringify(msg));
-        console.log({ event: "Liquidate", time: new Date(Date.now()).toISOString(), mode: this.mode, ...msg });
+        console.log({ event: "Liquidate", time: new Date(Date.now()).toISOString(), mode: ListeningMode, ...msg });
+
       },
     );
 
