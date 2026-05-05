@@ -450,6 +450,7 @@ export default class Liquidator {
     const { gasPrice: gasPriceWei } = await provider.getFeeData();
     // min balance should cover 1e7 gas
     const minBalance = gasPriceWei! * BigInt(this.config.gasLimit * 5);
+    this.metrics.setMinBalance(Number(formatUnits(minBalance, 18)));
     for (let addr of addressArray) {
       const botBalance = await provider.getBalance(addr);
       const treasuryBalance = await provider.getBalance(treasury.address);
