@@ -411,8 +411,9 @@ export default class BlockhainListener {
       proxy.filters.SetEmergencyState,
       async (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
         const perpId = Number(perpetualId);
-        // already published setEmergy event withing the last 10min are ignored
-        if (this.emergency.shouldIgnore(perpId)) return;
+        // SetEmergency is emitted for a given perp twice. 
+        // SetEmergency recieved for that perp within the last 10min are ignored.
+        if (this.emergency.shouldIgnore(perpId)) return; 
         this.emergency.markPublished(perpId);
         const symbol = await this.resolveSymbol(perpId);
         if (symbol === undefined) return;
