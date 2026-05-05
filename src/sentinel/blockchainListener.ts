@@ -265,6 +265,23 @@ export default class BlockhainListener {
     return this.refreshSymbolsInFlight;
   }
 
+  private async resolveSymbol(perpId: number): Promise<string | undefined> {
+    const cached = this.md.getSymbolFromPerpId(perpId);
+    if (cached !== undefined) return cached;
+    try {
+      await this.refreshSymbolsCoalesced();
+    } catch (e) {
+      console.log({
+        event: "refreshSymbolsFailed",
+        level: "warn",
+        time: new Date().toISOString(),
+        perpetualId: perpId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+    return this.md.getSymbolFromPerpId(perpId);
+  }
+
   private async addListeners() {
     if (this.listeningProvider === undefined) {
       throw new Error("No provider ready to listen.");
@@ -398,21 +415,7 @@ export default class BlockhainListener {
 
         if (this.emergency.shouldIgnore(perpId)) return;
         this.emergency.markPublished(perpId);
-        let symbol = this.md.getSymbolFromPerpId(perpId);
-        if (symbol === undefined) {
-          try {
-            await this.refreshSymbolsCoalesced();
-          } catch (e) {
-            console.log({
-              event: "refreshSymbolsFailed",
-              level: "warn",
-              time: new Date().toISOString(),
-              perpetualId: perpId,
-              error: e instanceof Error ? e.message : String(e),
-            });
-          }
-          symbol = this.md.getSymbolFromPerpId(perpId);
-        }
+        const symbol = await this.resolveSymbol(perpId);
         if (symbol === undefined) return;
         const msg: PerpEmergencyMsg = {
           perpetualId: perpId,
