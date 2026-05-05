@@ -9,6 +9,7 @@ export interface Position {
   cashCC: number;
   lockedInQC: number;
   unpaidFundingCC: number;
+  block: number;
 }
 
 export interface RedisConfig {
