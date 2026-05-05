@@ -15,6 +15,7 @@ import { JsonRpcProvider, Network, SocketProvider, WebSocketProvider } from "eth
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { MultiUrlWebSocketProvider } from "../multiUrlWebsocketProvider.js";
 import { initMarketDataWithCache } from "../sdkInit.js";
+import { EmergencyPublishedStore } from "./emergencyPublishedStore.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("sentinel.listener");
@@ -44,6 +45,8 @@ export default class BlockhainListener {
   private lastBlockReceivedAt: number;
   private lastRpcIndex = { http: -1, ws: -1 };
   private switchingRPC = false;
+  private emergency!: EmergencyPublishedStore;
+  private refreshSymbolsInFlight: Promise<void> | null = null;
 
   constructor(config: LiquidatorConfig) {
     if (config.rpcListenHttp.length <= 0) {
@@ -235,9 +238,37 @@ export default class BlockhainListener {
       "started"
     );
 
+    this.emergency = new EmergencyPublishedStore();
+
     this.connectWsOrSwitchToHttp();
     this.addListeners();
     this.resetHealthChecks();
+  }
+
+  private refreshSymbolsCoalesced(): Promise<void> {
+    if (!this.refreshSymbolsInFlight) {
+      this.refreshSymbolsInFlight = this.md.refreshSymbols(true).finally(() => {
+        this.refreshSymbolsInFlight = null;
+      });
+    }
+    return this.refreshSymbolsInFlight;
+  }
+
+  private async resolveSymbol(perpId: number): Promise<string | undefined> {
+    const cached = this.md.getSymbolFromPerpId(perpId);
+    if (cached !== undefined) return cached;
+    try {
+      await this.refreshSymbolsCoalesced();
+    } catch (e) {
+      console.log({
+        event: "refreshSymbolsFailed",
+        level: "warn",
+        time: new Date().toISOString(),
+        perpetualId: perpId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+    return this.md.getSymbolFromPerpId(perpId);
   }
 
   private async addListeners() {
@@ -271,7 +302,7 @@ export default class BlockhainListener {
         liquidator: string,
         trader: string,
         amountLiquidatedBC: bigint,
-        liquidationPrice: bigint,
+        _liquidationPrice: bigint,
         newPositionSizeBC: bigint,
         fFeeCC: bigint,
         fPnlCC: bigint,
@@ -362,9 +393,13 @@ export default class BlockhainListener {
 
     proxy.on(
       proxy.filters.SetEmergencyState,
-      (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
+      async (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
         const perpId = Number(perpetualId);
-        const symbol = this.md.getSymbolFromPerpId(perpId);
+        // SetEmergency is emitted for a given perp twice. 
+        // SetEmergency recieved for that perp within the last 10min are ignored.
+        if (this.emergency.shouldIgnore(perpId)) return; 
+        this.emergency.markPublished(perpId);
+        const symbol = await this.resolveSymbol(perpId);
         if (symbol === undefined) return;
         const msg: PerpEmergencyMsg = {
           perpetualId: perpId,
@@ -380,6 +415,7 @@ export default class BlockhainListener {
 
     proxy.on(proxy.filters.SetNormalState, (perpetualId: bigint, event: any) => {
       const perpId = Number(perpetualId);
+      this.emergency.clear(perpId);
       this.redisPubClient.publish(
         "PerpNormal",
         JSON.stringify({
