@@ -6,7 +6,7 @@ import {
 } from "@d8-x/d8x-node-sdk";
 import { Redis } from "ioredis";
 import { constructRedis, stableStringify } from "../utils.js";
-import { LiquidatorConfig, PerpEmergencyMsg, UpdateMarkPriceMsg } from "../types.js";
+import { LiquidatorConfig, PerpEmergencyMsg } from "../types.js";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { SDK_STATE_REPUBLISH_SECONDS, publishSDKState, refreshSDKStateTTL } from "../sdkState.js";
 import { loadWatchlist, PerpStates, publishWatchlist, serializePerpStates } from "../watchlist.js";
@@ -28,9 +28,10 @@ export default class Distributor {
   private pxSubmission: Map<string, IdxPriceInfo> = new Map();
   private pricesFetchedAt: Map<string, number> = new Map();
   private lastPoolCheckedAt: Map<number, number> = new Map();
-  private lastEventSpotPx: Map<string, number> = new Map();
+  private lastCheckedSpotPx: Map<string, number> = new Map();
   private pendingPoolChecks: Set<number> = new Set();
   private processingPools = false;
+  private priceWatchInflight = false;
   private messageSentAt: Map<string, Map<string, number>> = new Map();
   private lastPublishedState: string | undefined;
   private lastPublishedWatchlist: string | undefined;
@@ -107,7 +108,6 @@ export default class Distributor {
       "PerpNormal",
       "listener-error",
       "switch-mode",
-      "UpdateMarkPriceEvent",
       (err) => {
         if (err) {
           log.error({ err }, "redis subscription failed");
@@ -166,7 +166,7 @@ export default class Distributor {
     this.pricesFetchedAt.delete(symbol);
     this.messageSentAt.delete(symbol);
     this.pxSubmission.delete(symbol);
-    this.lastEventSpotPx.delete(symbol);
+    this.lastCheckedSpotPx.delete(symbol);
     for (const [poolId, pool] of this.symbolsByPool) {
       if (pool.delete(symbol)) {
         if (pool.size === 0) {
@@ -257,28 +257,15 @@ export default class Distributor {
       }
     }, Distributor.FALLBACK_TICK_MS).unref();
 
+    const watchMs = (this.config.priceWatchIntervalSeconds ?? 15) * 1_000;
+    setInterval(() => {
+      void this.runPriceWatch();
+    }, watchMs).unref();
+
     this.redisSubClient.on("message", async (channel, msg) => {
       switch (channel) {
         case "PerpEmergency": {
           await this.onPerpEmergency(JSON.parse(msg) as PerpEmergencyMsg);
-          break;
-        }
-
-        case "UpdateMarkPriceEvent": {
-          const { symbol, spotIndexPrice } = JSON.parse(msg) as UpdateMarkPriceMsg;
-          if (!this.symbols.has(symbol)) break;
-          const lastSpot = this.lastEventSpotPx.get(symbol);
-          const threshold = this.config.priceMovePctThreshold ?? 0.05;
-          if (lastSpot !== undefined && lastSpot > 0) {
-            const move = Math.abs(spotIndexPrice - lastSpot) / lastSpot;
-            if (move < threshold) break;
-          }
-          for (const [poolId, poolSymbols] of this.symbolsByPool) {
-            if (poolSymbols.has(symbol)) {
-              this.schedulePoolCheck(poolId);
-              break;
-            }
-          }
           break;
         }
 
@@ -295,6 +282,36 @@ export default class Distributor {
         }
       }
     });
+  }
+
+  private async runPriceWatch(): Promise<void> {
+    if (this.priceWatchInflight) return;
+    if (this.symbols.size === 0) return;
+    this.priceWatchInflight = true;
+    try {
+      const symbols = [...this.symbols];
+      await Promise.allSettled(symbols.map((s) => this.refreshPrices(s)));
+
+      const threshold = this.config.priceMovePctThreshold ?? 0.01;
+      for (const [poolId, poolSymbols] of this.symbolsByPool) {
+        for (const symbol of poolSymbols) {
+          const px = this.pxSubmission.get(symbol);
+          if (!px || px.s2MktClosed || px.s3MktClosed) continue;
+          const lastSpot = this.lastCheckedSpotPx.get(symbol);
+          if (lastSpot === undefined || lastSpot <= 0) {
+            this.schedulePoolCheck(poolId);
+            break;
+          }
+          const move = Math.abs(px.s2 - lastSpot) / lastSpot;
+          if (move >= threshold) {
+            this.schedulePoolCheck(poolId);
+            break;
+          }
+        }
+      }
+    } finally {
+      this.priceWatchInflight = false;
+    }
   }
 
   private async refreshPrices(symbol: string) {
@@ -460,7 +477,7 @@ export default class Distributor {
     this.lastPoolCheckedAt.set(poolId, now);
     for (const symbol of symbols) {
       const px = this.pxSubmission.get(symbol);
-      if (px) this.lastEventSpotPx.set(symbol, px.s2);
+      if (px) this.lastCheckedSpotPx.set(symbol, px.s2);
     }
 
     const cooldownMs = this.config.liquidateIntervalSecondsMin * 1_000;
