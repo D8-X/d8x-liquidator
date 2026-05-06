@@ -23,7 +23,9 @@ export interface LiquidatorConfig {
   maxGasPriceGWei: number;
   gasLimit: number;
   priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
-  maxConcurrentChecks?: number;
+  liquidatableBatchSize?: number;
+  priceMovePctThreshold?: number;
+  checkIntervalSecondsMax?: number;
 }
 
 export interface RedisMsg {
