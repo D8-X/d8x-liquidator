@@ -24,8 +24,9 @@ export interface LiquidatorConfig {
   gasLimit: number;
   priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
   liquidatableBatchSize?: number;
-  priceMovePctThreshold?: number;
+  checkIntervalSecondsMin?: number;
   checkIntervalSecondsMax?: number;
+  priceMovePctThreshold?: number;
 }
 
 export interface RedisMsg {
