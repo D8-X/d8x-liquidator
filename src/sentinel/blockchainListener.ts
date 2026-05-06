@@ -80,7 +80,6 @@ export default class BlockhainListener {
       log.warn({ receivedSecondsAgo: blockTime }, "Last block received too long ago - heartbeat check failed");
       return false;
     }
-    log.info({ receivedSecondsAgo: blockTime }, "Last block received within expected time");
     return true;
   }
 
@@ -280,7 +279,6 @@ export default class BlockhainListener {
 
     this.listeningProvider.on("block", (blockNumber) => {
       this.lastBlockReceivedAt = Date.now();
-      this.redisPubClient.publish("block", blockNumber.toString());
       this.blockNumber = blockNumber;
     });
 

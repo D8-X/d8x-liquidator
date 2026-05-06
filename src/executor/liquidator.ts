@@ -118,7 +118,7 @@ export default class Liquidator {
     }
 
     // Subscribe to relayed events
-    await this.redisSubClient.subscribe("block", "LiquidateTrader", watchlistChannel(this.chainId), (err, count) => {
+    await this.redisSubClient.subscribe("LiquidateTrader", watchlistChannel(this.chainId), (err, count) => {
       if (err) {
         log.error({ err }, "redis subscription failed");
         process.exit(1);
