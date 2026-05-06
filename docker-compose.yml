@@ -6,11 +6,17 @@ services:
   cache:
     image: redis:6.2-alpine
     restart: always
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
       - "127.0.0.1:${REDIS_PORT}:${REDIS_PORT}"
     command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
-    # environment:
-    #   REDIS_ID: ${REDIS_ID}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
   sentinel-base_sepolia:
     image: ghcr.io/d8-x/liquidator-sentinel:main
@@ -18,7 +24,8 @@ services:
     #  context: .
     #  dockerfile: ./src/sentinel/Dockerfile
     depends_on:
-      - cache
+      cache:
+        condition: service_healthy
     environment:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
@@ -39,7 +46,8 @@ services:
   commander-base_sepolia:
     image: ghcr.io/d8-x/liquidator-commander:main
     depends_on:
-      - cache
+      cache:
+        condition: service_healthy
     #build:
     #  context: .
     #  dockerfile: ./src/commander/Dockerfile
@@ -63,8 +71,10 @@ services:
   executor-base_sepolia:
     image: ghcr.io/d8-x/liquidator-executor:main
     depends_on:
-      - cache
-      - commander-base_sepolia
+      cache:
+        condition: service_healthy
+      commander-base_sepolia:
+        condition: service_started
     #build:
     #  context: .
     #  dockerfile: ./src/executor/Dockerfile
@@ -89,7 +99,8 @@ services:
   sentinel-base:
     image: ghcr.io/d8-x/liquidator-sentinel:main
     depends_on:
-      - cache
+      cache:
+        condition: service_healthy
     environment:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
@@ -110,7 +121,8 @@ services:
   commander-base:
     image: ghcr.io/d8-x/liquidator-commander:main
     depends_on:
-      - cache
+      cache:
+        condition: service_healthy
     environment:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
@@ -131,8 +143,10 @@ services:
   executor-base:
     image: ghcr.io/d8-x/liquidator-executor:main
     depends_on:
-      - cache
-      - commander-base
+      cache:
+        condition: service_healthy
+      commander-base:
+        condition: service_started
     environment:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}

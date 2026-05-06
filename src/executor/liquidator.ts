@@ -4,7 +4,7 @@ import { Redis } from "ioredis";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
-import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
+import { constructRedis, executeWithTimeout } from "../utils.js";
 import { loadWatchlist, parsePerpStates, watchlistChannel } from "../watchlist.js";
 import { categorizeFailReason, categorizeRejectReason, Metrics } from "./metrics.js";
 import { createLogger } from "../logger.js";
@@ -30,7 +30,6 @@ export default class Liquidator {
   private treasury: string;
   private privateKey: string[];
   private config: LiquidatorConfig;
-  private earnings: string | undefined;
   private chainId: number;
   private sdkConfig: NodeSDKConfig;
   private gasPriceBuffer = 100n; // no buffer
@@ -68,8 +67,7 @@ export default class Liquidator {
         logRpcSwitches: true,
         staticNetwork: true,
         maxRetries: this.config.rpcExec.length * 3,
-        // do not switch rpc on each request with premium rpcExec rpcs.
-        switchRpcOnEachRequest: false,
+        switchRpcOnEachRequest: this.config.switchRpcOnEachRequest ?? false,
       }),
     ];
 
@@ -88,11 +86,6 @@ export default class Liquidator {
       busy: false,
     }));
     this.bots.forEach((bot, idx) => this.metrics.registerBot(idx, bot.api.getAddress()));
-    if (this.config.rewardsAddress != "" && this.config.rewardsAddress.startsWith("0x")) {
-      this.earnings = this.config.rewardsAddress;
-    } else {
-      this.earnings = undefined;
-    }
 
     if (this.config.gasPriceMultiplier) {
       if (this.config.gasPriceMultiplier > 0) {
@@ -124,7 +117,7 @@ export default class Liquidator {
     }
 
     // Subscribe to relayed events
-    await this.redisSubClient.subscribe("block", "LiquidateTrader", watchlistChannel(this.chainId), (err, count) => {
+    await this.redisSubClient.subscribe("LiquidateTrader", watchlistChannel(this.chainId), (err, count) => {
       if (err) {
         log.error({ err }, "redis subscription failed");
         process.exit(1);
@@ -201,30 +194,6 @@ export default class Liquidator {
     this.locked.add(id);
     this.timesTried.set(id, (this.timesTried.get(id) ?? 0) + 1);
 
-    // Check if trader is margin safe before liquidating.
-    let isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch((e) => {
-      log.error({ err: e, symbol, trader }, "isMaintenanceMarginSafe failed");
-      return undefined;
-    });
-
-    // Do not liquidate when margin safe.
-    if (isMarginSafe) {
-      if (this.timesTried.get(id)! > 10) {
-        throw new Error("too many false positives");
-      }
-      log.info(
-        {
-          symbol: symbol,
-          executor: this.bots[botIdx].api.getAddress(),
-          trader: trader,
-        },
-        "trader is margin safe",
-      );
-      this.bots[botIdx].busy = false;
-      this.locked.delete(`${symbol}:${trader}`);
-      return LiquidationStatus.NoOp;
-    }
-
     // submit txn
     log.info(
       {
@@ -260,10 +229,6 @@ export default class Liquidator {
       );
       this.metrics.incLiquidation(symbol, "rejected", categorizeRejectReason(e));
       this.bots[botIdx].busy = false;
-      if (isMarginSafe === undefined) {
-        // tried without knowing and failed - keep locked
-        await sleep(60);
-      }
       this.locked.delete(`${symbol}:${trader}`);
       return LiquidationStatus.Rejection;
     }

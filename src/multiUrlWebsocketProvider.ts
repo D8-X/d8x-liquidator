@@ -1,7 +1,5 @@
 import {
   SocketProvider,
-  WebSocketLike,
-  WebSocketCreator,
   Networkish,
   JsonRpcApiProviderOptions,
   ProviderEvent,

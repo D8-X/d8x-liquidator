@@ -19,9 +19,17 @@ services:
   cache:
     image: redis:6.2-alpine
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
       - "127.0.0.1:${REDIS_PORT}:${REDIS_PORT}"
     command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
   sentinel-base_sepolia:
     build:
@@ -30,7 +38,8 @@ services:
       secrets:
         - npm_token
     depends_on:
-      - cache
+      cache:
+        condition: service_healthy
     environment:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
@@ -55,7 +64,8 @@ services:
       secrets:
         - npm_token
     depends_on:
-      - cache
+      cache:
+        condition: service_healthy
     environment:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
@@ -80,8 +90,10 @@ services:
       secrets:
         - npm_token
     depends_on:
-      - cache
-      - commander-base_sepolia
+      cache:
+        condition: service_healthy
+      commander-base_sepolia:
+        condition: service_started
     environment:
       REDIS_HOST: cache
       REDIS_PORT: ${REDIS_PORT}
