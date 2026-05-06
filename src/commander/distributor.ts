@@ -40,7 +40,7 @@ export default class Distributor {
   private lastReconcileSuccessAt = 0;
   private static readonly RECONCILE_TICK_MS = 60 * 1_000;
   private static readonly RECONCILE_STALE_MS = 30 * 60 * 1_000;
-  private static readonly RECONCILE_EVENT_MIN_GAP_MS = 2_000;
+  private static readonly RECONCILE_EVENT_MIN_GAP_MS = 30_000;
   private static readonly FALLBACK_TICK_MS = 5_000;
   public ready: boolean = false;
 
@@ -117,6 +117,7 @@ export default class Distributor {
     );
 
     await this.broadcastWatchlist();
+    this.lastReconcileSuccessAt = Date.now();
     this.ready = true;
   }
 
