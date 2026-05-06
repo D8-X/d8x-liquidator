@@ -195,30 +195,6 @@ export default class Liquidator {
     this.locked.add(id);
     this.timesTried.set(id, (this.timesTried.get(id) ?? 0) + 1);
 
-    // Check if trader is margin safe before liquidating.
-    let isMarginSafe = await this.bots[botIdx].api.isMaintenanceMarginSafe(symbol, trader).catch((e) => {
-      log.error({ err: e, symbol, trader }, "isMaintenanceMarginSafe failed");
-      return undefined;
-    });
-
-    // Do not liquidate when margin safe.
-    if (isMarginSafe) {
-      if (this.timesTried.get(id)! > 10) {
-        throw new Error("too many false positives");
-      }
-      log.info(
-        {
-          symbol: symbol,
-          executor: this.bots[botIdx].api.getAddress(),
-          trader: trader,
-        },
-        "trader is margin safe",
-      );
-      this.bots[botIdx].busy = false;
-      this.locked.delete(`${symbol}:${trader}`);
-      return LiquidationStatus.NoOp;
-    }
-
     // submit txn
     log.info(
       {
@@ -254,10 +230,6 @@ export default class Liquidator {
       );
       this.metrics.incLiquidation(symbol, "rejected", categorizeRejectReason(e));
       this.bots[botIdx].busy = false;
-      if (isMarginSafe === undefined) {
-        // tried without knowing and failed - keep locked
-        await sleep(60);
-      }
       this.locked.delete(`${symbol}:${trader}`);
       return LiquidationStatus.Rejection;
     }
