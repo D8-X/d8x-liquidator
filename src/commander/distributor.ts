@@ -260,7 +260,6 @@ export default class Distributor {
             const move = Math.abs(spotIndexPrice - lastSpot) / lastSpot;
             if (move < threshold) break;
           }
-          this.lastEventSpotPx.set(symbol, spotIndexPrice);
           for (const [poolId, poolSymbols] of this.symbolsByPool) {
             if (poolSymbols.has(symbol)) {
               this.schedulePoolCheck(poolId);
@@ -370,8 +369,6 @@ export default class Distributor {
   }
 
   private schedulePoolCheck(poolId: number): void {
-    const minMs = (this.config.checkIntervalSecondsMin ?? 2) * 1_000;
-    if (Date.now() - (this.lastPoolCheckedAt.get(poolId) ?? 0) < minMs) return;
     this.pendingPoolChecks.add(poolId);
     if (!this.processingPools) void this.processPendingPools();
   }
@@ -381,9 +378,14 @@ export default class Distributor {
     this.processingPools = true;
     try {
       while (this.pendingPoolChecks.size > 0) {
+        const minMs = (this.config.checkIntervalSecondsMin ?? 2) * 1_000;
         const pools = [...this.pendingPoolChecks];
         this.pendingPoolChecks.clear();
         for (const poolId of pools) {
+          const sinceLast = Date.now() - (this.lastPoolCheckedAt.get(poolId) ?? 0);
+          if (sinceLast < minMs) {
+            await new Promise((resolve) => setTimeout(resolve, minMs - sinceLast));
+          }
           try {
             await this.checkPool(poolId);
           } catch (e) {
@@ -433,6 +435,10 @@ export default class Distributor {
 
     const now = Date.now();
     this.lastPoolCheckedAt.set(poolId, now);
+    for (const symbol of symbols) {
+      const px = this.pxSubmission.get(symbol);
+      if (px) this.lastEventSpotPx.set(symbol, px.s2);
+    }
 
     const cooldownMs = this.config.liquidateIntervalSecondsMin * 1_000;
     for (const { perpId, traders } of result) {
