@@ -104,6 +104,17 @@ export default class Distributor {
   }
 
   private async addSymbol(symbol: string): Promise<void> {
+    let poolId: number;
+    try {
+      poolId = this.md.getPoolIdFromSymbol(symbol); // getPoolIdFromSymbol either returns >= 1 or throws
+    } catch (e) {
+      log.warn(
+        { symbol, error: e instanceof Error ? e.message : String(e) },
+        "Skipping symbol. Cannot resolve poolId",
+      );
+      return;
+    }
+
     let priceInfo: IdxPriceInfo | undefined;
     let lastErr: unknown;
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -122,17 +133,15 @@ export default class Distributor {
       );
       return;
     }
+
     this.pxSubmission.set(symbol, priceInfo);
     this.symbols.add(symbol);
-    const poolId = this.md.getPoolIdFromSymbol(symbol);
-    if (poolId) {
-      let pool = this.symbolsByPool.get(poolId);
-      if (!pool) {
-        pool = new Set();
-        this.symbolsByPool.set(poolId, pool);
-      }
-      pool.add(symbol);
+    let pool = this.symbolsByPool.get(poolId);
+    if (!pool) {
+      pool = new Set();
+      this.symbolsByPool.set(poolId, pool);
     }
+    pool.add(symbol);
   }
 
   private dropSymbol(symbol: string): boolean {
@@ -371,9 +380,9 @@ export default class Distributor {
     return s2Move > threshold || s3Move > threshold;
   }
 
-  private async checkPool(poolId: number): Promise<number> {
+  private async checkPool(poolId: number): Promise<void> {
     const symbols = this.symbolsByPool.get(poolId);
-    if (!symbols || symbols.size === 0) return 0;
+    if (!symbols || symbols.size === 0) return;
 
     const prices = new Map<number, [number, number, number]>();
     const checkedSymbols: string[] = [];
@@ -386,7 +395,7 @@ export default class Distributor {
       prices.set(perpId, [px.s2, px.s3 ?? 0, px.rho ?? 0]);
       checkedSymbols.push(symbol);
     }
-    if (prices.size === 0) return 0;
+    if (prices.size === 0) return;
 
     let result: Array<{ perpId: number; traders: string[] }>;
     try {
@@ -400,7 +409,7 @@ export default class Distributor {
         { error: e instanceof Error ? e.message : String(e), poolId },
         "getLiquidatableAccountsInPool failed",
       );
-      return 0;
+      return;
     }
 
     const now = Date.now();
@@ -410,7 +419,6 @@ export default class Distributor {
       this.lastCheckedAt.set(symbol, now);
     }
 
-    let totalDue = 0;
     const cooldownMs = this.config.liquidateIntervalSecondsMin * 1_000;
     for (const { perpId, traders } of result) {
       const symbol = this.md.getSymbolFromPerpId(perpId);
@@ -429,8 +437,6 @@ export default class Distributor {
           perSymbol!.set(trader, now);
         }),
       );
-      totalDue += dueTraders.length;
     }
-    return totalDue;
   }
 }
