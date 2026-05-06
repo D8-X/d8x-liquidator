@@ -1,12 +1,6 @@
-import { ABK64x64ToFloat, IPerpetualManager__factory, MarketData, PerpetualDataHandler } from "@d8-x/d8x-node-sdk";
+import { IPerpetualManager__factory, MarketData, PerpetualDataHandler } from "@d8-x/d8x-node-sdk";
 import { Redis } from "ioredis";
-import {
-  LiquidateMsg,
-  LiquidatorConfig,
-  PerpEmergencyMsg,
-  UpdateMarginAccountMsg,
-  UpdateMarkPriceMsg,
-} from "../types.js";
+import { LiquidatorConfig, PerpEmergencyMsg } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 
 import { Network } from "ethers";
@@ -291,102 +285,6 @@ export default class BlockhainListener {
     });
 
     const proxy = IPerpetualManager__factory.connect(this.md.getProxyAddress(), this.listeningProvider);
-
-    proxy.on(
-      proxy.filters.Liquidate,
-      (
-        perpetualId: bigint,
-        liquidator: string,
-        trader: string,
-        amountLiquidatedBC: bigint,
-        _liquidationPrice: bigint,
-        newPositionSizeBC: bigint,
-        fFeeCC: bigint,
-        fPnlCC: bigint,
-        event: any,
-      ) => {
-        const perpId = Number(perpetualId);
-        const symbol = this.md.getSymbolFromPerpId(perpId)!;
-        const msg: LiquidateMsg = {
-          perpetualId: perpId,
-          symbol: symbol,
-          traderAddr: trader,
-          tradeAmount: ABK64x64ToFloat(amountLiquidatedBC),
-          liquidator: liquidator,
-          pnl: ABK64x64ToFloat(fPnlCC),
-          fee: ABK64x64ToFloat(fFeeCC),
-          newPositionSizeBC: ABK64x64ToFloat(newPositionSizeBC),
-          block: event.log.blockNumber,
-          hash: event.log.transactionHash,
-          id: `${event.log.transactionHash}:${event.log.index}`,
-        };
-        this.redisPubClient.publish("LiquidateEvent", JSON.stringify(msg));
-        log.info({ event: "Liquidate", mode: this.mode, ...msg });
-      },
-    );
-
-    proxy.on(
-      proxy.filters.UpdateMarginAccount,
-      (
-        perpetualId: bigint,
-        trader: string,
-        _fLockedInValueQC: bigint,
-        _fCashCC: bigint,
-        _fPositionBC: bigint,
-        fFundingPaymentCC: bigint,
-        event: any,
-      ) => {
-        const perpId = Number(perpetualId);
-        const symbol = this.md.getSymbolFromPerpId(perpId)!;
-        const msg: UpdateMarginAccountMsg = {
-          perpetualId: perpId,
-          symbol: symbol,
-          traderAddr: trader,
-          fundingPaymentCC: ABK64x64ToFloat(fFundingPaymentCC),
-          block: event.log.blockNumber,
-          hash: event.log.transactionHash,
-          id: `${event.log.transactionHash}:${event.log.index}`,
-        };
-        this.redisPubClient.publish("UpdateMarginAccountEvent", JSON.stringify(msg));
-
-        log.debug({
-          event: "UpdateMarginAccount",
-          mode: this.mode,
-          ...msg,
-        });
-      },
-    );
-
-    proxy.on(
-      proxy.filters.UpdateMarkPrice,
-      (
-        perpetualId: bigint,
-        fMidPricePremium: bigint,
-        fMarkPricePremium: bigint,
-        fSpotIndexPrice: bigint,
-        event: any,
-      ) => {
-        const perpId = Number(perpetualId);
-        const symbol = this.md.getSymbolFromPerpId(perpId)!;
-        const msg: UpdateMarkPriceMsg = {
-          perpetualId: perpId,
-          symbol: symbol,
-          midPremium: ABK64x64ToFloat(fMidPricePremium),
-          markPremium: ABK64x64ToFloat(fMarkPricePremium),
-          spotIndexPrice: ABK64x64ToFloat(fSpotIndexPrice),
-          block: event.log.blockNumber,
-          hash: event.log.transactionHash,
-          id: `${event.log.transactionHash}:${event.log.index}`,
-        };
-        this.redisPubClient.publish("UpdateMarkPriceEvent", JSON.stringify(msg));
-
-        log.debug({
-          event: "UpdateMarkPrice",
-          mode: this.mode,
-          ...msg,
-        });
-      },
-    );
 
     proxy.on(
       proxy.filters.SetEmergencyState,

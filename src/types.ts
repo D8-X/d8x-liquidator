@@ -20,7 +20,6 @@ export interface LiquidatorConfig {
   liquidateIntervalSecondsMin: number;
   fetchPricesIntervalSecondsMin: number;
   gasPriceMultiplier: number;
-  maxGasPriceGWei: number;
   gasLimit: number;
   priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
   liquidatableBatchSize?: number;
@@ -35,32 +34,6 @@ export interface RedisMsg {
   hash: string;
   id: string;
 }
-export interface LiquidateMsg extends RedisMsg {
-  perpetualId: number;
-  symbol: string;
-  traderAddr: string;
-  tradeAmount: number;
-  pnl: number;
-  fee: number;
-  newPositionSizeBC: number;
-  liquidator: string;
-}
-
-export interface UpdateMarginAccountMsg extends RedisMsg {
-  perpetualId: number;
-  symbol: string;
-  traderAddr: string;
-  fundingPaymentCC: number;
-}
-
-export interface UpdateMarkPriceMsg extends RedisMsg {
-  perpetualId: number;
-  symbol: string;
-  midPremium: number;
-  markPremium: number;
-  spotIndexPrice: number;
-}
-
 export interface PerpEmergencyMsg extends RedisMsg {
   perpetualId: number;
   symbol: string;
