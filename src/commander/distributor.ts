@@ -1,11 +1,9 @@
 import {
   MarketData,
   PerpetualDataHandler,
-  IPerpetualManager,
   IdxPriceInfo,
   sleepForSec,
 } from "@d8-x/d8x-node-sdk";
-import { findLiquidatableTraders, toFixedIdxPrice } from "./liquidationDiscovery.js";
 import { Redis } from "ioredis";
 import { constructRedis, stableStringify } from "../utils.js";
 import { LiquidatorConfig, PerpEmergencyMsg } from "../types.js";
@@ -25,8 +23,11 @@ export default class Distributor {
 
   // state
   private symbols: Set<string> = new Set();
+  private symbolsByPool: Map<number, Set<string>> = new Map();
   private pxSubmission: Map<string, IdxPriceInfo> = new Map();
   private pricesFetchedAt: Map<string, number> = new Map();
+  private lastCheckedPx: Map<string, IdxPriceInfo> = new Map();
+  private lastCheckedAt: Map<string, number> = new Map();
   private messageSentAt: Map<string, Map<string, number>> = new Map();
   private lastPublishedState: string | undefined;
   private lastPublishedWatchlist: string | undefined;
@@ -86,7 +87,6 @@ export default class Distributor {
     for (const symbol of initial) await this.addSymbol(symbol);
 
     await this.redisSubClient.subscribe(
-      "block",
       "PerpEmergency",
       "PerpNormal",
       "listener-error",
@@ -124,6 +124,15 @@ export default class Distributor {
     }
     this.pxSubmission.set(symbol, priceInfo);
     this.symbols.add(symbol);
+    const poolId = this.md.getPoolIdFromSymbol(symbol);
+    if (poolId) {
+      let pool = this.symbolsByPool.get(poolId);
+      if (!pool) {
+        pool = new Set();
+        this.symbolsByPool.set(poolId, pool);
+      }
+      pool.add(symbol);
+    }
   }
 
   private dropSymbol(symbol: string): boolean {
@@ -131,6 +140,13 @@ export default class Distributor {
     this.pricesFetchedAt.delete(symbol);
     this.messageSentAt.delete(symbol);
     this.pxSubmission.delete(symbol);
+    this.lastCheckedPx.delete(symbol);
+    this.lastCheckedAt.delete(symbol);
+    for (const [poolId, pool] of this.symbolsByPool) {
+      if (pool.delete(symbol) && pool.size === 0) {
+        this.symbolsByPool.delete(poolId);
+      }
+    }
     return true;
   }
 
@@ -201,31 +217,13 @@ export default class Distributor {
       }
     }, Distributor.RECONCILE_TICK_MS).unref();
 
+    const pollMs = this.config.fetchPricesIntervalSecondsMin * 1_000;
+    setInterval(() => {
+      void this.evaluateAndCheck();
+    }, pollMs).unref();
+
     this.redisSubClient.on("message", async (channel, msg) => {
       switch (channel) {
-        case "block": {
-          const blockSymbols = [...this.symbols];
-          const max = this.config.maxConcurrentChecks ?? blockSymbols.length;
-          for (let i = 0; i < blockSymbols.length; i += max) {
-            const slice = blockSymbols.slice(i, i + max);
-            const results = await Promise.allSettled(
-              slice.map((symbol) => this.checkPositions(symbol)),
-            );
-            results.forEach((r, j) => {
-              if (r.status === "rejected") {
-                log.error(
-                  {
-                    symbol: slice[j],
-                    error: r.reason instanceof Error ? r.reason.message : String(r.reason),
-                  },
-                  "checkPositions failed",
-                );
-              }
-            });
-          }
-          break;
-        }
-
         case "PerpEmergency": {
           await this.onPerpEmergency(JSON.parse(msg) as PerpEmergencyMsg);
           break;
@@ -330,45 +328,112 @@ export default class Distributor {
     return this.reconcileInflight;
   }
 
-  private async checkPositions(symbol: string): Promise<number> {
-    if (!(await this.refreshPrices(symbol))) return 0;
-    if (!this.symbols.has(symbol)) return 0;
+  private async evaluateAndCheck(): Promise<void> {
+    if (this.symbols.size === 0) return;
+    await Promise.allSettled([...this.symbols].map((s) => this.refreshPrices(s)));
 
-    const px = this.pxSubmission.get(symbol)!;
-    if (px.s2MktClosed || px.s3MktClosed) return 0;
+    const threshold = this.config.priceMovePctThreshold ?? 0.005;
+    const maxIntervalMs = (this.config.checkIntervalSecondsMax ?? 30) * 1_000;
+    const now = Date.now();
+    const poolsToCheck: number[] = [];
+    for (const [poolId, poolSymbols] of this.symbolsByPool) {
+      for (const symbol of poolSymbols) {
+        if (this.shouldCheck(symbol, now, threshold, maxIntervalMs)) {
+          poolsToCheck.push(poolId);
+          break;
+        }
+      }
+    }
+    if (poolsToCheck.length === 0) return;
 
-    const perpId = this.md.getPerpIdFromSymbol(symbol)!;
-    const proxy = this.md.getReadOnlyProxyInstance() as any as IPerpetualManager;
+    const results = await Promise.allSettled(poolsToCheck.map((id) => this.checkPool(id)));
+    results.forEach((r, j) => {
+      if (r.status === "rejected") {
+        log.error(
+          {
+            poolId: poolsToCheck[j],
+            error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+          },
+          "checkPool failed",
+        );
+      }
+    });
+  }
 
-    let candidates: string[];
+  private shouldCheck(symbol: string, now: number, threshold: number, maxIntervalMs: number): boolean {
+    if (!this.symbols.has(symbol)) return false;
+    const px = this.pxSubmission.get(symbol);
+    if (!px || px.s2MktClosed || px.s3MktClosed) return false;
+    const lastAt = this.lastCheckedAt.get(symbol) ?? 0;
+    if (now - lastAt > maxIntervalMs) return true;
+    const lastPx = this.lastCheckedPx.get(symbol);
+    if (!lastPx) return true;
+    const s2Move = lastPx.s2 > 0 ? Math.abs(px.s2 - lastPx.s2) / lastPx.s2 : 1;
+    const s3Last = lastPx.s3 ?? 0;
+    const s3Move = s3Last > 0 ? Math.abs((px.s3 ?? 0) - s3Last) / s3Last : 0;
+    return s2Move > threshold || s3Move > threshold;
+  }
+
+  private async checkPool(poolId: number): Promise<number> {
+    const symbols = this.symbolsByPool.get(poolId);
+    if (!symbols || symbols.size === 0) return 0;
+
+    const prices = new Map<number, [number, number, number]>();
+    const checkedSymbols: string[] = [];
+    for (const symbol of symbols) {
+      if (!this.symbols.has(symbol)) continue;
+      const px = this.pxSubmission.get(symbol);
+      if (!px || px.s2MktClosed || px.s3MktClosed) continue;
+      const perpId = this.md.getPerpIdFromSymbol(symbol);
+      if (perpId === undefined) continue;
+      prices.set(perpId, [px.s2, px.s3 ?? 0, px.rho ?? 0]);
+      checkedSymbols.push(symbol);
+    }
+    if (prices.size === 0) return 0;
+
+    let result: Array<{ perpId: number; traders: string[] }>;
     try {
-      candidates = await findLiquidatableTraders(proxy, this.provider, perpId, toFixedIdxPrice(px));
+      result = await this.md.getLiquidatableAccountsInPool(
+        poolId,
+        prices,
+        this.config.liquidatableBatchSize ?? 5,
+      );
     } catch (e) {
       log.warn(
-        { error: e instanceof Error ? e.message : String(e), symbol },
-        "getLiquidatableAccounts failed",
+        { error: e instanceof Error ? e.message : String(e), poolId },
+        "getLiquidatableAccountsInPool failed",
       );
       return 0;
     }
-    if (candidates.length === 0) return 0;
 
-    let perSymbol = this.messageSentAt.get(symbol);
-    if (!perSymbol) {
-      perSymbol = new Map();
-      this.messageSentAt.set(symbol, perSymbol);
-    }
     const now = Date.now();
-    const cooldownMs = this.config.liquidateIntervalSecondsMin * 1_000;
-    const dueTraders = candidates.filter((t) => now - (perSymbol!.get(t) ?? 0) > cooldownMs);
-    if (dueTraders.length === 0) return 0;
+    for (const symbol of checkedSymbols) {
+      const px = this.pxSubmission.get(symbol);
+      if (px) this.lastCheckedPx.set(symbol, px);
+      this.lastCheckedAt.set(symbol, now);
+    }
 
-    await Promise.all(
-      dueTraders.map(async (trader) => {
-        const m = JSON.stringify({ chainId: this.chainId, symbol, traderAddr: trader });
-        await this.redisPubClient.publish("LiquidateTrader", m);
-        perSymbol!.set(trader, now);
-      }),
-    );
-    return dueTraders.length;
+    let totalDue = 0;
+    const cooldownMs = this.config.liquidateIntervalSecondsMin * 1_000;
+    for (const { perpId, traders } of result) {
+      const symbol = this.md.getSymbolFromPerpId(perpId);
+      if (!symbol || !this.symbols.has(symbol)) continue;
+      let perSymbol = this.messageSentAt.get(symbol);
+      if (!perSymbol) {
+        perSymbol = new Map();
+        this.messageSentAt.set(symbol, perSymbol);
+      }
+      const dueTraders = traders.filter((t) => now - (perSymbol!.get(t) ?? 0) > cooldownMs);
+      if (dueTraders.length === 0) continue;
+      await Promise.all(
+        dueTraders.map(async (trader) => {
+          const m = JSON.stringify({ chainId: this.chainId, symbol, traderAddr: trader });
+          await this.redisPubClient.publish("LiquidateTrader", m);
+          perSymbol!.set(trader, now);
+        }),
+      );
+      totalDue += dueTraders.length;
+    }
+    return totalDue;
   }
 }
