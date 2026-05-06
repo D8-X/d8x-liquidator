@@ -24,6 +24,7 @@ export default class Distributor {
   // state
   private symbols: Set<string> = new Set();
   private symbolsByPool: Map<number, Set<string>> = new Map();
+  private perpIdsByPool: Map<number, number[]> = new Map();
   private pxSubmission: Map<string, IdxPriceInfo> = new Map();
   private pricesFetchedAt: Map<string, number> = new Map();
   private lastPoolCheckedAt: Map<number, number> = new Map();
@@ -79,6 +80,18 @@ export default class Distributor {
     const info = await this.md.exchangeInfo();
     await this.publishState();
     setInterval(() => void this.publishState(), SDK_STATE_REPUBLISH_SECONDS * 1000).unref();
+
+    for (const pool of info.pools) {
+      if (!pool.isRunning || pool.perpetuals.length === 0) continue;
+      const sample = pool.perpetuals[0];
+      let poolId: number;
+      try {
+        poolId = this.md.getPoolIdFromSymbol(`${sample.baseCurrency}-${sample.quoteCurrency}-${pool.poolSymbol}`);
+      } catch {
+        continue;
+      }
+      this.perpIdsByPool.set(poolId, pool.perpetuals.map((p) => p.id));
+    }
 
     const initial = info.pools
       .filter(({ isRunning }) => isRunning)
@@ -418,6 +431,11 @@ export default class Distributor {
     }
     if (prices.size === 0) return;
 
+    const allPerpIds = this.perpIdsByPool.get(poolId) ?? [];
+    for (const perpId of allPerpIds) {
+      if (!prices.has(perpId)) prices.set(perpId, [0, 0, 0]);
+    }
+
     let result: Array<{ perpId: number; traders: string[] }>;
     try {
       result = await this.md.getLiquidatableAccountsInPool(
@@ -432,6 +450,11 @@ export default class Distributor {
       );
       return;
     }
+    const liquidatableCount = result.reduce((acc, r) => acc + r.traders.length, 0);
+    log.info(
+      { poolId, perpsQueried: prices.size, perpsWithLiquidatable: result.length, liquidatableCount },
+      "getLiquidatableAccountsInPool ok",
+    );
 
     const now = Date.now();
     this.lastPoolCheckedAt.set(poolId, now);
