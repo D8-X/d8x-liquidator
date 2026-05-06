@@ -27,6 +27,7 @@ export interface LiquidatorConfig {
   checkIntervalSecondsMax?: number;
   priceMovePctThreshold?: number;
   priceWatchIntervalSeconds?: number;
+  switchRpcOnEachRequest?: boolean;
 }
 
 export interface RedisMsg {

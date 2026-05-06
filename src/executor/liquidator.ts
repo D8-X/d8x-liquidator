@@ -67,8 +67,7 @@ export default class Liquidator {
         logRpcSwitches: true,
         staticNetwork: true,
         maxRetries: this.config.rpcExec.length * 3,
-        // do not switch rpc on each request with premium rpcExec rpcs.
-        switchRpcOnEachRequest: false,
+        switchRpcOnEachRequest: this.config.switchRpcOnEachRequest ?? false,
       }),
     ];
 

@@ -17,6 +17,7 @@
     "checkIntervalSecondsMax": 30,
     "priceMovePctThreshold": 0.01,
     "priceWatchIntervalSeconds": 15,
+    "switchRpcOnEachRequest": false,
     "maxGasPriceGWei": 1,
     "gasLimit": 2000000,
     "gasPriceMultiplier": 1,

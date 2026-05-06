@@ -61,7 +61,7 @@ export default class Distributor {
       timeoutSeconds: 25,
       logErrors: true,
       logRpcSwitches: true,
-      switchRpcOnEachRequest: true,
+      switchRpcOnEachRequest: this.config.switchRpcOnEachRequest ?? false,
       staticNetwork: true,
     });
   }
