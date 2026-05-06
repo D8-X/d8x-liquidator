@@ -143,8 +143,9 @@ export default class Distributor {
     this.lastCheckedPx.delete(symbol);
     this.lastCheckedAt.delete(symbol);
     for (const [poolId, pool] of this.symbolsByPool) {
-      if (pool.delete(symbol) && pool.size === 0) {
-        this.symbolsByPool.delete(poolId);
+      if (pool.delete(symbol)) {
+        if (pool.size === 0) this.symbolsByPool.delete(poolId);
+        break;
       }
     }
     return true;
@@ -335,15 +336,11 @@ export default class Distributor {
     const threshold = this.config.priceMovePctThreshold ?? 0.005;
     const maxIntervalMs = (this.config.checkIntervalSecondsMax ?? 30) * 1_000;
     const now = Date.now();
-    const poolsToCheck: number[] = [];
-    for (const [poolId, poolSymbols] of this.symbolsByPool) {
-      for (const symbol of poolSymbols) {
-        if (this.shouldCheck(symbol, now, threshold, maxIntervalMs)) {
-          poolsToCheck.push(poolId);
-          break;
-        }
-      }
-    }
+    const poolsToCheck = [...this.symbolsByPool.entries()]
+      .filter(([, poolSymbols]) =>
+        [...poolSymbols].some((symbol) => this.shouldCheck(symbol, now, threshold, maxIntervalMs)),
+      )
+      .map(([poolId]) => poolId);
     if (poolsToCheck.length === 0) return;
 
     const results = await Promise.allSettled(poolsToCheck.map((id) => this.checkPool(id)));
