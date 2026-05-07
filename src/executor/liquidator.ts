@@ -85,7 +85,19 @@ export default class Liquidator {
       api: new LiquidatorTool(sdkConfig, pk),
       busy: false,
     }));
-    this.bots.forEach((bot, idx) => this.metrics.registerBot(idx, bot.api.getAddress()));
+    this.privateKey.forEach((pk, idx) => this.metrics.registerBot(idx, new Wallet(pk).address));
+    this.metrics.setConfigInfo({
+      gasLimit: this.config.gasLimit,
+      gasPriceMultiplier: this.config.gasPriceMultiplier,
+      bots: this.config.bots,
+      liquidateIntervalSecondsMin: this.config.liquidateIntervalSecondsMin,
+      liquidateIntervalSecondsMax: this.config.liquidateIntervalSecondsMax,
+      fetchPricesIntervalSecondsMin: this.config.fetchPricesIntervalSecondsMin,
+      checkIntervalSecondsMin: this.config.checkIntervalSecondsMin,
+      checkIntervalSecondsMax: this.config.checkIntervalSecondsMax,
+      liquidatableBatchSize: this.config.liquidatableBatchSize,
+      priceMovePctThreshold: this.config.priceMovePctThreshold,
+    });
 
     if (this.config.gasPriceMultiplier) {
       if (this.config.gasPriceMultiplier > 0) {
@@ -227,7 +239,7 @@ export default class Liquidator {
         },
         "txn rejected",
       );
-      this.metrics.incLiquidation(symbol, "rejected", categorizeRejectReason(e));
+      this.metrics.incLiquidation(botIdx, symbol, "rejected", categorizeRejectReason(e));
       this.bots[botIdx].busy = false;
       this.locked.delete(`${symbol}:${trader}`);
       return LiquidationStatus.Rejection;
@@ -258,7 +270,7 @@ export default class Liquidator {
         throw new Error("tx reverted on-chain (status=0)");
       }
       this.metrics.observeLastLiquidation(botIdx, receipt.from);
-      this.metrics.incLiquidation(symbol, "confirmed", "ok");
+      this.metrics.incLiquidation(botIdx, symbol, "confirmed", "ok");
       this.applyGasSpent(botIdx, receipt.from, receipt.gasUsed, receipt.gasPrice ?? 0n);
       log.info(
         {
@@ -275,7 +287,7 @@ export default class Liquidator {
       this.locked.delete(`${symbol}:${trader}`);
     } catch (e: any) {
       let error = e?.toString() || "";
-      this.metrics.incLiquidation(symbol, "failed", categorizeFailReason(e));
+      this.metrics.incLiquidation(botIdx, symbol, "failed", categorizeFailReason(e));
       log.error(
         {
           err: e,
@@ -419,6 +431,7 @@ export default class Liquidator {
     for (let addr of addressArray) {
       const botBalance = await provider.getBalance(addr);
       const treasuryBalance = await provider.getBalance(treasury.address);
+      this.metrics.setTreasuryBalance(treasury.address, Number(formatUnits(treasuryBalance, 18)));
       const botIdx = this.botIdxFromAddress(addr);
       if (botIdx >= 0) {
         this.botBalances.set(addr.toLowerCase(), botBalance);
@@ -478,9 +491,10 @@ export default class Liquidator {
 
   private applyGasSpent(botIdx: number, botAddr: string, gasUsed: bigint, gasPrice: bigint) {
     const key = botAddr.toLowerCase();
+    const cost = gasUsed * gasPrice;
+    this.metrics.incGasSpentWei(botIdx, cost);
     const cached = this.botBalances.get(key);
     if (cached === undefined) return;
-    const cost = gasUsed * gasPrice;
     const next = cost > cached ? 0n : cached - cost;
     this.botBalances.set(key, next);
     this.metrics.setBotBalance(botIdx, botAddr, Number(formatUnits(next, 18)));

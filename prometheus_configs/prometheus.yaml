@@ -24,6 +24,11 @@ scrape_configs:
       - targets:
           - executor-base:9001
           - executor-base_sepolia:9001
+  - job_name: "liquidator-commander"
+    static_configs:
+      - targets:
+          - commander-base:9011
+          - commander-base_sepolia:9011
   - job_name: prometheus
     static_configs:
       - targets:
