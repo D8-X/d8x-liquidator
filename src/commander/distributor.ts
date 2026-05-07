@@ -367,6 +367,7 @@ export default class Distributor {
           return;
         }
       }
+      await this.publishState();
       // Only mark a successful reconcile (and reset the staleness clock) if
       // every desired NORMAL perp is actually being monitored. Otherwise
       // leave the success clock stale so the next tick retries the missing

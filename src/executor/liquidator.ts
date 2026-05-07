@@ -3,6 +3,7 @@ import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "eth
 import { Redis } from "ioredis";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
+import { loadSDKState } from "../sdkState.js";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 import { loadWatchlist, parsePerpStates, watchlistChannel } from "../watchlist.js";
@@ -150,10 +151,19 @@ export default class Liquidator {
       for (let i = 0; i < 30 && this.bots.some((b) => b.busy); i++) {
         await sleep(100);
       }
-      await this.md.refreshSymbols(true);
       const provider = this.providers[this.lastUsedRpcIndex] ?? this.providers[0];
+      const cached = await loadSDKState(this.redisPubClient, {
+        chainId: this.chainId,
+        proxyAddr: this.sdkConfig.proxyAddr,
+      });
+      if (cached) {
+        await this.md.createProxyInstanceFromState(cached.state, provider);
+        log.info({ cacheAgeMs: cached.ageMs }, "executor: SDK state reloaded from commander cache");
+      } else {
+        await this.md.refreshSymbols(true);
+        log.info("executor: SDK state refreshed via RPC (no cache)");
+      }
       await initLiquidatorsFromMarketData(this.bots, this.md, provider);
-      log.info("executor: SDK static info refreshed");
     } catch (e) {
       log.warn({ err: e }, "executor: refreshSDK failed");
     } finally {
