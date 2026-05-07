@@ -3,7 +3,7 @@ import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "eth
 import { Redis } from "ioredis";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
-import { loadSDKState } from "../sdkState.js";
+import { loadSDKState, sdkStateUpdatedChannel } from "../sdkState.js";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 import { loadWatchlist, parsePerpStates, watchlistChannel } from "../watchlist.js";
@@ -123,7 +123,7 @@ export default class Liquidator {
     // Subscribe to relayed events
     await this.redisSubClient.subscribe(
       "LiquidateTrader",
-      "PerpNormal",
+      sdkStateUpdatedChannel(this.chainId),
       watchlistChannel(this.chainId),
       (err, count) => {
         if (err) {
@@ -144,7 +144,7 @@ export default class Liquidator {
     log.info("initialized");
   }
 
-  private async refreshSDK(): Promise<void> {
+  private async refreshSDK(opts?: { forceRpc?: boolean }): Promise<void> {
     if (this.refreshingSDK) return;
     this.refreshingSDK = true;
     try {
@@ -152,16 +152,21 @@ export default class Liquidator {
         await sleep(100);
       }
       const provider = this.providers[this.lastUsedRpcIndex] ?? this.providers[0];
-      const cached = await loadSDKState(this.redisPubClient, {
-        chainId: this.chainId,
-        proxyAddr: this.sdkConfig.proxyAddr,
-      });
-      if (cached) {
-        await this.md.createProxyInstanceFromState(cached.state, provider);
-        log.info({ cacheAgeMs: cached.ageMs }, "executor: SDK state reloaded from commander cache");
-      } else {
+      if (opts?.forceRpc) {
         await this.md.refreshSymbols(true);
-        log.info("executor: SDK state refreshed via RPC (no cache)");
+        log.info("executor: SDK state refreshed via RPC (forced)");
+      } else {
+        const cached = await loadSDKState(this.redisPubClient, {
+          chainId: this.chainId,
+          proxyAddr: this.sdkConfig.proxyAddr,
+        });
+        if (cached) {
+          await this.md.createProxyInstanceFromState(cached.state, provider);
+          log.info({ cacheAgeMs: cached.ageMs }, "executor: SDK state reloaded from commander cache");
+        } else {
+          await this.md.refreshSymbols(true);
+          log.info("executor: SDK state refreshed via RPC (no cache)");
+        }
       }
       await initLiquidatorsFromMarketData(this.bots, this.md, provider);
     } catch (e) {
@@ -186,12 +191,17 @@ export default class Liquidator {
       });
 
       const watchlistCh = watchlistChannel(this.chainId);
+      const stateUpdCh = sdkStateUpdatedChannel(this.chainId);
       this.redisSubClient.on("message", async (channel, msg) => {
         if (channel === watchlistCh) {
           const states = parsePerpStates(msg);
           if (states) {
             this.allowedSymbols = new Set(Object.keys(states).filter((s) => states[s] === "NORMAL"));
           }
+          return;
+        }
+        if (channel === stateUpdCh) {
+          void this.refreshSDK();
           return;
         }
         switch (channel) {
@@ -213,10 +223,6 @@ export default class Liquidator {
                 success++;
               }
             }
-            break;
-          }
-          case "PerpNormal": {
-            void this.refreshSDK();
             break;
           }
         }
@@ -288,7 +294,7 @@ export default class Liquidator {
         }
       }
       if (typeof e?.message === "string" && e.message.includes("No perpetual found for symbol")) {
-        void this.refreshSDK();
+        void this.refreshSDK({ forceRpc: true });
       }
       this.bots[botIdx].busy = false;
       return LiquidationStatus.Rejection;

@@ -8,6 +8,10 @@ export function sdkStateKey(chainId: number): string {
   return `sdk-state:${chainId}`;
 }
 
+export function sdkStateUpdatedChannel(chainId: number): string {
+  return `sdk-state-updated:${chainId}`;
+}
+
 interface CachedSDKState {
   sdkVersion: string;
   publishedAt: number;
@@ -22,6 +26,7 @@ export interface LoadedSDKState {
 export async function publishSDKState(redis: Redis, chainId: number, state: SDKState): Promise<void> {
   const payload: CachedSDKState = { sdkVersion: D8X_SDK_VERSION, publishedAt: Date.now(), state };
   await redis.set(sdkStateKey(chainId), JSON.stringify(payload), "EX", SDK_STATE_TTL_SECONDS);
+  await redis.publish(sdkStateUpdatedChannel(chainId), "");
 }
 
 export async function refreshSDKStateTTL(redis: Redis, chainId: number): Promise<boolean> {
