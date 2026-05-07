@@ -1,6 +1,6 @@
 {
-  "uid": "d8x-liquidators",
-  "title": "[${D8X_CHAIN}] Liquidators",
+  "uid": "d8x-liquidators-base",
+  "title": "Liquidators (base)",
   "description": "Operational dashboard for the d8x liquidator service.",
   "tags": [
     "d8x",
@@ -33,7 +33,7 @@
       "transparent": true,
       "options": {
         "mode": "html",
-        "content": "<div style=\"display:flex;align-items:baseline;gap:10px;padding:14px;line-height:1.4;\"><span style=\"font-size:18px;font-weight:600;letter-spacing:0.3px;\">Liquidators</span><code style=\"background:rgba(255,255,255,0.08);padding:2px 10px;border-radius:4px;font-size:13px;\">${D8X_CHAIN}</code></div>"
+        "content": "<div style=\"display:flex;align-items:baseline;gap:10px;padding:14px;line-height:1.4;\"><span style=\"font-size:18px;font-weight:600;letter-spacing:0.3px;\">Liquidators</span><code style=\"background:rgba(255,255,255,0.08);padding:2px 10px;border-radius:4px;font-size:13px;\">base</code></div>"
       }
     },
     {
@@ -91,7 +91,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum(increase(liquidator_liquidations_total{chain=\"${D8X_CHAIN}\", outcome=\"confirmed\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(liquidator_liquidations_total{chain=\"base\", outcome=\"confirmed\"}[$__range])) or vector(0)",
           "legendFormat": "confirmed"
         }
       ]
@@ -154,7 +154,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum(increase(liquidator_liquidations_total{chain=\"${D8X_CHAIN}\", outcome=\"failed\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(liquidator_liquidations_total{chain=\"base\", outcome=\"failed\"}[$__range])) or vector(0)",
           "legendFormat": "failed"
         }
       ]
@@ -217,7 +217,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum(increase(liquidator_liquidations_total{chain=\"${D8X_CHAIN}\", outcome=\"rejected\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(liquidator_liquidations_total{chain=\"base\", outcome=\"rejected\"}[$__range])) or vector(0)",
           "legendFormat": "rejected"
         }
       ]
@@ -283,7 +283,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "min(liquidator_min_balance_eth{chain=\"${D8X_CHAIN}\"})",
+          "expr": "min(liquidator_min_balance_eth{chain=\"base\"})",
           "legendFormat": "min",
           "instant": true,
           "format": "time_series"
@@ -296,7 +296,7 @@
       "title": "Throughput",
       "gridPos": {
         "x": 0,
-        "y": 29,
+        "y": 42,
         "w": 24,
         "h": 1
       },
@@ -312,7 +312,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 30
+        "y": 43
       },
       "datasource": {
         "uid": "d8x-prom",
@@ -402,7 +402,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum by (outcome) (rate(liquidator_liquidations_total{chain=\"${D8X_CHAIN}\"}[$__rate_interval]))",
+          "expr": "sum by (outcome) (rate(liquidator_liquidations_total{chain=\"base\"}[$__rate_interval]))",
           "legendFormat": "{{outcome}}"
         }
       ]
@@ -416,7 +416,7 @@
         "h": 12,
         "w": 12,
         "x": 12,
-        "y": 30
+        "y": 43
       },
       "datasource": {
         "uid": "d8x-prom",
@@ -461,7 +461,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "topk(10, sum by (symbol) (increase(liquidator_liquidations_total{chain=\"${D8X_CHAIN}\", outcome=\"confirmed\"}[$__range])))",
+          "expr": "topk(10, sum by (symbol) (increase(liquidator_liquidations_total{chain=\"base\", outcome=\"confirmed\"}[$__range])))",
           "format": "time_series",
           "instant": true,
           "legendFormat": "{{symbol}}"
@@ -474,7 +474,7 @@
       "title": "Failures by Reason",
       "gridPos": {
         "x": 0,
-        "y": 42,
+        "y": 55,
         "w": 24,
         "h": 1
       },
@@ -489,7 +489,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 43
+        "y": 56
       },
       "datasource": {
         "uid": "d8x-prom",
@@ -530,7 +530,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum by (outcome, reason) (rate(liquidator_liquidations_total{chain=\"${D8X_CHAIN}\", outcome=~\"failed|rejected\"}[$__rate_interval]))",
+          "expr": "sum by (outcome, reason) (rate(liquidator_liquidations_total{chain=\"base\", outcome=~\"failed|rejected\"}[$__rate_interval]))",
           "legendFormat": "{{outcome}}/{{reason}}"
         }
       ]
@@ -543,7 +543,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 43
+        "y": 56
       },
       "datasource": {
         "uid": "d8x-prom",
@@ -568,7 +568,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "topk(10, sum by (symbol, outcome, reason) (increase(liquidator_liquidations_total{chain=\"${D8X_CHAIN}\", outcome=~\"failed|rejected\"}[$__range])))",
+          "expr": "topk(10, sum by (symbol, outcome, reason) (increase(liquidator_liquidations_total{chain=\"base\", outcome=~\"failed|rejected\"}[$__range])))",
           "format": "table",
           "instant": true
         }
@@ -746,7 +746,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_bot_info{chain=\"${D8X_CHAIN}\", bot_addr!=\"\"}",
+          "expr": "liquidator_bot_info{chain=\"base\", bot_addr!=\"\"}",
           "format": "table",
           "instant": true
         },
@@ -756,7 +756,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_bot_balance_eth{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_bot_balance_eth{chain=\"base\"}",
           "format": "table",
           "instant": true
         },
@@ -766,7 +766,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "time() - liquidator_last_liquidation_timestamp_seconds{chain=\"${D8X_CHAIN}\"}",
+          "expr": "time() - liquidator_last_liquidation_timestamp_seconds{chain=\"base\"}",
           "format": "table",
           "instant": true
         },
@@ -776,7 +776,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum by (bot_idx) (increase(liquidator_liquidations_total{chain=\"${D8X_CHAIN}\", outcome=\"confirmed\"}[$__range]))",
+          "expr": "sum by (bot_idx) (increase(liquidator_liquidations_total{chain=\"base\", outcome=\"confirmed\"}[$__range]))",
           "format": "table",
           "instant": true
         },
@@ -786,7 +786,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum by (bot_idx) (increase(liquidator_liquidations_total{chain=\"${D8X_CHAIN}\", outcome=\"failed\"}[$__range]))",
+          "expr": "sum by (bot_idx) (increase(liquidator_liquidations_total{chain=\"base\", outcome=\"failed\"}[$__range]))",
           "format": "table",
           "instant": true
         },
@@ -796,7 +796,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum by (bot_idx) (increase(liquidator_liquidations_total{chain=\"${D8X_CHAIN}\", outcome=\"rejected\"}[$__range]))",
+          "expr": "sum by (bot_idx) (increase(liquidator_liquidations_total{chain=\"base\", outcome=\"rejected\"}[$__range]))",
           "format": "table",
           "instant": true
         },
@@ -806,7 +806,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum by (bot_idx) (increase(liquidator_funding_failures_total{chain=\"${D8X_CHAIN}\"}[$__range]))",
+          "expr": "sum by (bot_idx) (increase(liquidator_funding_failures_total{chain=\"base\"}[$__range]))",
           "format": "table",
           "instant": true
         },
@@ -816,7 +816,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum by (bot_idx) (increase(liquidator_gas_spent_wei_total{chain=\"${D8X_CHAIN}\"}[$__range])) / 1e18",
+          "expr": "sum by (bot_idx) (increase(liquidator_gas_spent_wei_total{chain=\"base\"}[$__range])) / 1e18",
           "format": "table",
           "instant": true
         }
@@ -869,7 +869,7 @@
       "title": "Funding",
       "gridPos": {
         "x": 0,
-        "y": 51,
+        "y": 64,
         "w": 24,
         "h": 1
       },
@@ -884,7 +884,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 65
       },
       "datasource": {
         "uid": "d8x-prom",
@@ -921,7 +921,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum by (reason) (rate(liquidator_funding_failures_total{chain=\"${D8X_CHAIN}\"}[$__rate_interval]))",
+          "expr": "sum by (reason) (rate(liquidator_funding_failures_total{chain=\"base\"}[$__rate_interval]))",
           "legendFormat": "{{reason}}"
         }
       ]
@@ -1000,7 +1000,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "time() - max(liquidator_last_pool_check_seconds{chain=\"${D8X_CHAIN}\", status=\"ok\"})",
+          "expr": "time() - max(liquidator_last_pool_check_seconds{chain=\"base\", status=\"ok\"})",
           "legendFormat": "_",
           "instant": true
         }
@@ -1051,7 +1051,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum(increase(liquidator_pool_checks_total{chain=\"${D8X_CHAIN}\"}[$__range]))",
+          "expr": "sum(increase(liquidator_pool_checks_total{chain=\"base\"}[$__range]))",
           "legendFormat": "_",
           "instant": true
         }
@@ -1118,7 +1118,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum(liquidator_last_pool_liquidatable_count{chain=\"${D8X_CHAIN}\"})",
+          "expr": "sum(liquidator_last_pool_liquidatable_count{chain=\"base\"})",
           "legendFormat": "_",
           "instant": true
         }
@@ -1182,7 +1182,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_config_gas_limit{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_config_gas_limit{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true
         }
@@ -1233,7 +1233,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_config_gas_price_multiplier{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_config_gas_price_multiplier{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true
         }
@@ -1284,7 +1284,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_config_bots{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_config_bots{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true
         }
@@ -1336,7 +1336,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_config_liquidate_interval_seconds_min{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_config_liquidate_interval_seconds_min{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true
         }
@@ -1388,7 +1388,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_config_liquidate_interval_seconds_max{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_config_liquidate_interval_seconds_max{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true
         }
@@ -1440,7 +1440,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_config_fetch_prices_interval_seconds_min{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_config_fetch_prices_interval_seconds_min{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true
         }
@@ -1508,7 +1508,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_treasury_balance_eth{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_treasury_balance_eth{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true,
           "format": "time_series"
@@ -1559,7 +1559,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_config_check_interval_seconds_min{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_config_check_interval_seconds_min{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true
         }
@@ -1609,7 +1609,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_config_check_interval_seconds_max{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_config_check_interval_seconds_max{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true
         }
@@ -1658,7 +1658,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_config_liquidatable_batch_size{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_config_liquidatable_batch_size{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true
         }
@@ -1708,7 +1708,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "liquidator_config_price_move_pct_threshold{chain=\"${D8X_CHAIN}\"}",
+          "expr": "liquidator_config_price_move_pct_threshold{chain=\"base\"}",
           "legendFormat": "_",
           "instant": true
         }
@@ -1720,7 +1720,7 @@
       "title": "Gas",
       "gridPos": {
         "x": 0,
-        "y": 60,
+        "y": 29,
         "w": 24,
         "h": 1
       },
@@ -1733,10 +1733,10 @@
       "description": "Total native-token spent by the bot fleet on confirmed transactions, all-time. Sum of liquidator_gas_spent_wei_total / 1e18.",
       "type": "stat",
       "gridPos": {
-        "h": 4,
-        "w": 8,
         "x": 0,
-        "y": 61
+        "y": 30,
+        "w": 8,
+        "h": 4
       },
       "datasource": {
         "uid": "d8x-prom",
@@ -1772,7 +1772,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum(liquidator_gas_spent_wei_total{chain=\"${D8X_CHAIN}\"}) / 1e18",
+          "expr": "sum(liquidator_gas_spent_wei_total{chain=\"base\"}) / 1e18",
           "instant": true,
           "format": "time_series",
           "legendFormat": "_"
@@ -1785,10 +1785,10 @@
       "description": "Native-token spent on confirmed transactions in the last 24 hours. increase(liquidator_gas_spent_wei_total[24h]) / 1e18.",
       "type": "stat",
       "gridPos": {
-        "h": 4,
-        "w": 8,
         "x": 8,
-        "y": 61
+        "y": 30,
+        "w": 8,
+        "h": 4
       },
       "datasource": {
         "uid": "d8x-prom",
@@ -1824,7 +1824,7 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum(increase(liquidator_gas_spent_wei_total{chain=\"${D8X_CHAIN}\"}[24h])) / 1e18",
+          "expr": "sum(increase(liquidator_gas_spent_wei_total{chain=\"base\"}[24h])) / 1e18",
           "instant": true,
           "format": "time_series",
           "legendFormat": "_"
@@ -1837,10 +1837,10 @@
       "description": "Native-token spent per bot wallet over the dashboard time range.",
       "type": "bargauge",
       "gridPos": {
-        "h": 4,
-        "w": 8,
         "x": 16,
-        "y": 61
+        "y": 30,
+        "w": 8,
+        "h": 4
       },
       "datasource": {
         "uid": "d8x-prom",
@@ -1851,8 +1851,10 @@
           "decimals": 6,
           "unit": "ETH",
           "color": {
-            "mode": "continuous-YlOr"
-          }
+            "mode": "continuous-YlRd"
+          },
+          "noValue": "0",
+          "min": 0
         }
       },
       "options": {
@@ -1865,6 +1867,62 @@
             "lastNotNull"
           ],
           "values": false
+        },
+        "minVizHeight": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "(sum by (bot_idx) (increase(liquidator_gas_spent_wei_total{chain=\"base\"}[$__range])) / 1e18) or label_replace(vector(0), \"bot_idx\", \"0\", \"\", \"\")",
+          "instant": true,
+          "format": "time_series",
+          "legendFormat": "bot {{bot_idx}}"
+        }
+      ]
+    },
+    {
+      "id": 184,
+      "title": "Treasury balance over time",
+      "description": "Native-token balance of the treasury wallet over time (gauge sample). liquidator_treasury_balance_eth.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ETH",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
         }
       },
       "targets": [
@@ -1874,10 +1932,61 @@
             "uid": "d8x-prom",
             "type": "prometheus"
           },
-          "expr": "sum by (bot_idx) (increase(liquidator_gas_spent_wei_total{chain=\"${D8X_CHAIN}\"}[$__range])) / 1e18",
-          "instant": true,
-          "format": "time_series",
-          "legendFormat": "bot {{bot_idx}}"
+          "expr": "liquidator_treasury_balance_eth{chain=\"base\"}",
+          "legendFormat": "treasury"
+        }
+      ]
+    },
+    {
+      "id": 185,
+      "title": "Gas spent (cumulative) over time",
+      "description": "Cumulative gas spent (ETH) by the bot fleet over time. sum(liquidator_gas_spent_wei_total) / 1e18.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ETH",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum(liquidator_gas_spent_wei_total{chain=\"base\"}) / 1e18",
+          "legendFormat": "gas spent"
         }
       ]
     }
