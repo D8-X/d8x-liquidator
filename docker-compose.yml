@@ -118,7 +118,7 @@ services:
         max-file: "10"
 
   commander-base:
-    image: ghcr.io/d8-x/liquidator-commander:dev
+    image: ghcr.io/d8-x/liquidator-commander:dev  # <--- we need to properly start pulling main for prod
     depends_on:
       cache:
         condition: service_healthy
@@ -200,8 +200,6 @@ services:
       - source: alertmanager_yaml
         target: /etc/alertmanager/alertmanager.yml
 
-  # Grafana co-located with the liquidator. Bound to loopback only - put
-  # nginx/Caddy in front of port 3000 with TLS + admin auth before exposing.
   grafana:
     image: grafana/grafana-oss:11.6.0
     restart: always
