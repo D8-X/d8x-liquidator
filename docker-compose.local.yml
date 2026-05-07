@@ -9,7 +9,6 @@
 #
 # And ./config/live.liquidatorConfig.json must exist (copy from
 # src/config/sample.liquidatorConfig.json and add a base_sepolia entry).
-#
 # Run:
 #   docker compose -f docker-compose.local.yml up --build -d
 
@@ -47,6 +46,8 @@ services:
       REDIS_ID: 4
       SDK_CONFIG: base_sepolia
       LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+    volumes:
+      - /Users/souhailaserbout/git/d8x-node-sdk:/app/node_modules/@d8-x/d8x-node-sdk:ro
     configs:
       - source: liquidator_config
         target: /etc/liquidatorconf.json
@@ -73,6 +74,11 @@ services:
       REDIS_ID: 4
       SDK_CONFIG: base_sepolia
       LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+      METRICS_PORT: "9011"
+    ports:
+      - "127.0.0.1:9011:9011"
+    volumes:
+      - /Users/souhailaserbout/git/d8x-node-sdk:/app/node_modules/@d8-x/d8x-node-sdk:ro
     configs:
       - source: liquidator_config
         target: /etc/liquidatorconf.json
@@ -104,6 +110,8 @@ services:
       LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
     ports:
       - "127.0.0.1:9001:9001"
+    volumes:
+      - /Users/souhailaserbout/git/d8x-node-sdk:/app/node_modules/@d8-x/d8x-node-sdk:ro
     configs:
       - source: liquidator_config
         target: /etc/liquidatorconf.json
@@ -132,8 +140,26 @@ services:
         target: /etc/prometheus/rules/liquidator.rules.yaml
     restart: unless-stopped
 
+  grafana:
+    image: grafana/grafana-oss:11.6.0
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+
 volumes:
   prometheus_data:
+  grafana_data:
 
 configs:
   prometheus_yaml:
