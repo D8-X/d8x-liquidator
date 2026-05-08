@@ -34,6 +34,7 @@ export default class Liquidator {
   private sdkConfig: NodeSDKConfig;
   private gasPriceBuffer = 100n; // no buffer
   private lastUsedRpcIndex: number = 0;
+  private fundingInProgress = false;
 
   // state
   private q: Set<string> = new Set();
@@ -123,6 +124,15 @@ export default class Liquidator {
         process.exit(1);
       }
     });
+
+    // Periodic safety-net top-up; complements the rejection-driven path.
+    setInterval(() => {
+      const addrs = this.bots.map((b) => b.api.getAddress());
+      this.fundWallets(addrs).catch((err) => {
+        log.warn({ err }, "periodic top-up failed");
+      });
+    }, 60 * 60 * 1_000).unref();
+
     log.info("initialized");
   }
 
@@ -419,6 +429,19 @@ export default class Liquidator {
   }
 
   public async fundWallets(addressArray: string[]) {
+    if (this.fundingInProgress) {
+      log.info({ size: addressArray.length }, "skipping fundWallets - already in progress");
+      return;
+    }
+    this.fundingInProgress = true;
+    try {
+      await this.doFundWallets(addressArray);
+    } finally {
+      this.fundingInProgress = false;
+    }
+  }
+
+  private async doFundWallets(addressArray: string[]) {
     const provider = this.providers[Math.floor(Math.random() * this.providers.length)];
     const treasury = new Wallet(this.treasury, provider);
     const { gasPrice: gasPriceWei } = await provider.getFeeData();
