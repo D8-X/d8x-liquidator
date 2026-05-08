@@ -475,6 +475,9 @@ export default class Liquidator {
         if (fullTopUp < treasuryBalance) {
           transferAmount = fullTopUp;
         } else if (fairShare > 0n) {
+          if (botIdx >= 0) {
+            this.metrics.incFundingFailure(botIdx, addr, "treasury_partial");
+          }
           log.warn(
             {
               treasuryBalance: formatUnits(treasuryBalance),
