@@ -34,6 +34,7 @@ export default class Liquidator {
   private sdkConfig: NodeSDKConfig;
   private gasPriceBuffer = 100n; // no buffer
   private lastUsedRpcIndex: number = 0;
+  private fundingInProgress = false;
 
   // state
   private q: Set<string> = new Set();
@@ -123,6 +124,15 @@ export default class Liquidator {
         process.exit(1);
       }
     });
+
+    // Periodic safety-net top-up; complements the rejection-driven path.
+    setInterval(() => {
+      const addrs = this.bots.map((b) => b.api.getAddress());
+      this.fundWallets(addrs).catch((err) => {
+        log.warn({ err }, "periodic top-up failed");
+      });
+    }, 60 * 60 * 1_000).unref();
+
     log.info("initialized");
   }
 
@@ -419,6 +429,19 @@ export default class Liquidator {
   }
 
   public async fundWallets(addressArray: string[]) {
+    if (this.fundingInProgress) {
+      log.info({ size: addressArray.length }, "skipping fundWallets - already in progress");
+      return;
+    }
+    this.fundingInProgress = true;
+    try {
+      await this.doFundWallets(addressArray);
+    } finally {
+      this.fundingInProgress = false;
+    }
+  }
+
+  private async doFundWallets(addressArray: string[]) {
     const provider = this.providers[Math.floor(Math.random() * this.providers.length)];
     const treasury = new Wallet(this.treasury, provider);
     const { gasPrice: gasPriceWei } = await provider.getFeeData();
@@ -442,40 +465,58 @@ export default class Liquidator {
         needsFunding: botBalance < minBalance,
       });
       if (botBalance < minBalance) {
-        // transfer twice the min so it doesn't transfer every time
-        const transferAmount = minBalance * BigInt(2) - botBalance;
-        if (transferAmount < treasuryBalance) {
-          log.info(
-            {
-              to: addr,
-              transferAmount: formatUnits(transferAmount),
-            },
-            "transferring funds...",
-          );
-          const tx = await treasury.sendTransaction({
-            to: addr,
-            value: transferAmount,
-          });
-          await tx.wait();
+        // top up many minBalances so we don't transfer every time
+        const fullTopUp = minBalance * BigInt(100) - botBalance;
+        // If treasury can't afford the full top-up, fall back to a fair share
+        // (treasuryBalance / total bots) so a single bot doesn't drain the
+        // treasury and starve the others.
+        const fairShare = treasuryBalance / BigInt(this.bots.length);
+        let transferAmount: bigint;
+        if (fullTopUp < treasuryBalance) {
+          transferAmount = fullTopUp;
+        } else if (fairShare > 0n) {
           if (botIdx >= 0) {
-            const newBalance = botBalance + transferAmount;
-            this.botBalances.set(addr.toLowerCase(), newBalance);
-            this.metrics.setBotBalance(botIdx, addr, Number(formatUnits(newBalance, 18)));
+            this.metrics.incFundingFailure(botIdx, addr, "treasury_partial");
           }
-          log.info({
-            transferAmount: formatUnits(transferAmount),
-            txn: tx.hash,
-          });
+          log.warn(
+            {
+              treasuryBalance: formatUnits(treasuryBalance),
+              wanted: formatUnits(fullTopUp),
+              fairShare: formatUnits(fairShare),
+              numBots: this.bots.length,
+            },
+            "treasury insufficient for full top-up; using fair-share fallback",
+          );
+          transferAmount = fairShare;
         } else {
           if (botIdx >= 0) {
             this.metrics.incFundingFailure(botIdx, addr, "treasury_insufficient");
           }
           throw new Error(
-            `insufficient balance in treasury (${formatUnits(treasuryBalance)}); send at least ${formatUnits(
-              transferAmount,
-            )} to ${treasury.address}`,
+            `treasury empty (${formatUnits(treasuryBalance)}); send funds to ${treasury.address}`,
           );
         }
+        log.info(
+          {
+            to: addr,
+            transferAmount: formatUnits(transferAmount),
+          },
+          "transferring funds...",
+        );
+        const tx = await treasury.sendTransaction({
+          to: addr,
+          value: transferAmount,
+        });
+        await tx.wait();
+        if (botIdx >= 0) {
+          const newBalance = botBalance + transferAmount;
+          this.botBalances.set(addr.toLowerCase(), newBalance);
+          this.metrics.setBotBalance(botIdx, addr, Number(formatUnits(newBalance, 18)));
+        }
+        log.info({
+          transferAmount: formatUnits(transferAmount),
+          txn: tx.hash,
+        });
       }
     }
   }
