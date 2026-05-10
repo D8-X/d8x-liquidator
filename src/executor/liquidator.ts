@@ -3,8 +3,9 @@ import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "eth
 import { Redis } from "ioredis";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
+import { loadSDKState, sdkStateUpdatedChannel } from "../sdkState.js";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
-import { constructRedis, executeWithTimeout } from "../utils.js";
+import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 import { loadWatchlist, parsePerpStates, watchlistChannel } from "../watchlist.js";
 import { categorizeFailReason, categorizeRejectReason, Metrics } from "./metrics.js";
 import { createLogger } from "../logger.js";
@@ -25,6 +26,7 @@ export default class Liquidator {
   private bots: { api: LiquidatorTool; busy: boolean }[];
   private redisSubClient: Redis;
   private redisPubClient: Redis;
+  private md!: MarketData;
 
   // parameters
   private treasury: string;
@@ -35,6 +37,7 @@ export default class Liquidator {
   private gasPriceBuffer = 100n; // no buffer
   private lastUsedRpcIndex: number = 0;
   private fundingInProgress = false;
+  private refreshingSDK = false;
 
   // state
   private q: Set<string> = new Set();
@@ -103,13 +106,13 @@ export default class Liquidator {
    * An error is thrown if none of the providers works.
    */
   public async initialize() {
-    const md = new MarketData(this.sdkConfig);
-    const result = await initMarketDataWithCache(md, this.providers, this.redisPubClient);
+    this.md = new MarketData(this.sdkConfig);
+    const result = await initMarketDataWithCache(this.md, this.providers, this.redisPubClient);
     log.info(
       { cache: result.usedCache, cacheAgeMs: result.cacheAgeMs, providerIndex: result.providerIndex },
       "executor MarketData initialized",
     );
-    await initLiquidatorsFromMarketData(this.bots, md, this.providers[result.providerIndex]);
+    await initLiquidatorsFromMarketData(this.bots, this.md, this.providers[result.providerIndex]);
 
     const initial = await loadWatchlist(this.redisPubClient, this.chainId);
     if (initial !== null) {
@@ -118,12 +121,17 @@ export default class Liquidator {
     }
 
     // Subscribe to relayed events
-    await this.redisSubClient.subscribe("LiquidateTrader", watchlistChannel(this.chainId), (err, count) => {
-      if (err) {
-        log.error({ err }, "redis subscription failed");
-        process.exit(1);
-      }
-    });
+    await this.redisSubClient.subscribe(
+      "LiquidateTrader",
+      sdkStateUpdatedChannel(this.chainId),
+      watchlistChannel(this.chainId),
+      (err, count) => {
+        if (err) {
+          log.error({ err }, "redis subscription failed");
+          process.exit(1);
+        }
+      },
+    );
 
     // Periodic safety-net top-up; complements the rejection-driven path.
     setInterval(() => {
@@ -133,7 +141,60 @@ export default class Liquidator {
       });
     }, 60 * 60 * 1_000).unref();
 
+    // Periodic SDK refresh as a safety net. The primary refresh paths are
+    // event-driven (sdk-state-updated channel) and lazy (force-RPC on
+    // "No perpetual found" rejections). This catches the rare edge case
+    // where neither fires — e.g. a Redis reconnect drops the subscription
+    // while no liquidations are attempted on newly-registered perps.
+    setInterval(() => {
+      this.refreshSDK().catch((err) => {
+        log.warn({ err }, "periodic refreshSDK failed");
+      });
+    }, 60 * 60 * 1_000).unref();
+
     log.info("initialized");
+  }
+
+  private async refreshSDK(opts?: { forceRpc?: boolean }): Promise<void> {
+    if (this.refreshingSDK) return;
+    this.refreshingSDK = true;
+    try {
+      for (let i = 0; i < 30 && this.bots.some((b) => b.busy); i++) {
+        await sleep(100);
+      }
+      const provider = this.providers[this.lastUsedRpcIndex] ?? this.providers[0];
+      if (opts?.forceRpc) {
+        // Wrap with timeout: a hung refreshSymbols (e.g. unresponsive RPC) would
+        // leave refreshingSDK=true forever, blocking every liquidation.
+        await executeWithTimeout(
+          this.md.refreshSymbols(true),
+          30_000,
+          "refreshSymbols(true) timed out (forced RPC refresh)",
+        );
+        log.info("executor: SDK state refreshed via RPC (forced)");
+      } else {
+        const cached = await loadSDKState(this.redisPubClient, {
+          chainId: this.chainId,
+          proxyAddr: this.sdkConfig.proxyAddr,
+        });
+        if (cached) {
+          await this.md.createProxyInstanceFromState(cached.state, provider);
+          log.info({ cacheAgeMs: cached.ageMs }, "executor: SDK state reloaded from commander cache");
+        } else {
+          await executeWithTimeout(
+            this.md.refreshSymbols(true),
+            30_000,
+            "refreshSymbols(true) timed out (no-cache RPC refresh)",
+          );
+          log.info("executor: SDK state refreshed via RPC (no cache)");
+        }
+      }
+      await initLiquidatorsFromMarketData(this.bots, this.md, provider);
+    } catch (e) {
+      log.warn({ err: e }, "executor: refreshSDK failed");
+    } finally {
+      this.refreshingSDK = false;
+    }
   }
 
   /**
@@ -151,12 +212,17 @@ export default class Liquidator {
       });
 
       const watchlistCh = watchlistChannel(this.chainId);
+      const stateUpdCh = sdkStateUpdatedChannel(this.chainId);
       this.redisSubClient.on("message", async (channel, msg) => {
         if (channel === watchlistCh) {
           const states = parsePerpStates(msg);
           if (states) {
             this.allowedSymbols = new Set(Object.keys(states).filter((s) => states[s] === "NORMAL"));
           }
+          return;
+        }
+        if (channel === stateUpdCh) {
+          void this.refreshSDK();
           return;
         }
         switch (channel) {
@@ -187,7 +253,7 @@ export default class Liquidator {
 
   private async liquidateTraderByBot(botIdx: number, symbol: string, trader: string) {
     trader = trader.toLowerCase();
-    if (this.bots[botIdx].busy || this.locked.has(`${symbol}:${trader}`)) {
+    if (this.refreshingSDK || this.bots[botIdx].busy || this.locked.has(`${symbol}:${trader}`)) {
       return LiquidationStatus.NoOp;
     }
     if (this.allowedSymbols === null || !this.allowedSymbols.has(symbol)) {
@@ -247,6 +313,9 @@ export default class Liquidator {
         } catch (fundErr: any) {
           log.error({ err: fundErr, bot }, "failed to fund bot");
         }
+      }
+      if (typeof e?.message === "string" && e.message.includes("No perpetual found for symbol")) {
+        void this.refreshSDK({ forceRpc: true });
       }
       this.bots[botIdx].busy = false;
       return LiquidationStatus.Rejection;
@@ -492,9 +561,7 @@ export default class Liquidator {
           if (botIdx >= 0) {
             this.metrics.incFundingFailure(botIdx, addr, "treasury_insufficient");
           }
-          throw new Error(
-            `treasury empty (${formatUnits(treasuryBalance)}); send funds to ${treasury.address}`,
-          );
+          throw new Error(`treasury empty (${formatUnits(treasuryBalance)}); send funds to ${treasury.address}`);
         }
         log.info(
           {
