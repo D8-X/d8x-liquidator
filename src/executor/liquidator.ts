@@ -141,6 +141,17 @@ export default class Liquidator {
       });
     }, 60 * 60 * 1_000).unref();
 
+    // Periodic SDK refresh as a safety net. The primary refresh paths are
+    // event-driven (sdk-state-updated channel) and lazy (force-RPC on
+    // "No perpetual found" rejections). This catches the rare edge case
+    // where neither fires — e.g. a Redis reconnect drops the subscription
+    // while no liquidations are attempted on newly-registered perps.
+    setInterval(() => {
+      this.refreshSDK().catch((err) => {
+        log.warn({ err }, "periodic refreshSDK failed");
+      });
+    }, 60 * 60 * 1_000).unref();
+
     log.info("initialized");
   }
 
@@ -153,7 +164,13 @@ export default class Liquidator {
       }
       const provider = this.providers[this.lastUsedRpcIndex] ?? this.providers[0];
       if (opts?.forceRpc) {
-        await this.md.refreshSymbols(true);
+        // Wrap with timeout: a hung refreshSymbols (e.g. unresponsive RPC) would
+        // leave refreshingSDK=true forever, blocking every liquidation.
+        await executeWithTimeout(
+          this.md.refreshSymbols(true),
+          30_000,
+          "refreshSymbols(true) timed out (forced RPC refresh)",
+        );
         log.info("executor: SDK state refreshed via RPC (forced)");
       } else {
         const cached = await loadSDKState(this.redisPubClient, {
@@ -164,7 +181,11 @@ export default class Liquidator {
           await this.md.createProxyInstanceFromState(cached.state, provider);
           log.info({ cacheAgeMs: cached.ageMs }, "executor: SDK state reloaded from commander cache");
         } else {
-          await this.md.refreshSymbols(true);
+          await executeWithTimeout(
+            this.md.refreshSymbols(true),
+            30_000,
+            "refreshSymbols(true) timed out (no-cache RPC refresh)",
+          );
           log.info("executor: SDK state refreshed via RPC (no cache)");
         }
       }
@@ -540,9 +561,7 @@ export default class Liquidator {
           if (botIdx >= 0) {
             this.metrics.incFundingFailure(botIdx, addr, "treasury_insufficient");
           }
-          throw new Error(
-            `treasury empty (${formatUnits(treasuryBalance)}); send funds to ${treasury.address}`,
-          );
+          throw new Error(`treasury empty (${formatUnits(treasuryBalance)}); send funds to ${treasury.address}`);
         }
         log.info(
           {
