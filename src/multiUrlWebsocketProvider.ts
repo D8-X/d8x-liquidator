@@ -98,7 +98,9 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       ...options,
     };
 
-    void this.startNextWebsocket();
+    this.startNextWebsocket().catch((err: unknown): void => {
+      log.error({ err }, "initial startNextWebsocket failed");
+    });
   }
 
   /**
@@ -114,7 +116,9 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       }
     }
 
-    // Setup connectionResolved promise for _waitUntilReady
+    if (this.notReady?.resolve) {
+      this.notReady.resolve();
+    }
     let resolve: (() => void) | null = null;
     const promise: Promise<void> = new Promise<void>((_resolve: () => void) => {
       resolve = _resolve;
@@ -141,7 +145,9 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
 
   private startNextWebsocketIfNotStopped(): void {
     if (!this.isStopped) {
-      void this.startNextWebsocket(true);
+      this.startNextWebsocket(true).catch((err: unknown): void => {
+        log.error({ err }, "startNextWebsocket failed");
+      });
     }
   }
 
@@ -244,6 +250,10 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       if (this.currentErrorsNumber >= this.options.maxRetries) {
         log.error({ rpcUrl: url, reason: errMsg(error) }, "max retries reached; stopping ws provider");
         this.isStopped = true;
+        if (this.notReady !== null && this.notReady.resolve !== null) {
+          this.notReady.resolve();
+          this.notReady = null;
+        }
         return;
       }
       this.currentErrorsNumber++;
