@@ -1,0 +1,12 @@
+name: cleanup after PR merge
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  delete-branch:
+    uses: D8-X/reusable-gh-workflows/.github/workflows/delete-merged-branch.yml@main
+    permissions:
+      contents: write
+      pull-requests: read
