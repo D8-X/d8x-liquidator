@@ -6,6 +6,7 @@ import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { SDK_STATE_REPUBLISH_SECONDS, publishSDKState, refreshSDKStateTTL } from "../sdkState.js";
 import { loadWatchlist, PerpStates, publishWatchlist, serializePerpStates } from "../watchlist.js";
 import { createLogger } from "../logger.js";
+import { CommanderMetrics } from "./metrics.js";
 
 const log = createLogger("commander.distributor");
 
@@ -40,9 +41,12 @@ export default class Distributor {
 
   private config: LiquidatorConfig;
   private chainId: number;
+  private metrics: CommanderMetrics;
 
   constructor(config: LiquidatorConfig) {
     this.config = config;
+    this.metrics = new CommanderMetrics();
+    void this.metrics.start();
     this.redisSubClient = constructRedis("commanderSubClient");
     this.redisPubClient = constructRedis("commanderPubClient");
     const sdkConfig = PerpetualDataHandler.readSDKConfig(config.sdkConfig);
@@ -420,9 +424,21 @@ export default class Distributor {
       result = await this.md.getLiquidatableAccountsInPool(poolId, prices, this.config.liquidatableBatchSize ?? 5);
     } catch (e: unknown) {
       log.warn({ error: errMsg(e), poolId }, "getLiquidatableAccountsInPool failed");
+      result = await this.md.getLiquidatableAccountsInPool(
+        poolId,
+        prices,
+        this.config.liquidatableBatchSize ?? 5,
+      );
+    } catch (e) {
+      this.metrics.observePoolCheck(poolId, "failed", 0);
+      log.warn(
+        { error: e instanceof Error ? e.message : String(e), poolId },
+        "getLiquidatableAccountsInPool failed",
+      );
       return;
     }
     const liquidatableCount = result.reduce((acc, r) => acc + r.traders.length, 0);
+    this.metrics.observePoolCheck(poolId, "ok", liquidatableCount);
     log.info(
       { poolId, perpsQueried: prices.size, perpsWithLiquidatable: result.length, liquidatableCount },
       "getLiquidatableAccountsInPool ok",

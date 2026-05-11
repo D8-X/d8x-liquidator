@@ -1,8 +1,6 @@
-# sudo docker compose up --build -d
 name: d8x
 
 services:
-  # Redis for Pub/Sub between blockchain listener (pub) and liquidators (sub)
   cache:
     image: redis:6.2-alpine
     restart: always
@@ -19,7 +17,7 @@ services:
       start_period: 5s
 
   sentinel-base_sepolia:
-    image: ghcr.io/d8-x/liquidator-sentinel:main
+    image: ghcr.io/d8-x/liquidator-sentinel:dev
     #build:
     #  context: .
     #  dockerfile: ./src/sentinel/Dockerfile
@@ -44,7 +42,7 @@ services:
         max-file: "10"
 
   commander-base_sepolia:
-    image: ghcr.io/d8-x/liquidator-commander:main
+    image: ghcr.io/d8-x/liquidator-commander:dev
     depends_on:
       cache:
         condition: service_healthy
@@ -58,6 +56,7 @@ services:
       REDIS_ID: 4
       SDK_CONFIG: base_sepolia
       LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+      METRICS_PORT: "9011"
     configs:
       - source: liquidator_config
         target: /etc/liquidatorconf.json
@@ -69,7 +68,7 @@ services:
         max-file: "10"
 
   executor-base_sepolia:
-    image: ghcr.io/d8-x/liquidator-executor:main
+    image: ghcr.io/d8-x/liquidator-executor:dev
     depends_on:
       cache:
         condition: service_healthy
@@ -97,7 +96,7 @@ services:
         max-file: "10"
 
   sentinel-base:
-    image: ghcr.io/d8-x/liquidator-sentinel:main
+    image: ghcr.io/d8-x/liquidator-sentinel:dev
     depends_on:
       cache:
         condition: service_healthy
@@ -119,7 +118,7 @@ services:
         max-file: "10"
 
   commander-base:
-    image: ghcr.io/d8-x/liquidator-commander:main
+    image: ghcr.io/d8-x/liquidator-commander:dev  # <--- we need to properly start pulling main for prod
     depends_on:
       cache:
         condition: service_healthy
@@ -130,6 +129,7 @@ services:
       REDIS_ID: 5
       SDK_CONFIG: base
       LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+      METRICS_PORT: "9011"
     configs:
       - source: liquidator_config
         target: /etc/liquidatorconf.json
@@ -141,7 +141,7 @@ services:
         max-file: "10"
 
   executor-base:
-    image: ghcr.io/d8-x/liquidator-executor:main
+    image: ghcr.io/d8-x/liquidator-executor:dev
     depends_on:
       cache:
         condition: service_healthy
@@ -200,8 +200,32 @@ services:
       - source: alertmanager_yaml
         target: /etc/alertmanager/alertmanager.yml
 
+  grafana:
+    image: grafana/grafana-oss:11.6.0
+    restart: always
+    depends_on:
+      - prometheus
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: ${GF_SERVER_ROOT_URL:-}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
 volumes:
   prometheus_data:
+  grafana_data:
 configs:
   prometheus_yaml:
     file: ./prometheus_configs/prometheus.yaml

@@ -113,6 +113,22 @@ export default class Liquidator {
     );
     this.bots.forEach((bot: Bot, idx: number): void => {
       this.metrics.registerBot(idx, bot.api.getAddress());
+    this.bots = this.privateKey.map((pk) => ({
+      api: new LiquidatorTool(sdkConfig, pk),
+      busy: false,
+    }));
+    this.privateKey.forEach((pk, idx) => this.metrics.registerBot(idx, new Wallet(pk).address));
+    this.metrics.setConfigInfo({
+      gasLimit: this.config.gasLimit,
+      gasPriceMultiplier: this.config.gasPriceMultiplier,
+      bots: this.config.bots,
+      liquidateIntervalSecondsMin: this.config.liquidateIntervalSecondsMin,
+      liquidateIntervalSecondsMax: this.config.liquidateIntervalSecondsMax,
+      fetchPricesIntervalSecondsMin: this.config.fetchPricesIntervalSecondsMin,
+      checkIntervalSecondsMin: this.config.checkIntervalSecondsMin,
+      checkIntervalSecondsMax: this.config.checkIntervalSecondsMax,
+      liquidatableBatchSize: this.config.liquidatableBatchSize,
+      priceMovePctThreshold: this.config.priceMovePctThreshold,
     });
 
     if (this.config.gasPriceMultiplier) {
@@ -321,6 +337,8 @@ export default class Liquidator {
         },
         "txn rejected",
       );
+      this.metrics.incLiquidation(botIdx, symbol, "rejected", categorizeRejectReason(e));
+      this.bots[botIdx].busy = false;
       this.metrics.incLiquidation(symbol, "rejected", categorizeRejectReason(e));
       this.locked.delete(`${symbol}:${trader}`);
       if (errCode(e) === "INSUFFICIENT_FUNDS" || reason.includes("insufficient funds for intrinsic transaction cost")) {
@@ -365,6 +383,8 @@ export default class Liquidator {
       this.metrics.observeLastLiquidation(botIdx, receipt.from);
       this.metrics.incLiquidation(symbol, "confirmed", "ok");
       this.applyGasSpent(botIdx, receipt.from, receipt.gasUsed, receipt.gasPrice);
+      this.metrics.incLiquidation(botIdx, symbol, "confirmed", "ok");
+      this.applyGasSpent(botIdx, receipt.from, receipt.gasUsed, receipt.gasPrice ?? 0n);
       log.info(
         {
           symbol: symbol,
@@ -381,6 +401,9 @@ export default class Liquidator {
     } catch (e: unknown) {
       const error: string = errMsg(e);
       this.metrics.incLiquidation(symbol, "failed", categorizeFailReason(e));
+    } catch (e: any) {
+      let error = e?.toString() || "";
+      this.metrics.incLiquidation(botIdx, symbol, "failed", categorizeFailReason(e));
       log.error(
         {
           err: e,
@@ -538,6 +561,11 @@ export default class Liquidator {
       const botBalance: bigint = await provider.getBalance(addr);
       const treasuryBalance: bigint = await provider.getBalance(treasury.address);
       const botIdx: number = this.botIdxFromAddress(addr);
+    for (let addr of addressArray) {
+      const botBalance = await provider.getBalance(addr);
+      const treasuryBalance = await provider.getBalance(treasury.address);
+      this.metrics.setTreasuryBalance(treasury.address, Number(formatUnits(treasuryBalance, 18)));
+      const botIdx = this.botIdxFromAddress(addr);
       if (botIdx >= 0) {
         this.botBalances.set(addr.toLowerCase(), botBalance);
         this.metrics.setBotBalance(botIdx, addr, Number(formatUnits(botBalance, 18)));
@@ -616,6 +644,13 @@ export default class Liquidator {
     if (cached === undefined) return;
     const cost: bigint = gasUsed * gasPrice;
     const next: bigint = cost > cached ? 0n : cached - cost;
+  private applyGasSpent(botIdx: number, botAddr: string, gasUsed: bigint, gasPrice: bigint) {
+    const key = botAddr.toLowerCase();
+    const cost = gasUsed * gasPrice;
+    this.metrics.incGasSpentWei(botIdx, cost);
+    const cached = this.botBalances.get(key);
+    if (cached === undefined) return;
+    const next = cost > cached ? 0n : cached - cost;
     this.botBalances.set(key, next);
     this.metrics.setBotBalance(botIdx, botAddr, Number(formatUnits(next, 18)));
   }
