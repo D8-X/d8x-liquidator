@@ -20,6 +20,6 @@ export type FailReason =
   | "oracle_stale"
   | "other_revert";
 
-export type FundingFailureReason = "treasury_insufficient" | "transfer_reverted" | "other";
+export type FundingFailureReason = "treasury_insufficient" | "treasury_partial" | "transfer_reverted" | "other";
 
 export type Reason = "ok" | RejectReason | FailReason;
