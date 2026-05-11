@@ -79,6 +79,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
   private currentErrorsNumber: number = 0;
   private options: InternalOptions;
   private switchingRpc: boolean = false;
+  private starting: boolean = false;
 
   // See base class implementation. TLDR: prevents _write calls before
   // establishing connection when switching rpcs.
@@ -107,40 +108,39 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * (Re)starts the websocket provider with the next rpc url from provided list.
    */
   public async startNextWebsocket(forceCloseOpenConn: boolean = false): Promise<void> {
-    // Do not close open connections by default. Only if explicitly requested.
     if (this.websocket) {
-      if (this.websocket.readyState === WebSocket.OPEN) {
-        if (!forceCloseOpenConn) {
-          return;
-        }
+      const rs: number = this.websocket.readyState;
+      if (rs === WebSocket.OPEN && !forceCloseOpenConn) return;
+      if (rs === WebSocket.CONNECTING) return;
+    }
+    if (this.starting) return;
+    this.starting = true;
+    try {
+      if (this.notReady?.resolve) {
+        this.notReady.resolve();
       }
-    }
+      let resolve: (() => void) | null = null;
+      const promise: Promise<void> = new Promise<void>((_resolve: () => void) => {
+        resolve = _resolve;
+      });
+      this.notReady = { promise, resolve };
 
-    if (this.notReady?.resolve) {
-      this.notReady.resolve();
-    }
-    let resolve: (() => void) | null = null;
-    const promise: Promise<void> = new Promise<void>((_resolve: () => void) => {
-      resolve = _resolve;
-    });
-    this.notReady = { promise, resolve };
+      this.isStopped = false;
+      if (this.websocket) {
+        await this._stop();
+      }
 
-    this.isStopped = false;
-    // Close current connection if it is established, gracefully remove any
-    // event listeners and close the underlying ws conn.
-    if (this.websocket) {
-      await this._stop();
-    }
+      this.switchingRpc = true;
+      this.switchToNextRpc();
+      if (this.options.logRpcSwitches) {
+        log.warn({ rpcUrl: this.getCurrentRpcUrl() }, "switching rpc");
+      }
 
-    // From here on until connection is open, we are switching rpc.
-    this.switchingRpc = true;
-    this.switchToNextRpc();
-    if (this.options.logRpcSwitches) {
-      log.warn({ rpcUrl: this.getCurrentRpcUrl() }, "switching rpc");
+      this.startWebsocketEventListeners();
+      this.registerPreviousEventListeners();
+    } finally {
+      this.starting = false;
     }
-
-    this.startWebsocketEventListeners();
-    this.registerPreviousEventListeners();
   }
 
   private startNextWebsocketIfNotStopped(): void {
@@ -179,10 +179,18 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
     this.pause(true);
     await this.removeAllListeners();
     if (this.websocket) {
-      if (this.websocket.readyState <= WebSocket.OPEN) {
-        this.websocket.close();
-      }
+      this.detachAndCloseWs(this.websocket);
       this.websocket = null;
+    }
+  }
+
+  private detachAndCloseWs(ws: WebSocket): void {
+    ws.onopen = (): void => undefined;
+    ws.onerror = (): void => undefined;
+    ws.onmessage = (): void => undefined;
+    ws.onclose = (): void => undefined;
+    if (ws.readyState <= WebSocket.OPEN) {
+      ws.close();
     }
   }
 
@@ -254,6 +262,10 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
           this.notReady.resolve();
           this.notReady = null;
         }
+        if (this.websocket) {
+          this.detachAndCloseWs(this.websocket);
+          this.websocket = null;
+        }
         return;
       }
       this.currentErrorsNumber++;
@@ -323,9 +335,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    */
   public destroy(): void {
     if (this.websocket !== null) {
-      if (this.websocket.readyState <= WebSocket.OPEN) {
-        this.websocket.close();
-      }
+      this.detachAndCloseWs(this.websocket);
       this.websocket = null;
     }
     super.destroy();
