@@ -46,7 +46,7 @@ export default class Distributor {
   constructor(config: LiquidatorConfig) {
     this.config = config;
     this.metrics = new CommanderMetrics();
-    void this.metrics.start();
+    this.metrics.start();
     this.redisSubClient = constructRedis("commanderSubClient");
     this.redisPubClient = constructRedis("commanderPubClient");
     const sdkConfig = PerpetualDataHandler.readSDKConfig(config.sdkConfig);
@@ -423,18 +423,8 @@ export default class Distributor {
     try {
       result = await this.md.getLiquidatableAccountsInPool(poolId, prices, this.config.liquidatableBatchSize ?? 5);
     } catch (e: unknown) {
-      log.warn({ error: errMsg(e), poolId }, "getLiquidatableAccountsInPool failed");
-      result = await this.md.getLiquidatableAccountsInPool(
-        poolId,
-        prices,
-        this.config.liquidatableBatchSize ?? 5,
-      );
-    } catch (e) {
       this.metrics.observePoolCheck(poolId, "failed", 0);
-      log.warn(
-        { error: e instanceof Error ? e.message : String(e), poolId },
-        "getLiquidatableAccountsInPool failed",
-      );
+      log.warn({ error: errMsg(e), poolId }, "getLiquidatableAccountsInPool failed");
       return;
     }
     const liquidatableCount = result.reduce((acc, r) => acc + r.traders.length, 0);

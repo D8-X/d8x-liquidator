@@ -181,13 +181,18 @@ export class Metrics {
     app.listen(port);
   }
 
-  public incLiquidation(symbol: string, outcome: LiquidationOutcome, reason: Reason, n: number = 1): void {
-  public incLiquidation(botIdx: number, symbol: string, outcome: LiquidationOutcome, reason: Reason, n: number = 1) {
+  public incLiquidation(
+    botIdx: number,
+    symbol: string,
+    outcome: LiquidationOutcome,
+    reason: Reason,
+    n: number = 1,
+  ): void {
     if (n <= 0) return;
     this.metricsList.liquidationsTotal.labels(this.chain, String(botIdx), symbol, outcome, reason).inc(n);
   }
 
-  public incGasSpentWei(botIdx: number, wei: bigint) {
+  public incGasSpentWei(botIdx: number, wei: bigint): void {
     if (wei <= 0n) return;
     this.metricsList.gasSpentWei.labels(this.chain, String(botIdx)).inc(Number(wei));
   }
@@ -215,7 +220,7 @@ export class Metrics {
     this.metricsList.minBalance.labels(this.chain).set(eth);
   }
 
-  public setTreasuryBalance(addr: string, eth: number) {
+  public setTreasuryBalance(addr: string, eth: number): void {
     this.metricsList.treasuryBalance.labels(this.chain, addr.toLowerCase()).set(eth);
   }
 
@@ -230,7 +235,7 @@ export class Metrics {
     checkIntervalSecondsMax?: number;
     liquidatableBatchSize?: number;
     priceMovePctThreshold?: number;
-  }) {
+  }): void {
     this.metricsList.configGasLimit.labels(this.chain).set(cfg.gasLimit);
     this.metricsList.configGasPriceMultiplier.labels(this.chain).set(cfg.gasPriceMultiplier);
     this.metricsList.configBots.labels(this.chain).set(cfg.bots);
