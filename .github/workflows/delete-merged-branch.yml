@@ -1,11 +1,14 @@
-name: cleanup after PR merge
+name: cleanup merged branches
 
 on:
   pull_request:
     types: [closed]
+  schedule:
+    - cron: "0 3,15 * * *"
+  workflow_dispatch:
 
 jobs:
-  delete-branch:
+  cleanup:
     uses: D8-X/reusable-gh-workflows/.github/workflows/delete-merged-branch.yml@main
     permissions:
       contents: write
