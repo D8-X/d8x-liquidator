@@ -1,7 +1,7 @@
 import { IPerpetualManager__factory, MarketData, PerpetualDataHandler } from "@d8-x/d8x-node-sdk";
 import { Redis } from "ioredis";
 import { LiquidatorConfig, PerpEmergencyMsg } from "../types.js";
-import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
+import { constructRedis, errMsg, executeWithTimeout, sleep } from "../utils.js";
 
 import { Network } from "ethers";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
@@ -17,6 +17,28 @@ enum ListeningMode {
   Events = "Events",
 }
 
+type ListeningProvider = MultiUrlJsonRpcProvider | MultiUrlWebSocketProvider;
+
+interface EventLogFields {
+  blockNumber: number;
+  transactionHash: string;
+  index: number;
+}
+
+function readEventLog(event: unknown): EventLogFields {
+  if (event === null || typeof event !== "object") {
+    return { blockNumber: 0, transactionHash: "", index: 0 };
+  }
+  const withLog = event as { log?: Partial<EventLogFields> } & Partial<EventLogFields>;
+  const source: Partial<EventLogFields> =
+    withLog.log && typeof withLog.log.blockNumber === "number" ? withLog.log : withLog;
+  return {
+    blockNumber: source.blockNumber ?? 0,
+    transactionHash: source.transactionHash ?? "",
+    index: source.index ?? 0,
+  };
+}
+
 export default class BlockhainListener {
   private config: LiquidatorConfig;
   // Network is initialized in start() method
@@ -26,8 +48,8 @@ export default class BlockhainListener {
   private httpProvider: MultiUrlJsonRpcProvider;
   // Single instance of multiurl ws provider. When switching listener, we will
   // simply switch to next rpc url in the list.
-  private multiUrlWsProvider!: MultiUrlWebSocketProvider;
-  private listeningProvider: MultiUrlJsonRpcProvider | MultiUrlWebSocketProvider | undefined;
+  private multiUrlWsProvider: MultiUrlWebSocketProvider;
+  private listeningProvider: ListeningProvider | undefined;
   private redisPubClient: Redis;
   private md: MarketData;
 
@@ -35,7 +57,7 @@ export default class BlockhainListener {
   private blockNumber: number | undefined;
   private mode: ListeningMode = ListeningMode.Events;
   private lastBlockReceivedAt: number;
-  private switchingRPC = false;
+  private switchingRPC: boolean = false;
   private emergency!: EmergencyPublishedStore;
   private refreshSymbolsInFlight: Promise<void> | null = null;
 
@@ -67,15 +89,15 @@ export default class BlockhainListener {
     this.lastBlockReceivedAt = Date.now();
   }
 
-  public unsubscribe() {
+  public unsubscribe(): void {
     log.info("unsubscribing");
     if (this.listeningProvider) {
-      this.listeningProvider.removeAllListeners();
+      void this.listeningProvider.removeAllListeners();
     }
   }
 
-  public checkHeartbeat() {
-    const blockTime = Math.floor((Date.now() - this.lastBlockReceivedAt) / 1_000);
+  public checkHeartbeat(): boolean {
+    const blockTime: number = Math.floor((Date.now() - this.lastBlockReceivedAt) / 1_000);
     if (blockTime > this.config.waitForBlockSeconds) {
       log.warn({ receivedSecondsAgo: blockTime }, "Last block received too long ago - heartbeat check failed");
       return false;
@@ -83,7 +105,7 @@ export default class BlockhainListener {
     return true;
   }
 
-  private async switchListeningMode() {
+  private async switchListeningMode(): Promise<void> {
     if (this.switchingRPC) {
       log.warn("already switching RPC");
       return;
@@ -101,88 +123,87 @@ export default class BlockhainListener {
       await this.listeningProvider.removeAllListeners();
     }
 
-    if (this.mode == ListeningMode.Events || this.config.rpcListenWs.length < 1) {
+    let next: ListeningProvider;
+    if (this.mode === ListeningMode.Events || this.config.rpcListenWs.length < 1) {
       log.warn("Switching from Websocket to HTTP provider");
       this.mode = ListeningMode.Polling;
-      this.listeningProvider = this.httpProvider;
-    } else if (this.config.rpcListenWs.length > 0) {
-      log.warn(
-        { nexRpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() },
-        "Switching from HTTP to WS"
-      );
+      next = this.httpProvider;
+    } else {
+      log.warn({ nexRpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() }, "Switching from HTTP to WS");
       this.mode = ListeningMode.Events;
       // startNextWebsocket will be called in health checks, therefore we don't
       // need to do that here.
-      this.listeningProvider = this.multiUrlWsProvider;
+      next = this.multiUrlWsProvider;
     }
+    this.listeningProvider = next;
     this.switchingRPC = false;
 
-    this.listeningProvider!.resetErrorNumber();
+    next.resetErrorNumber();
 
-    await this.addListeners();
-    this.redisPubClient.publish("switch-mode", this.mode);
+    this.addListeners();
+    void this.redisPubClient.publish("switch-mode", this.mode);
   }
 
   /**
    * Wait for blockNumber to come from WS connection or switch to http on
    * failure.
    */
-  private async connectWsOrSwitchToHttp() {
+  private async connectWsOrSwitchToHttp(): Promise<void> {
     this.blockNumber = undefined;
-    setTimeout(async () => {
+    setTimeout((): void => {
       if (!this.blockNumber) {
         log.warn("websocket connection could not be established");
-        await this.switchListeningMode();
+        void this.switchListeningMode();
       }
     }, this.config.waitForBlockSeconds * 1_000);
     await sleep(this.config.waitForBlockSeconds * 1_000);
   }
 
-  private resetHealthChecks() {
+  private resetHealthChecks(): void {
     // periodic health checks
-    setInterval(async () => {
-      if (this.mode == ListeningMode.Events) {
+    setInterval((): void => {
+      if (this.mode === ListeningMode.Events) {
         // currently on WS - check that block time is still reasonable or if we
         // need to switch
         if (!this.checkHeartbeat()) {
-          this.switchListeningMode();
+          void this.switchListeningMode();
         }
       } else if (this.config.rpcListenWs.length > 0) {
-        // currently on HTTP - check if we can switch to WS by seeing if we get
-        // blocks with next WS connection.
-        let success = false;
-
-        // await this.multiUrlWsProvider.startNextWebsocket(); Do not use once
-        // with MultiUrlWebsocketProvider. Also, do not call
-        // startNextWebsocket(), multi url provider will handle the switching
-        // internally
-        await this.multiUrlWsProvider.startNextWebsocket();
-        log.info(
-          { rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() },
-          "attempting to switch to WS"
-        );
-        const blockReceivedCb = () => {
-          log.debug({ rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() }, "block received");
-          success = true;
-        };
-        this.multiUrlWsProvider.on("block", blockReceivedCb);
-        // after N seconds, check if we received a block - if yes, switch
-        setTimeout(async () => {
-          if (success) {
-            this.multiUrlWsProvider.removeListener("block", blockReceivedCb);
-            await this.switchListeningMode();
-          } else {
-            // Otherwise just stop the multi url ws provider and try again later
-            await this.multiUrlWsProvider.stop();
-            log.warn("attempting to switch to WS failed - block not received");
-          }
-        }, this.config.waitForBlockSeconds * 1_000);
+        void this.tryReconnectToWs();
       }
     }, this.config.healthCheckSeconds * 1_000);
   }
 
-  public containsEthersConnErrors(error: string) {
-    const ethersErrors = [
+  private async tryReconnectToWs(): Promise<void> {
+    let success: boolean = false;
+
+    // await this.multiUrlWsProvider.startNextWebsocket(); Do not use once
+    // with MultiUrlWebsocketProvider. Also, do not call
+    // startNextWebsocket(), multi url provider will handle the switching
+    // internally
+    await this.multiUrlWsProvider.startNextWebsocket();
+    log.info({ rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() }, "attempting to switch to WS");
+    const blockReceivedCb = (): void => {
+      log.debug({ rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() }, "block received");
+      success = true;
+    };
+    void this.multiUrlWsProvider.on("block", blockReceivedCb);
+    // after N seconds, check if we received a block - if yes, switch
+    setTimeout((): void => {
+      void (async (): Promise<void> => {
+        if (success) {
+          await this.multiUrlWsProvider.removeListener("block", blockReceivedCb);
+          await this.switchListeningMode();
+        } else {
+          await this.multiUrlWsProvider.stop();
+          log.warn("attempting to switch to WS failed - block not received");
+        }
+      })();
+    }, this.config.waitForBlockSeconds * 1_000);
+  }
+
+  public containsEthersConnErrors(error: string): boolean {
+    const ethersErrors: string[] = [
       "Unexpected server response",
       "SERVER_ERROR",
       "WebSocket was closed before the connection was established",
@@ -195,7 +216,7 @@ export default class BlockhainListener {
     return false;
   }
 
-  public async start() {
+  public async start(): Promise<void> {
     this.network = await executeWithTimeout(
       this.httpProvider.getNetwork(),
       // Use at least 2X timeout of HTTP provider in case some of the rpc are
@@ -205,10 +226,7 @@ export default class BlockhainListener {
     );
 
     const result = await initMarketDataWithCache(this.md, [this.httpProvider], this.redisPubClient);
-    log.info(
-      { cache: result.usedCache, cacheAgeMs: result.cacheAgeMs },
-      "sentinel MarketData initialized"
-    );
+    log.info({ cache: result.usedCache, cacheAgeMs: result.cacheAgeMs }, "sentinel MarketData initialized");
 
     if (this.config.rpcListenWs.length > 0) {
       this.listeningProvider = this.multiUrlWsProvider;
@@ -225,100 +243,98 @@ export default class BlockhainListener {
         },
         listenerType: this.listeningProvider instanceof MultiUrlWebSocketProvider ? "Websocket" : "Http",
       },
-      "started"
+      "started",
     );
 
     this.emergency = new EmergencyPublishedStore();
 
-    this.connectWsOrSwitchToHttp();
+    void this.connectWsOrSwitchToHttp();
     this.addListeners();
     this.resetHealthChecks();
   }
 
   private refreshSymbolsCoalesced(): Promise<void> {
-    if (!this.refreshSymbolsInFlight) {
-      this.refreshSymbolsInFlight = this.md.refreshSymbols(true).finally(() => {
-        this.refreshSymbolsInFlight = null;
-      });
-    }
+    this.refreshSymbolsInFlight ??= this.md.refreshSymbols(true).finally((): void => {
+      this.refreshSymbolsInFlight = null;
+    });
     return this.refreshSymbolsInFlight;
   }
 
   private async resolveSymbol(perpId: number): Promise<string | undefined> {
-    const cached = this.md.getSymbolFromPerpId(perpId);
+    const cached: string | undefined = this.md.getSymbolFromPerpId(perpId);
     if (cached !== undefined) return cached;
     try {
       await this.refreshSymbolsCoalesced();
-    } catch (e) {
-      console.log({
-        event: "refreshSymbolsFailed",
-        level: "warn",
-        time: new Date().toISOString(),
-        perpetualId: perpId,
-        error: e instanceof Error ? e.message : String(e),
-      });
+    } catch (e: unknown) {
+      log.warn({ perpetualId: perpId, error: errMsg(e) }, "refreshSymbolsFailed");
     }
     return this.md.getSymbolFromPerpId(perpId);
   }
 
-  private async addListeners() {
-    if (this.listeningProvider === undefined) {
+  private addListeners(): void {
+    const provider: ListeningProvider | undefined = this.listeningProvider;
+    if (provider === undefined) {
       throw new Error("No provider ready to listen.");
     }
 
     // on error terminate
-    this.listeningProvider.on("error", (e) => {
+    void provider.on("error", (e: unknown): void => {
       log.error({ err: e, mode: this.mode }, "received error msg");
       // Submit last block received ts to executor/distributor to take action if
       // needed.
-      this.redisPubClient.publish("listener-error", this.lastBlockReceivedAt.toString());
+      void this.redisPubClient.publish("listener-error", this.lastBlockReceivedAt.toString());
 
       this.unsubscribe();
-      this.switchListeningMode();
+      void this.switchListeningMode();
     });
 
-    this.listeningProvider.on("block", (blockNumber) => {
+    void provider.on("block", (blockNumber: number): void => {
       this.lastBlockReceivedAt = Date.now();
       this.blockNumber = blockNumber;
     });
 
-    const proxy = IPerpetualManager__factory.connect(this.md.getProxyAddress(), this.listeningProvider);
+    const proxy = IPerpetualManager__factory.connect(this.md.getProxyAddress(), provider);
 
-    proxy.on(
+    void proxy.on(
       proxy.filters.SetEmergencyState,
-      async (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
-        const perpId = Number(perpetualId);
-        // SetEmergency is emitted for a given perp twice. 
-        // SetEmergency recieved for that perp within the last 10min are ignored.
-        if (this.emergency.shouldIgnore(perpId)) return; 
-        this.emergency.markPublished(perpId);
-        const symbol = await this.resolveSymbol(perpId);
-        if (symbol === undefined) return;
-        const msg: PerpEmergencyMsg = {
-          perpetualId: perpId,
-          symbol,
-          block: event.log.blockNumber,
-          hash: event.log.transactionHash,
-          id: `${event.log.transactionHash}:${event.log.index}`,
-        };
-        this.redisPubClient.publish("PerpEmergency", JSON.stringify(msg));
-        log.info({ event: "SetEmergencyState", ...msg });
+      (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: unknown): void => {
+        void this.handleEmergencyState(perpetualId, readEventLog(event));
       },
     );
 
-    proxy.on(proxy.filters.SetNormalState, (perpetualId: bigint, event: any) => {
-      const perpId = Number(perpetualId);
+    void proxy.on(proxy.filters.SetNormalState, (perpetualId: bigint, event: unknown): void => {
+      const perpId: number = Number(perpetualId);
       this.emergency.clear(perpId);
-      this.redisPubClient.publish(
+      const lg: EventLogFields = readEventLog(event);
+      void this.redisPubClient.publish(
         "PerpNormal",
         JSON.stringify({
           perpetualId: perpId,
-          block: event.log.blockNumber,
-          hash: event.log.transactionHash,
-          id: `${event.log.transactionHash}:${event.log.index}`,
+          block: lg.blockNumber,
+          hash: lg.transactionHash,
+          id: `${lg.transactionHash}:${String(lg.index)}`,
         }),
       );
       log.info({ event: "SetNormalState", perpetualId: perpId });
     });
+  }
+
+  private async handleEmergencyState(perpetualId: bigint, lg: EventLogFields): Promise<void> {
+    const perpId: number = Number(perpetualId);
+    // SetEmergency is emitted for a given perp twice.
+    // SetEmergency recieved for that perp within the last 10min are ignored.
+    if (this.emergency.shouldIgnore(perpId)) return;
+    this.emergency.markPublished(perpId);
+    const symbol: string | undefined = await this.resolveSymbol(perpId);
+    if (symbol === undefined) return;
+    const msg: PerpEmergencyMsg = {
+      perpetualId: perpId,
+      symbol,
+      block: lg.blockNumber,
+      hash: lg.transactionHash,
+      id: `${lg.transactionHash}:${String(lg.index)}`,
+    };
+    await this.redisPubClient.publish("PerpEmergency", JSON.stringify(msg));
+    log.info({ event: "SetEmergencyState", ...msg });
   }
 }

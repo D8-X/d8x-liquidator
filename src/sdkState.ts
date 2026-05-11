@@ -43,8 +43,8 @@ export async function loadSDKState(redis: Redis, anchors: TrustedAnchors): Promi
   const raw = await redis.get(sdkStateKey(anchors.chainId));
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as Partial<CachedSDKState>;
-    if (parsed?.sdkVersion !== D8X_SDK_VERSION || !parsed.state) {
+    const parsed: Partial<CachedSDKState> = JSON.parse(raw) as Partial<CachedSDKState>;
+    if (parsed.sdkVersion !== D8X_SDK_VERSION || !parsed.state) {
       return null;
     }
     if (parsed.state.chainId !== anchors.chainId) return null;

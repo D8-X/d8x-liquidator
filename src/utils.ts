@@ -7,7 +7,7 @@ import { createLogger } from "./logger.js";
 
 const log = createLogger("utils");
 
-const shuffle = (array: string[]) => {
+const shuffle = (array: string[]): string[] => {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [array[i], array[j]] = [array[j], array[i]];
@@ -15,14 +15,44 @@ const shuffle = (array: string[]) => {
   return array;
 };
 
-export async function loadConfig(sdkConfig: string): Promise<LiquidatorConfig> {
-  //"./config/live.liquidatorConfig.json"
-  const cfgPath = process.env.LIQUIDATOR_CONFIG_PATH
-  if (cfgPath==undefined) {
-    throw("LIQUIDATOR_CONFIG_PATH not defined")
+export function errMsg(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return Object.prototype.toString.call(err);
+}
+
+export function errCode(err: unknown): string | undefined {
+  if (err !== null && typeof err === "object" && "code" in err) {
+    const c: unknown = err.code;
+    return typeof c === "string" ? c : undefined;
   }
-  const configList: LiquidatorConfig[] = JSON.parse(await readFile(cfgPath, "utf8"));
-  const config = configList.find((config) => config.sdkConfig == sdkConfig);
+  return undefined;
+}
+
+export function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (v === undefined || v === "") {
+    throw new Error(`Environment variable ${name} not defined`);
+  }
+  return v;
+}
+
+export function requireEnvInt(name: string): number {
+  const raw = requireEnv(name);
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    throw new Error(`Environment variable ${name} is not an integer: "${raw}"`);
+  }
+  return parsed;
+}
+
+export async function loadConfig(sdkConfig: string): Promise<LiquidatorConfig> {
+  const cfgPath: string | undefined = process.env.LIQUIDATOR_CONFIG_PATH;
+  if (cfgPath === undefined) {
+    throw new Error("LIQUIDATOR_CONFIG_PATH not defined");
+  }
+  const configList: LiquidatorConfig[] = JSON.parse(await readFile(cfgPath, "utf8")) as LiquidatorConfig[];
+  const config: LiquidatorConfig | undefined = configList.find((c) => c.sdkConfig === sdkConfig);
   if (!config) {
     throw new Error(`SDK Config ${sdkConfig} not found in config file.`);
   }
@@ -33,46 +63,47 @@ export async function loadConfig(sdkConfig: string): Promise<LiquidatorConfig> {
   return config;
 }
 
-export function loadAccounts(mnemonicSeed: string, idxFrom: number, idxTo: number) {
-  let addr: string[] = [];
-  let pk: string[] = [];
+export interface LoadedAccounts {
+  addr: string[];
+  pk: string[];
+}
+
+export function loadAccounts(mnemonicSeed: string, idxFrom: number, idxTo: number): LoadedAccounts {
+  const addr: string[] = [];
+  const pk: string[] = [];
   for (let myIdx = idxFrom; myIdx <= idxTo; myIdx++) {
-    let [myAddr, myPK] = getPrivateKeyFromSeed(mnemonicSeed, myIdx);
+    const [myAddr, myPK] = getPrivateKeyFromSeed(mnemonicSeed, myIdx);
     addr.push(myAddr);
     pk.push(myPK);
   }
   if (pk.length < 1) {
     throw new Error("private key not defined");
   }
-  return { addr: addr, pk: pk };
+  return { addr, pk };
 }
 
-export function getPrivateKeyFromSeed(mnemonic: string, idx: number) {
-  if (mnemonic == undefined) {
-    throw Error("mnemonic seed phrase needed: export mnemonic='...");
-  }
-  const baseDerivationPath = "m/44'/60'/0'/0";
-  const path = `${baseDerivationPath}/${idx}`;
-  const mnemonicWallet = HDNodeWallet.fromMnemonic(Mnemonic.fromPhrase(mnemonic), path);
+export function getPrivateKeyFromSeed(mnemonic: string, idx: number): [string, string] {
+  const baseDerivationPath: string = "m/44'/60'/0'/0";
+  const path: string = `${baseDerivationPath}/${String(idx)}`;
+  const mnemonicWallet: HDNodeWallet = HDNodeWallet.fromMnemonic(Mnemonic.fromPhrase(mnemonic), path);
   return [mnemonicWallet.address, mnemonicWallet.privateKey];
 }
 
 export function getRedisConfig(): RedisConfig {
-  // let config = { host: process.env.REDIS_HOST!, port: +process.env.REDIS_PORT!, password: process.env.REDIS_PASSWORD };
-  let config = {
-    host: process.env.REDIS_HOST!,
-    port: +process.env.REDIS_PORT!,
+  return {
+    host: requireEnv("REDIS_HOST"),
+    port: requireEnvInt("REDIS_PORT"),
     password: process.env.REDIS_PASSWORD,
-    db: +process.env.REDIS_ID!,
+    db: requireEnvInt("REDIS_ID"),
   };
-  return config;
 }
 
 export function constructRedis(name: string): Redis {
-  let client;
-  let redisConfig = getRedisConfig();
-  client = new Redis(redisConfig);
-  client.on("error", (err) => log.error({ err, name }, "Redis Client Error"));
+  const redisConfig: RedisConfig = getRedisConfig();
+  const client: Redis = new Redis(redisConfig);
+  client.on("error", (err: Error): void => {
+    log.error({ err, name }, "Redis Client Error");
+  });
   return client;
 }
 
@@ -86,13 +117,13 @@ export function constructRedis(name: string): Redis {
 export function executeWithTimeout<T>(
   promise: Promise<T>,
   timeout: number,
-  errMsgOnTimeout: string | undefined = undefined
+  errMsgOnTimeout?: string,
 ): Promise<T> {
   let timeoutId: NodeJS.Timeout;
 
-  const timeoutPromise = new Promise<T>((_, reject) => {
+  const timeoutPromise: Promise<T> = new Promise<T>((_, reject) => {
     timeoutId = setTimeout(() => {
-      const msg = errMsgOnTimeout ?? "Function execution timed out.";
+      const msg: string = errMsgOnTimeout ?? "Function execution timed out.";
       reject(new Error(msg));
     }, timeout);
   });
@@ -102,27 +133,28 @@ export function executeWithTimeout<T>(
   });
 }
 
-export function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 export function stableStringify(value: unknown): string {
-  return JSON.stringify(value, (_key, val) => {
+  return JSON.stringify(value, (_key, val: unknown) => {
     if (typeof val === "bigint") return val.toString();
     if (val instanceof Map) {
       return Array.from(val.entries()).sort((a, b) =>
-        JSON.stringify(a[0]).localeCompare(JSON.stringify(b[0]))
+        JSON.stringify(a[0]).localeCompare(JSON.stringify(b[0])),
       );
     }
     if (val instanceof Set) {
       return Array.from(val.values()).sort((a, b) =>
-        JSON.stringify(a).localeCompare(JSON.stringify(b))
+        JSON.stringify(a).localeCompare(JSON.stringify(b)),
       );
     }
     if (val && typeof val === "object" && !Array.isArray(val)) {
       const sorted: Record<string, unknown> = {};
-      for (const k of Object.keys(val as Record<string, unknown>).sort()) {
-        sorted[k] = (val as Record<string, unknown>)[k];
+      const obj: Record<string, unknown> = val as Record<string, unknown>;
+      for (const k of Object.keys(obj).sort()) {
+        sorted[k] = obj[k];
       }
       return sorted;
     }

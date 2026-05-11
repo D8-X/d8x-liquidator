@@ -36,6 +36,14 @@ export interface MultiUrlJsonRpcProviderOptions extends JsonRpcApiProviderOption
   logRpcSwitches?: boolean;
 }
 
+type InternalOptions = JsonRpcApiProviderOptions & {
+  switchRpcOnEachRequest: boolean;
+  timeoutSeconds: number;
+  maxRetries: number;
+  logErrors: boolean;
+  logRpcSwitches: boolean;
+};
+
 /**
  * MultiUrlJsonRpcProvider is a JsonRpcProvider that switches between multiple
  * RPC URLs if a request fails. This provided is useful when using multiple
@@ -45,7 +53,7 @@ export interface MultiUrlJsonRpcProviderOptions extends JsonRpcApiProviderOption
  */
 export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements MultiUrlProvider {
   private currentConnection: FetchRequest;
-  private options: MultiUrlJsonRpcProviderOptions;
+  private options: InternalOptions;
   private rpcUrls: string[] = [];
   private currentRpcUrlIndex: number = 0;
   private networkish: Networkish | undefined;
@@ -67,7 +75,6 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
       maxRetries: rpcUrls.length,
       logErrors: false,
       logRpcSwitches: false,
-      // Override with user provided options
       ...options,
     };
     this.rpcUrls = rpcUrls;
@@ -82,29 +89,31 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
 
   /**
    * Query each underlying RPC URL independently for its current block number.
-   * Returns a map of url -> block height. 
+   * Returns a map of url -> block height.
    */
   public async getBlockNumberPerUrl(): Promise<Map<string, number>> {
-    const entries = await Promise.allSettled(
-      this.rpcUrls.map(async (url) => {
-        const tmp = new JsonRpcProvider(url, this.networkish, { staticNetwork: true });
+    const entries: PromiseSettledResult<readonly [string, number]>[] = await Promise.allSettled(
+      this.rpcUrls.map(async (url: string): Promise<readonly [string, number]> => {
+        const tmp: JsonRpcProvider = new JsonRpcProvider(url, this.networkish, { staticNetwork: true });
         return [url, await tmp.getBlockNumber()] as const;
       }),
     );
-    const result = new Map<string, number>();
-    for (const r of entries) if (r.status === "fulfilled") result.set(r.value[0], r.value[1]);
+    const result: Map<string, number> = new Map<string, number>();
+    for (const r of entries) {
+      if (r.status === "fulfilled") result.set(r.value[0], r.value[1]);
+    }
     return result;
   }
 
-  async send(method: string, params: Array<any> | Record<string, any>): Promise<any> {
-    await this._start();
-    return await super.send(method, params);
+  async send(method: string, params: any[] | Record<string, any>): Promise<unknown> {
+    this._start();
+    return super.send(method, params);
   }
 
   /**
    * Use the next rpc url in the list, increment errors counter.
    */
-  private switchRpcOnError() {
+  private switchRpcOnError(): void {
     // Do not switch rpc if we have automatic switch enabled, since the next
     // send will automatically switch to next rpc. If we had switched here, we
     // would always skip 2 rpcs.
@@ -118,7 +127,7 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
   /**
    * Simply switch to the next rpc in the list.
    */
-  public switchRpc() {
+  public switchRpc(): void {
     this.currentRpcUrlIndex = (this.currentRpcUrlIndex + 1) % this.rpcUrls.length;
     this.currentConnection = new FetchRequest(this.getCurrentRpcUrl());
 
@@ -134,32 +143,24 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
    * @param payload
    * @returns
    */
-  async _send(payload: JsonRpcPayload | Array<JsonRpcPayload>): Promise<Array<JsonRpcResult>> {
+  async _send(payload: JsonRpcPayload | JsonRpcPayload[]): Promise<JsonRpcResult[]> {
     if (this.options.switchRpcOnEachRequest) {
       this.switchRpc();
     }
 
-    const request = this._getConnection();
+    const request: FetchRequest = this._getConnection();
     request.body = JSON.stringify(payload);
     request.setHeader("content-type", "application/json");
 
-    let response: FetchResponse | undefined;
-    const currentRpcUrl = this.getCurrentRpcUrl();
+    let response: FetchResponse;
+    const currentRpcUrl: string = this.getCurrentRpcUrl();
     try {
       // Timeout in ethers request is not actually treated as a real timeout for
       // a single send, but rather more like a timeout if same request has to be
       // sent multiple times or follow redirects... See the source of
       // request.send(). Here we set up a real timeout for a single request to complete.
-      await executeWithTimeout(
-        (async () => {
-          response = await request.send();
-        })(),
-        this.options.timeoutSeconds! * 1000
-      );
-
-      if (response !== undefined) {
-        response.assertOk();
-      }
+      response = await executeWithTimeout(request.send(), this.options.timeoutSeconds * 1000);
+      response.assertOk();
     } catch (err) {
       if (this.options.logErrors) {
         log.error({ err, rpcUrl: currentRpcUrl }, "request error");
@@ -167,7 +168,7 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
       this.switchRpcOnError();
 
       // When max number of errors is reached - throw.
-      if (this.currentNumberOfErrors >= this.options.maxRetries!) {
+      if (this.currentNumberOfErrors >= this.options.maxRetries) {
         log.error({ rpcUrl: currentRpcUrl }, "max retries reached");
         throw err;
       }
@@ -175,18 +176,16 @@ export class MultiUrlJsonRpcProvider extends JsonRpcApiProvider implements Multi
       return this._send(payload);
     }
 
-    let resp = response!.bodyJson;
+    let resp: JsonRpcResult[] | JsonRpcResult = response.bodyJson as JsonRpcResult[] | JsonRpcResult;
     if (!Array.isArray(resp)) {
       resp = [resp];
     }
 
     // JSON-RPC error might be returned inside a correct response. Check for it.
-    if (resp.length > 0 && Object.hasOwnProperty.call(resp[0], "error")) {
+    if (resp.length > 0 && Object.hasOwn(resp[0], "error")) {
       if (this.options.logErrors) {
-        log.error(
-          { err: resp[0].error, rpcUrl: currentRpcUrl },
-          "JSON-RPC response error"
-        );
+        const errVal: unknown = (resp[0] as unknown as { error: unknown }).error;
+        log.error({ err: errVal, rpcUrl: currentRpcUrl }, "JSON-RPC response error");
       }
       this.switchRpcOnError();
       // return this._send(payload);

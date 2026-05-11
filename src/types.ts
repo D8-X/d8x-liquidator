@@ -4,6 +4,7 @@ export interface RedisConfig {
   host: string;
   port: number;
   password?: string;
+  db?: number;
 }
 
 export interface LiquidatorConfig {
@@ -21,7 +22,7 @@ export interface LiquidatorConfig {
   fetchPricesIntervalSecondsMin: number;
   gasPriceMultiplier: number;
   gasLimit: number;
-  priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
+  priceFeedEndpoints: PriceFeedEndpointsItem[];
   liquidatableBatchSize?: number;
   checkIntervalSecondsMin?: number;
   checkIntervalSecondsMax?: number;
