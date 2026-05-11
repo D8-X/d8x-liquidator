@@ -128,6 +128,10 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       if (this.websocket) {
         await this._stop();
       }
+      if (this.shouldAbortStart()) {
+        this.settleNotReady();
+        return;
+      }
 
       this.switchToNextRpc();
       if (this.options.logRpcSwitches) {
@@ -190,13 +194,17 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
     }
   }
 
+  private shouldAbortStart(): boolean {
+    return this.isStopped;
+  }
+
   private async _stop(): Promise<void> {
     this.pause(true);
-    await this.removeAllListeners();
     if (this.websocket) {
       this.detachAndCloseWs(this.websocket);
       this.websocket = null;
     }
+    await this.removeAllListeners();
   }
 
   private detachAndCloseWs(ws: WebSocket): void {
@@ -398,9 +406,8 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * Override, because base class uses private fields.
    */
   async _waitUntilReady(): Promise<void> {
-    if (this.notReady == null) {
-      return;
+    while (this.notReady !== null) {
+      await this.notReady.promise;
     }
-    await this.notReady.promise;
   }
 }
