@@ -116,6 +116,9 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
     if (this.starting) return;
     this.starting = true;
     try {
+      if (!forceCloseOpenConn) {
+        this.currentErrorsNumber = 0;
+      }
       if (this.notReady?.resolve) {
         this.notReady.resolve();
       }
