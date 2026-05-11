@@ -126,9 +126,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       this.notReady = { promise, resolve };
 
       this.isStopped = false;
-      if (this.websocket) {
-        await this._stop();
-      }
+      await this._stop();
       if (this.shouldAbortStart()) {
         this.settleNotReady();
         return;
