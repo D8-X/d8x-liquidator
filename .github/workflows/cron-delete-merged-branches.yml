@@ -1,0 +1,63 @@
+name: daily cleanup of merged branches
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Delete branches whose PR is merged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          protected_re='^(main|master|dev|release/.*|hotfix/.*)$'
+
+          # All remote branches except protected names.
+          mapfile -t branches < <(
+            gh api --paginate "repos/$REPO/branches?per_page=100" \
+              --jq '.[].name' \
+            | grep -Ev "$protected_re" || true
+          )
+
+          if [ "${#branches[@]}" -eq 0 ]; then
+            echo "no candidate branches"
+            exit 0
+          fi
+
+          for branch in "${branches[@]}"; do
+            # Find the most recent PR for this head branch (same-repo only).
+            pr_json=$(gh api \
+              "repos/$REPO/pulls?state=closed&head=${REPO%%/*}:$branch&per_page=1" \
+              --jq '.[0] // empty')
+
+            if [ -z "$pr_json" ]; then
+              echo "skip '$branch': no matching PR"
+              continue
+            fi
+
+            merged_at=$(printf '%s' "$pr_json" | jq -r '.merged_at // empty')
+            if [ -z "$merged_at" ]; then
+              echo "skip '$branch': PR closed without merge"
+              continue
+            fi
+
+            if gh api -X DELETE "repos/$REPO/git/refs/heads/$branch" --silent 2>/tmp/err; then
+              echo "deleted '$branch' (merged at $merged_at)"
+            else
+              if grep -q "Reference does not exist" /tmp/err; then
+                echo "'$branch' already gone"
+              else
+                echo "failed to delete '$branch':"
+                cat /tmp/err
+              fi
+            fi
+          done
