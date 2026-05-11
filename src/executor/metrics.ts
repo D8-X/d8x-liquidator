@@ -58,8 +58,8 @@ export class Metrics {
     private metricsList = {
       liquidationsTotal: new promClient.Counter({
         name: "liquidator_liquidations_total",
-        help: "Cumulative count of liquidation outcomes, by perpetual symbol and reason.",
-        labelNames: ["chain", "symbol", "outcome", "reason"] as const,
+        help: "Cumulative count of liquidation outcomes, by perpetual symbol, reason and worker wallet.",
+        labelNames: ["chain", "bot_idx", "symbol", "outcome", "reason"] as const,
       }),
       lastLiquidationTimestamp: new promClient.Gauge({
         name: "liquidator_last_liquidation_timestamp_seconds",
@@ -84,6 +84,66 @@ export class Metrics {
       minBalance: new promClient.Gauge({
         name: "liquidator_min_balance_eth",
         help: "Minimum native-token balance required for a bot to operate, computed as gasPrice * gasLimit * 5.",
+        labelNames: ["chain"] as const,
+      }),
+      treasuryBalance: new promClient.Gauge({
+        name: "liquidator_treasury_balance_eth",
+        help: "Native-token balance of the treasury wallet (HD index 0), in ETH.",
+        labelNames: ["chain", "treasury_addr"] as const,
+      }),
+      gasSpentWei: new promClient.Counter({
+        name: "liquidator_gas_spent_wei_total",
+        help: "Cumulative gas spent (wei) by each bot wallet on confirmed transactions. Daily = increase(...[1d]).",
+        labelNames: ["chain", "bot_idx"] as const,
+      }),
+      configGasLimit: new promClient.Gauge({
+        name: "liquidator_config_gas_limit",
+        help: "Configured gasLimit for liquidation transactions.",
+        labelNames: ["chain"] as const,
+      }),
+      configGasPriceMultiplier: new promClient.Gauge({
+        name: "liquidator_config_gas_price_multiplier",
+        help: "Multiplier applied to current gas price when sending transactions.",
+        labelNames: ["chain"] as const,
+      }),
+      configBots: new promClient.Gauge({
+        name: "liquidator_config_bots",
+        help: "Configured number of liquidator bot wallets.",
+        labelNames: ["chain"] as const,
+      }),
+      configLiquidateIntervalSecondsMin: new promClient.Gauge({
+        name: "liquidator_config_liquidate_interval_seconds_min",
+        help: "Minimum delay between liquidation attempts for the same trader.",
+        labelNames: ["chain"] as const,
+      }),
+      configLiquidateIntervalSecondsMax: new promClient.Gauge({
+        name: "liquidator_config_liquidate_interval_seconds_max",
+        help: "Maximum delay between liquidation attempts for the same trader.",
+        labelNames: ["chain"] as const,
+      }),
+      configFetchPricesIntervalSecondsMin: new promClient.Gauge({
+        name: "liquidator_config_fetch_prices_interval_seconds_min",
+        help: "Minimum interval between off-chain price fetches.",
+        labelNames: ["chain"] as const,
+      }),
+      configCheckIntervalSecondsMin: new promClient.Gauge({
+        name: "liquidator_config_check_interval_seconds_min",
+        help: "Minimum interval between commander pool checks.",
+        labelNames: ["chain"] as const,
+      }),
+      configCheckIntervalSecondsMax: new promClient.Gauge({
+        name: "liquidator_config_check_interval_seconds_max",
+        help: "Maximum interval between commander pool checks.",
+        labelNames: ["chain"] as const,
+      }),
+      configLiquidatableBatchSize: new promClient.Gauge({
+        name: "liquidator_config_liquidatable_batch_size",
+        help: "Max perps queried per Multicall in getLiquidatableAccountsInPool.",
+        labelNames: ["chain"] as const,
+      }),
+      configPriceMovePctThreshold: new promClient.Gauge({
+        name: "liquidator_config_price_move_pct_threshold",
+        help: "Spot price move (fraction) that triggers an early pool re-check.",
         labelNames: ["chain"] as const,
       }),
     },
@@ -112,9 +172,14 @@ export class Metrics {
     app.listen(port);
   }
 
-  public incLiquidation(symbol: string, outcome: LiquidationOutcome, reason: Reason, n: number = 1) {
+  public incLiquidation(botIdx: number, symbol: string, outcome: LiquidationOutcome, reason: Reason, n: number = 1) {
     if (n <= 0) return;
-    this.metricsList.liquidationsTotal.labels(this.chain, symbol, outcome, reason).inc(n);
+    this.metricsList.liquidationsTotal.labels(this.chain, String(botIdx), symbol, outcome, reason).inc(n);
+  }
+
+  public incGasSpentWei(botIdx: number, wei: bigint) {
+    if (wei <= 0n) return;
+    this.metricsList.gasSpentWei.labels(this.chain, String(botIdx)).inc(Number(wei));
   }
 
   public observeLastLiquidation(botIdx: number, botAddr: string, when: Date = new Date()) {
@@ -138,5 +203,37 @@ export class Metrics {
 
   public setMinBalance(eth: number) {
     this.metricsList.minBalance.labels(this.chain).set(eth);
+  }
+
+  public setTreasuryBalance(addr: string, eth: number) {
+    this.metricsList.treasuryBalance.labels(this.chain, addr.toLowerCase()).set(eth);
+  }
+
+  public setConfigInfo(cfg: {
+    gasLimit: number;
+    gasPriceMultiplier: number;
+    bots: number;
+    liquidateIntervalSecondsMin: number;
+    liquidateIntervalSecondsMax: number;
+    fetchPricesIntervalSecondsMin: number;
+    checkIntervalSecondsMin?: number;
+    checkIntervalSecondsMax?: number;
+    liquidatableBatchSize?: number;
+    priceMovePctThreshold?: number;
+  }) {
+    this.metricsList.configGasLimit.labels(this.chain).set(cfg.gasLimit);
+    this.metricsList.configGasPriceMultiplier.labels(this.chain).set(cfg.gasPriceMultiplier);
+    this.metricsList.configBots.labels(this.chain).set(cfg.bots);
+    this.metricsList.configLiquidateIntervalSecondsMin.labels(this.chain).set(cfg.liquidateIntervalSecondsMin);
+    this.metricsList.configLiquidateIntervalSecondsMax.labels(this.chain).set(cfg.liquidateIntervalSecondsMax);
+    this.metricsList.configFetchPricesIntervalSecondsMin.labels(this.chain).set(cfg.fetchPricesIntervalSecondsMin);
+    if (cfg.checkIntervalSecondsMin !== undefined)
+      this.metricsList.configCheckIntervalSecondsMin.labels(this.chain).set(cfg.checkIntervalSecondsMin);
+    if (cfg.checkIntervalSecondsMax !== undefined)
+      this.metricsList.configCheckIntervalSecondsMax.labels(this.chain).set(cfg.checkIntervalSecondsMax);
+    if (cfg.liquidatableBatchSize !== undefined)
+      this.metricsList.configLiquidatableBatchSize.labels(this.chain).set(cfg.liquidatableBatchSize);
+    if (cfg.priceMovePctThreshold !== undefined)
+      this.metricsList.configPriceMovePctThreshold.labels(this.chain).set(cfg.priceMovePctThreshold);
   }
 }
