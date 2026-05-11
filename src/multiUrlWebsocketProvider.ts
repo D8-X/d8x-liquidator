@@ -10,6 +10,7 @@ import {
 import { WebSocket, type ErrorEvent, type CloseEvent, type MessageEvent, type Event } from "ws";
 import { MultiUrlProvider } from "./multiUrlJsonRpcProvider.js";
 import { createLogger } from "./logger.js";
+import { errMsg } from "./utils.js";
 
 const log = createLogger("rpc.ws");
 
@@ -36,7 +37,7 @@ interface NotReadyState {
 }
 
 interface WsErrorEvent extends ErrorEvent {
-  error: Error;
+  error: unknown;
   target: WebSocket;
 }
 
@@ -61,8 +62,9 @@ function wsDataToString(data: MessageEvent["data"]): string {
 export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUrlProvider {
   // Current active ws instance
   public websocket: WebSocket | null = null;
-  // When isStopped is true, it will not attempt to switch rpcs or create new
-  // connections. It can only be set to false by calling stop manually.
+  // When isStopped is true, the provider will not attempt to switch rpcs or
+  // create new connections. Set to true by stop() and on max-retries reached;
+  // reset to false by startNextWebsocket().
   private isStopped: boolean = false;
 
   private rpcUrls: string[] = [];
@@ -72,7 +74,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
 
   // List of event listeners that were registered via this.on. We track this
   // list to recreate any event listeners when switching to a new ws instance.
-  private registeredListeners: Map<ProviderEvent, [Listener]> = new Map();
+  private registeredListeners: Map<ProviderEvent, Listener[]> = new Map();
   // Number of errors encountered without a successful connection.
   private currentErrorsNumber: number = 0;
   private options: InternalOptions;
@@ -148,10 +150,12 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * previous connection
    */
   private registerPreviousEventListeners(): void {
-    const prevListeners: IterableIterator<[ProviderEvent, [Listener]]> = this.registeredListeners.entries();
+    const prevListeners: IterableIterator<[ProviderEvent, Listener[]]> = this.registeredListeners.entries();
     for (const [event, listeners] of prevListeners) {
       listeners.forEach((listener: Listener): void => {
-        void this.on(event, listener);
+        this.on(event, listener).catch((err: unknown): void => {
+          log.error({ err, event }, "failed to re-register listener after rpc switch");
+        });
       });
     }
   }
@@ -172,6 +176,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       if (this.websocket.readyState <= WebSocket.OPEN) {
         this.websocket.close();
       }
+      this.websocket = null;
     }
   }
 
@@ -208,10 +213,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
         this.notReady = null;
       }
 
-      // Switching rpc is done.
-      if (this.switchingRpc) {
-        this.switchingRpc = false;
-      }
+      this.switchingRpc = false;
       this.currentErrorsNumber = 0;
       if (this.options.logRpcSwitches) {
         log.info({ rpcUrl: event.target.url }, "switched rpc");
@@ -219,7 +221,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
     };
 
     ws.onerror = (data: WsErrorEvent): void => {
-      const error: Error = data.error;
+      const error: unknown = data.error;
       const url: string = data.target.url;
 
       // When we are switching RPC, ignore any errors from previous connection,
@@ -236,13 +238,13 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       }
 
       void this.emit("error", error);
-      // Connection failure, attempt to switch to next rpc url
       if (this.options.logErrors) {
-        log.error({ err: error, rpcUrl: url }, "connection error");
+        log.error({ err: error, reason: errMsg(error), rpcUrl: url }, "connection error");
       }
       if (this.currentErrorsNumber >= this.options.maxRetries) {
-        log.error("max retries reached");
-        throw error;
+        log.error({ rpcUrl: url, reason: errMsg(error) }, "max retries reached; stopping ws provider");
+        this.isStopped = true;
+        return;
       }
       this.currentErrorsNumber++;
       this.startNextWebsocketIfNotStopped();
@@ -277,8 +279,8 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       } catch (e: unknown) {
         if (this.options.logErrors) {
           log.error({ err: e, data, rpcUrl: url }, "invalid JSON in message");
-          this.startNextWebsocketIfNotStopped();
         }
+        this.startNextWebsocketIfNotStopped();
         return;
       }
 
@@ -323,6 +325,9 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * @returns the current rpc url
    */
   public getCurrentRpcUrl(): string {
+    if (this.currentRpcUrlIndex < 0) {
+      throw new Error("ws provider not initialized. getCurrentRpcUrl called before first switchToNextRpc");
+    }
     return this.rpcUrls[this.currentRpcUrlIndex];
   }
 
@@ -336,7 +341,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
   public async on(event: ProviderEvent, listener: Listener): Promise<this> {
     // Only append listener to registered listeners map if it is not already
     // there.
-    const existing: [Listener] | undefined = this.registeredListeners.get(event);
+    const existing: Listener[] | undefined = this.registeredListeners.get(event);
     if (existing) {
       if (!existing.includes(listener)) {
         existing.push(listener);
@@ -357,7 +362,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    */
   async off(event: ProviderEvent, listener?: Listener): Promise<this> {
     if (listener) {
-      const listeners: [Listener] | undefined = this.registeredListeners.get(event);
+      const listeners: Listener[] | undefined = this.registeredListeners.get(event);
       if (listeners) {
         const i: number = listeners.indexOf(listener);
         if (i !== -1) {
