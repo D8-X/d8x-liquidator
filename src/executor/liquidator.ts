@@ -436,10 +436,10 @@ export default class Liquidator {
       for (let i = 0; i < this.bots.length; i++) {
         const liq: Bot = this.bots[i];
         if (!liq.busy) {
-          // msg will be attempted by this liquidator
           attempts++;
           this.q.delete(msg);
           executed.push(this.liquidateTraderByBot(i, symbol, traderAddr));
+          break;
         }
       }
     }

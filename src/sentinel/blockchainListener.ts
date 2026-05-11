@@ -175,31 +175,33 @@ export default class BlockhainListener {
   }
 
   private async tryReconnectToWs(): Promise<void> {
-    let success: boolean = false;
+    const observed: { success: boolean } = { success: false };
 
-    // await this.multiUrlWsProvider.startNextWebsocket(); Do not use once
-    // with MultiUrlWebsocketProvider. Also, do not call
-    // startNextWebsocket(), multi url provider will handle the switching
-    // internally
     await this.multiUrlWsProvider.startNextWebsocket();
     log.info({ rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() }, "attempting to switch to WS");
     const blockReceivedCb = (): void => {
       log.debug({ rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() }, "block received");
-      success = true;
+      observed.success = true;
     };
     void this.multiUrlWsProvider.on("block", blockReceivedCb);
-    // after N seconds, check if we received a block - if yes, switch
     setTimeout((): void => {
-      void (async (): Promise<void> => {
-        if (success) {
-          await this.multiUrlWsProvider.removeListener("block", blockReceivedCb);
-          await this.switchListeningMode();
-        } else {
-          await this.multiUrlWsProvider.stop();
-          log.warn("attempting to switch to WS failed - block not received");
-        }
-      })();
+      this.finishWsReconnectAttempt(observed, blockReceivedCb).catch((err: unknown): void => {
+        log.error({ err }, "finishWsReconnectAttempt failed");
+      });
     }, this.config.waitForBlockSeconds * 1_000);
+  }
+
+  private async finishWsReconnectAttempt(
+    observed: { success: boolean },
+    blockReceivedCb: () => void,
+  ): Promise<void> {
+    if (observed.success) {
+      await this.multiUrlWsProvider.removeListener("block", blockReceivedCb);
+      await this.switchListeningMode();
+    } else {
+      await this.multiUrlWsProvider.stop();
+      log.warn("attempting to switch to WS failed - block not received");
+    }
   }
 
   public containsEthersConnErrors(error: string): boolean {

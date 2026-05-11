@@ -107,6 +107,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * (Re)starts the websocket provider with the next rpc url from provided list.
    */
   public async startNextWebsocket(forceCloseOpenConn: boolean = false): Promise<void> {
+    if (this.destroyed) return;
     if (this.websocket) {
       const rs: number = this.websocket.readyState;
       if (rs === WebSocket.OPEN && !forceCloseOpenConn) return;
@@ -140,6 +141,9 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
 
       this.startWebsocketEventListeners();
       this.registerPreviousEventListeners();
+    } catch (e: unknown) {
+      this.settleNotReady();
+      throw e;
     } finally {
       this.starting = false;
     }
@@ -260,7 +264,9 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       const error: unknown = data.error;
       const url: string = data.target.url;
 
-      void this.emit("error", error);
+      this.emit("error", error).catch((emitErr: unknown): void => {
+        log.error({ err: emitErr }, "emit error failed");
+      });
       if (this.options.logErrors) {
         log.error({ err: error, reason: errMsg(error), rpcUrl: url }, "connection error");
       }
@@ -297,7 +303,9 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       }
 
       this.currentErrorsNumber = 0;
-      void this._processMessage(data);
+      this._processMessage(data).catch((err: unknown): void => {
+        log.error({ err }, "_processMessage failed");
+      });
     };
   }
 
@@ -351,8 +359,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * @returns
    */
   public async on(event: ProviderEvent, listener: Listener): Promise<this> {
-    // Only append listener to registered listeners map if it is not already
-    // there.
+    const result: this = await super.on(event, listener);
     const existing: Listener[] | undefined = this.registeredListeners.get(event);
     if (existing) {
       if (!existing.includes(listener)) {
@@ -361,8 +368,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
     } else {
       this.registeredListeners.set(event, [listener]);
     }
-
-    return super.on(event, listener);
+    return result;
   }
 
   /**
