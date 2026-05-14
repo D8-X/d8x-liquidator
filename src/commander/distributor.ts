@@ -5,7 +5,7 @@ import {
   sleepForSec,
 } from "@d8-x/d8x-node-sdk";
 import { Redis } from "ioredis";
-import { constructRedis, stableStringify } from "../utils.js";
+import { constructRedis, executeWithTimeout, stableStringify } from "../utils.js";
 import { LiquidatorConfig, PerpEmergencyMsg } from "../types.js";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { SDK_STATE_REPUBLISH_SECONDS, publishSDKState, refreshSDKStateTTL } from "../sdkState.js";
@@ -327,8 +327,19 @@ export default class Distributor {
     this.reconcileInflight = (async () => {
       let info;
       try {
-        await this.md.refreshSymbols(true);
-        info = await this.md.exchangeInfo();
+        // Wrap with timeouts: a hung refreshSymbols/exchangeInfo (e.g. unresponsive
+        // RPC) would leave reconcileInflight set forever, silently freezing the
+        // watchlist until something else nudged the underlying provider.
+        await executeWithTimeout(
+          this.md.refreshSymbols(true),
+          30_000,
+          "commander: refreshSymbols(true) timed out during reconcile",
+        );
+        info = await executeWithTimeout(
+          this.md.exchangeInfo(),
+          15_000,
+          "commander: exchangeInfo() timed out during reconcile",
+        );
       } catch (e) {
         log.error({ error: e instanceof Error ? e.message : String(e) }, "reconcile failed");
         return;
