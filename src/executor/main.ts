@@ -1,6 +1,9 @@
 import Liquidator from "./liquidator.js";
 import { loadAccounts, loadConfig, sleep } from "../utils.js";
 import "dotenv/config";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("executor");
 
 async function run() {
   // sdk config
@@ -23,7 +26,7 @@ async function run() {
 
   // bot wallets
   const { addr, pk } = loadAccounts(seedPhrase, 1, cfg.bots);
-  console.log(`\nStarting ${addr.length} bots with addresses ${addr.join("\n")}`);
+  log.info({ botCount: addr.length, addresses: addr }, "Starting bots");
 
   const liquidator = new Liquidator(treasuryPK, pk, cfg);
 
@@ -35,7 +38,10 @@ async function run() {
   }
   await liquidator.initialize();
 
-  liquidator.run();
+  await liquidator.run();
 }
 
-run();
+run().catch((err) => {
+  log.error({ err }, "executor fatal");
+  process.exit(1);
+});

@@ -1,0 +1,174 @@
+# Local-development compose. Builds all bot services from source (no GHCR
+# pull) and reuses the prod prometheus.yaml / liquidator.rules.yaml.
+#
+# Prereqs in .env:
+#   NPM_TOKEN     - GitHub PAT with read:packages for @d8-x packages
+#   SEED_PHRASE   - HD wallet seed; idx 0 funds gas, idx 1+ execute
+#   REDIS_PORT    - usually 6379
+#   REDIS_PASSWORD
+#
+# And ./config/live.liquidatorConfig.json must exist (copy from
+# src/config/sample.liquidatorConfig.json and add a base_sepolia entry).
+# Run:
+#   docker compose -f docker-compose.local.yml up --build -d
+
+name: d8x-local
+
+services:
+  cache:
+    image: redis:6.2-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:${REDIS_PORT}:${REDIS_PORT}"
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  sentinel-base_sepolia:
+    build:
+      context: .
+      dockerfile: ./src/sentinel/Dockerfile
+      secrets:
+        - npm_token
+    depends_on:
+      cache:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 4
+      SDK_CONFIG: base_sepolia
+      LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+    volumes:
+      - /Users/souhailaserbout/git/d8x-node-sdk:/app/node_modules/@d8-x/d8x-node-sdk:ro
+    configs:
+      - source: liquidator_config
+        target: /etc/liquidatorconf.json
+    restart: on-failure:5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  commander-base_sepolia:
+    build:
+      context: .
+      dockerfile: ./src/commander/Dockerfile
+      secrets:
+        - npm_token
+    depends_on:
+      cache:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 4
+      SDK_CONFIG: base_sepolia
+      LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+      METRICS_PORT: "9011"
+    ports:
+      - "127.0.0.1:9011:9011"
+    volumes:
+      - /Users/souhailaserbout/git/d8x-node-sdk:/app/node_modules/@d8-x/d8x-node-sdk:ro
+    configs:
+      - source: liquidator_config
+        target: /etc/liquidatorconf.json
+    restart: on-failure:5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  executor-base_sepolia:
+    build:
+      context: .
+      dockerfile: ./src/executor/Dockerfile
+      secrets:
+        - npm_token
+    depends_on:
+      cache:
+        condition: service_healthy
+      commander-base_sepolia:
+        condition: service_started
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_ID: 4
+      SDK_CONFIG: base_sepolia
+      SEED_PHRASE: ${SEED_PHRASE}
+      LIQUIDATOR_CONFIG_PATH: /etc/liquidatorconf.json
+    ports:
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - /Users/souhailaserbout/git/d8x-node-sdk:/app/node_modules/@d8-x/d8x-node-sdk:ro
+    configs:
+      - source: liquidator_config
+        target: /etc/liquidatorconf.json
+    restart: on-failure:5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100k"
+        max-file: "10"
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    ports:
+      - 127.0.0.1:9090:9090
+    volumes:
+      - prometheus_data:/prometheus
+    configs:
+      - source: prometheus_yaml
+        target: /etc/prometheus/prometheus.yml
+      - source: rules_1
+        target: /etc/prometheus/rules/liquidator.rules.yaml
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana-oss:11.6.0
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+configs:
+  prometheus_yaml:
+    file: ./prometheus_configs/prometheus.yaml
+  rules_1:
+    file: ./prometheus_configs/liquidator.rules.yaml
+  liquidator_config:
+    file: ./config/live.liquidatorConfig.json
+
+secrets:
+  npm_token:
+    environment: NPM_TOKEN

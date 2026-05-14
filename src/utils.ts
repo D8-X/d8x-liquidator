@@ -3,6 +3,9 @@ import { RedisConfig, LiquidatorConfig } from "./types.js";
 import { HDNodeWallet, Mnemonic } from "ethers";
 import "dotenv/config";
 import { readFile } from "node:fs/promises";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("utils");
 
 const shuffle = (array: string[]) => {
   for (let i = array.length - 1; i > 0; i--) {
@@ -69,7 +72,7 @@ export function constructRedis(name: string): Redis {
   let client;
   let redisConfig = getRedisConfig();
   client = new Redis(redisConfig);
-  client.on("error", (err) => console.log(`${name} Redis Client Error:` + err));
+  client.on("error", (err) => log.error({ err, name }, "Redis Client Error"));
   return client;
 }
 
@@ -101,4 +104,28 @@ export function executeWithTimeout<T>(
 
 export function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (typeof val === "bigint") return val.toString();
+    if (val instanceof Map) {
+      return Array.from(val.entries()).sort((a, b) =>
+        JSON.stringify(a[0]).localeCompare(JSON.stringify(b[0]))
+      );
+    }
+    if (val instanceof Set) {
+      return Array.from(val.values()).sort((a, b) =>
+        JSON.stringify(a).localeCompare(JSON.stringify(b))
+      );
+    }
+    if (val && typeof val === "object" && !Array.isArray(val)) {
+      const sorted: Record<string, unknown> = {};
+      for (const k of Object.keys(val as Record<string, unknown>).sort()) {
+        sorted[k] = (val as Record<string, unknown>)[k];
+      }
+      return sorted;
+    }
+    return val;
+  });
 }

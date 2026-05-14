@@ -1,0 +1,1997 @@
+{
+  "uid": "d8x-liquidators-base",
+  "title": "Liquidators (base)",
+  "description": "Operational dashboard for the d8x liquidator service.",
+  "tags": [
+    "d8x",
+    "ops",
+    "liquidators"
+  ],
+  "timezone": "utc",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 2
+      },
+      "transparent": true,
+      "options": {
+        "mode": "html",
+        "content": "<div style=\"display:flex;align-items:baseline;gap:10px;padding:14px;line-height:1.4;\"><span style=\"font-size:18px;font-weight:600;letter-spacing:0.3px;\">Liquidators</span><code style=\"background:rgba(255,255,255,0.08);padding:2px 10px;border-radius:4px;font-size:13px;\">base</code></div>"
+      }
+    },
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Status",
+      "gridPos": {
+        "x": 0,
+        "y": 2,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 101,
+      "title": "Confirmed liquidations",
+      "description": "Liquidation transactions accepted on-chain in the selected time range. Counted from liquidator_liquidations_total{outcome=\"confirmed\"}.",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 5,
+        "h": 4
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum(increase(liquidator_liquidations_total{chain=\"base\", outcome=\"confirmed\"}[$__range])) or vector(0)",
+          "legendFormat": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "title": "Failed",
+      "description": "Liquidations submitted but reverted on-chain in the selected time range. High values usually mean RPC/gas issues. liquidator_liquidations_total{outcome=\"failed\"}.",
+      "type": "stat",
+      "gridPos": {
+        "x": 5,
+        "y": 3,
+        "w": 5,
+        "h": 4
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum(increase(liquidator_liquidations_total{chain=\"base\", outcome=\"failed\"}[$__range])) or vector(0)",
+          "legendFormat": "failed"
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "title": "Rejected",
+      "description": "Liquidation candidates the bot decided not to send (e.g. trader became margin-safe between detection and submit) in the selected time range. liquidator_liquidations_total{outcome=\"rejected\"}.",
+      "type": "stat",
+      "gridPos": {
+        "x": 10,
+        "y": 3,
+        "w": 5,
+        "h": 4
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum(increase(liquidator_liquidations_total{chain=\"base\", outcome=\"rejected\"}[$__range])) or vector(0)",
+          "legendFormat": "rejected"
+        }
+      ]
+    },
+    {
+      "id": 104,
+      "title": "Min Bot Balance",
+      "description": "Lowest configured min-balance threshold across the bot fleet (from liquidator_min_balance_eth).",
+      "type": "stat",
+      "gridPos": {
+        "x": 15,
+        "y": 3,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ETH",
+          "noValue": "no data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.005
+              },
+              {
+                "color": "green",
+                "value": 0.02
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "min(liquidator_min_balance_eth{chain=\"base\"})",
+          "legendFormat": "min",
+          "instant": true,
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 110,
+      "type": "row",
+      "title": "Throughput",
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 111,
+      "title": "Liquidation rate, by outcome",
+      "description": "Per-second rate of liquidation attempts split by outcome over the last 5 minutes. Confirmed = on-chain success, Failed = tx reverted, Rejected = aborted before submit.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 3,
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "stacking": {
+              "mode": "none"
+            },
+            "showPoints": "never",
+            "lineWidth": 2
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "confirmed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rejected"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum",
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum by (outcome) (rate(liquidator_liquidations_total{chain=\"base\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 112,
+      "title": "Top 10 symbols",
+      "description": "Symbols with the most liquidation events in the last hour, broken down by outcome. Tells you where the bot is doing real work.",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "color",
+        "showUnfilled": true,
+        "minVizWidth": 0,
+        "minVizHeight": 16,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "topk(10, sum by (symbol) (increase(liquidator_liquidations_total{chain=\"base\", outcome=\"confirmed\"}[$__range])))",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "{{symbol}}"
+        }
+      ]
+    },
+    {
+      "id": 120,
+      "type": "row",
+      "title": "Failures by Reason",
+      "gridPos": {
+        "x": 0,
+        "y": 55,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 121,
+      "title": "Failed + Rejected rate, by reason",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 30,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum by (outcome, reason) (rate(liquidator_liquidations_total{chain=\"base\", outcome=~\"failed|rejected\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}/{{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 122,
+      "title": "Top reasons (in time range)",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "custom": {
+            "align": "left",
+            "filterable": true
+          }
+        }
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "topk(10, sum by (symbol, outcome, reason) (increase(liquidator_liquidations_total{chain=\"base\", outcome=~\"failed|rejected\"}[$__range])))",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true
+            },
+            "renameByName": {
+              "Value": "Count (1h)"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Count (1h)",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 130,
+      "type": "row",
+      "title": "Bot Fleet",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 131,
+      "title": "Per-bot status",
+      "description": "One row per bot. Confirmed / Failed / Rejected / Funding failures counted over the selected time range; Idle for is time since last successful liquidation.",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 4,
+          "noValue": "no data",
+          "custom": {
+            "align": "right",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Balance (ETH)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ETH"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.005
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.02
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Idle for (s)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1800
+                    },
+                    {
+                      "color": "red",
+                      "value": 7200
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Address"
+            },
+            "properties": [
+              {
+                "id": "custom.minWidth",
+                "value": 380
+              },
+              {
+                "id": "custom.width",
+                "value": 380
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_bot_info{chain=\"base\", bot_addr!=\"\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_bot_balance_eth{chain=\"base\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "time() - liquidator_last_liquidation_timestamp_seconds{chain=\"base\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum by (bot_idx) (increase(liquidator_liquidations_total{chain=\"base\", outcome=\"confirmed\"}[$__range]))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum by (bot_idx) (increase(liquidator_liquidations_total{chain=\"base\", outcome=\"failed\"}[$__range]))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum by (bot_idx) (increase(liquidator_liquidations_total{chain=\"base\", outcome=\"rejected\"}[$__range]))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "G",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum by (bot_idx) (increase(liquidator_funding_failures_total{chain=\"base\"}[$__range]))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "H",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum by (bot_idx) (increase(liquidator_gas_spent_wei_total{chain=\"base\"}[$__range])) / 1e18",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "chain": true,
+              "Value #A": true
+            },
+            "indexByName": {
+              "bot_idx": 0,
+              "bot_addr": 1,
+              "Value #B": 2,
+              "Value #C": 3,
+              "Value #D": 4,
+              "Value #E": 5,
+              "Value #F": 6,
+              "Value #G": 7,
+              "Value #H": 8
+            },
+            "renameByName": {
+              "bot_idx": "Bot",
+              "bot_addr": "Address",
+              "Value #B": "Balance (ETH)",
+              "Value #C": "Idle for (s)",
+              "Value #D": "Confirmed",
+              "Value #E": "Failed",
+              "Value #F": "Rejected",
+              "Value #G": "Funding failures",
+              "Value #H": "Gas spent (ETH)"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 140,
+      "type": "row",
+      "title": "Funding",
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 141,
+      "title": "Funding failures rate, by reason",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 65
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 30,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum by (reason) (rate(liquidator_funding_failures_total{chain=\"base\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 150,
+      "type": "row",
+      "title": "Liquidator activity",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 151,
+      "title": "Last pool check (sec ago)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "never",
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "time() - max(liquidator_last_pool_check_seconds{chain=\"base\", status=\"ok\"})",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ],
+      "description": "Seconds since the last successful getLiquidatableAccountsInPool call. Value lags actual activity by up to one Prometheus scrape interval (currently 30s) -- a 'fresh' check can show as up to ~30s ago even when the commander is healthy. To reduce wobble, lower scrape_interval in prometheus.yaml."
+    },
+    {
+      "id": 152,
+      "title": "Pool checks (in time range)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum(increase(liquidator_pool_checks_total{chain=\"base\"}[$__range]))",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ],
+      "description": "Total getLiquidatableAccountsInPool calls (ok + failed) in the selected time range."
+    },
+    {
+      "id": 153,
+      "title": "Currently liquidatable",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum(liquidator_last_pool_liquidatable_count{chain=\"base\"})",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ],
+      "description": "Trader count returned by the latest pool check. Drops back to 0 after liquidation attempts complete."
+    },
+    {
+      "id": 160,
+      "type": "row",
+      "title": "Config",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 161,
+      "title": "Gas limit",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_config_gas_limit{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ],
+      "description": "From live.liquidatorConfig.json. Metric: liquidator_config_gas_limit"
+    },
+    {
+      "id": 163,
+      "title": "Gas multiplier",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 12
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_config_gas_price_multiplier{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ],
+      "description": "From live.liquidatorConfig.json. Metric: liquidator_config_gas_price_multiplier"
+    },
+    {
+      "id": 164,
+      "title": "Bots",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 12
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_config_bots{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ],
+      "description": "From live.liquidatorConfig.json. Metric: liquidator_config_bots"
+    },
+    {
+      "id": 165,
+      "title": "Liquidate min (s)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 12
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "0",
+          "unit": "s",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_config_liquidate_interval_seconds_min{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ],
+      "description": "From live.liquidatorConfig.json. Metric: liquidator_config_liquidate_interval_seconds_min"
+    },
+    {
+      "id": 166,
+      "title": "Liquidate max (s)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 12
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "0",
+          "unit": "s",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_config_liquidate_interval_seconds_max{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ],
+      "description": "From live.liquidatorConfig.json. Metric: liquidator_config_liquidate_interval_seconds_max"
+    },
+    {
+      "id": 167,
+      "title": "Fetch prices min (s)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 12
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "0",
+          "unit": "s",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_config_fetch_prices_interval_seconds_min{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ],
+      "description": "From live.liquidatorConfig.json. Metric: liquidator_config_fetch_prices_interval_seconds_min"
+    },
+    {
+      "id": 105,
+      "title": "Treasury balance",
+      "description": "ETH balance of the treasury wallet (HD index 0). Funds the bot wallets when they run low. Metric: liquidator_treasury_balance_eth.",
+      "type": "stat",
+      "gridPos": {
+        "x": 19,
+        "y": 3,
+        "w": 5,
+        "h": 4
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ETH",
+          "noValue": "no data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.01
+              },
+              {
+                "color": "green",
+                "value": 0.05
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_treasury_balance_eth{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true,
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 168,
+      "title": "Check min (s)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "no data",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          },
+          "unit": "s"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_config_check_interval_seconds_min{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 169,
+      "title": "Check max (s)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 16
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "no data",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          },
+          "unit": "s"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_config_check_interval_seconds_max{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 170,
+      "title": "Liquidatable batch",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 16
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "no data",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_config_liquidatable_batch_size{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 171,
+      "title": "Price move threshold",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 16
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 3,
+          "noValue": "no data",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          },
+          "unit": "percentunit"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false,
+          "fields": ""
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_config_price_move_pct_threshold{chain=\"base\"}",
+          "legendFormat": "_",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 180,
+      "type": "row",
+      "title": "Gas",
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 181,
+      "title": "Gas spent (cumulative)",
+      "description": "Total native-token spent by the bot fleet on confirmed transactions, all-time. Sum of liquidator_gas_spent_wei_total / 1e18.",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ETH",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum(liquidator_gas_spent_wei_total{chain=\"base\"}) / 1e18",
+          "instant": true,
+          "format": "time_series",
+          "legendFormat": "_"
+        }
+      ]
+    },
+    {
+      "id": 182,
+      "title": "Gas spent (last 24h)",
+      "description": "Native-token spent on confirmed transactions in the last 24 hours. increase(liquidator_gas_spent_wei_total[24h]) / 1e18.",
+      "type": "stat",
+      "gridPos": {
+        "x": 8,
+        "y": 30,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ETH",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum(increase(liquidator_gas_spent_wei_total{chain=\"base\"}[24h])) / 1e18",
+          "instant": true,
+          "format": "time_series",
+          "legendFormat": "_"
+        }
+      ]
+    },
+    {
+      "id": 183,
+      "title": "Gas spent per bot (in time range)",
+      "description": "Native-token spent per bot wallet over the dashboard time range.",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 16,
+        "y": 30,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ETH",
+          "color": {
+            "mode": "continuous-YlRd"
+          },
+          "noValue": "0",
+          "min": 0
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "color",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "minVizHeight": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "(sum by (bot_idx) (increase(liquidator_gas_spent_wei_total{chain=\"base\"}[$__range])) / 1e18) or label_replace(vector(0), \"bot_idx\", \"0\", \"\", \"\")",
+          "instant": true,
+          "format": "time_series",
+          "legendFormat": "bot {{bot_idx}}"
+        }
+      ]
+    },
+    {
+      "id": 184,
+      "title": "Treasury balance over time",
+      "description": "Native-token balance of the treasury wallet over time (gauge sample). liquidator_treasury_balance_eth.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ETH",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "liquidator_treasury_balance_eth{chain=\"base\"}",
+          "legendFormat": "treasury"
+        }
+      ]
+    },
+    {
+      "id": 185,
+      "title": "Gas spent (cumulative) over time",
+      "description": "Cumulative gas spent (ETH) by the bot fleet over time. sum(liquidator_gas_spent_wei_total) / 1e18.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "datasource": {
+        "uid": "d8x-prom",
+        "type": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ETH",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "uid": "d8x-prom",
+            "type": "prometheus"
+          },
+          "expr": "sum(liquidator_gas_spent_wei_total{chain=\"base\"}) / 1e18",
+          "legendFormat": "gas spent"
+        }
+      ]
+    }
+  ],
+  "timepicker": {
+    "hidden": false
+  }
+}

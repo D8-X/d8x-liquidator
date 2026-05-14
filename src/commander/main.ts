@@ -1,6 +1,9 @@
 import { loadConfig } from "../utils.js";
 import Distributor from "./distributor.js";
 import "dotenv/config";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("commander");
 
 async function start() {
   const sdkConfig = process.env.SDK_CONFIG;
@@ -10,7 +13,10 @@ async function start() {
   const cfg = await loadConfig(sdkConfig);
   const obj = new Distributor(cfg);
   await obj.initialize();
-  obj.run();
+  await obj.run();
 }
 
-start();
+start().catch((err) => {
+  log.error({ err }, "commander fatal");
+  process.exit(1);
+});

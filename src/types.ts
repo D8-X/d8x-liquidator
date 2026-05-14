@@ -1,15 +1,4 @@
-import { PriceFeedEndpointsItem, floatToABK64x64 } from "@d8-x/d8x-node-sdk";
-
-export const ZERO_POSITION = floatToABK64x64(0);
-
-export interface Position {
-  address: string;
-  perpetualId: number;
-  positionBC: number;
-  cashCC: number;
-  lockedInQC: number;
-  unpaidFundingCC: number;
-}
+import { PriceFeedEndpointsItem } from "@d8-x/d8x-node-sdk";
 
 export interface RedisConfig {
   host: string;
@@ -27,15 +16,18 @@ export interface LiquidatorConfig {
   rpcListenWs: string[];
   waitForBlockSeconds: number;
   healthCheckSeconds: number;
-  refreshAccountsIntervalSecondsMax: number;
-  refreshAccountsIntervalSecondsMin: number;
   liquidateIntervalSecondsMax: number;
   liquidateIntervalSecondsMin: number;
   fetchPricesIntervalSecondsMin: number;
   gasPriceMultiplier: number;
-  maxGasPriceGWei: number;
   gasLimit: number;
   priceFeedEndpoints: Array<PriceFeedEndpointsItem>;
+  liquidatableBatchSize?: number;
+  checkIntervalSecondsMin?: number;
+  checkIntervalSecondsMax?: number;
+  priceMovePctThreshold?: number;
+  priceWatchIntervalSeconds?: number;
+  switchRpcOnEachRequest?: boolean;
 }
 
 export interface RedisMsg {
@@ -43,55 +35,15 @@ export interface RedisMsg {
   hash: string;
   id: string;
 }
-export interface TradeMsg extends RedisMsg {
+export interface PerpEmergencyMsg extends RedisMsg {
   perpetualId: number;
   symbol: string;
-  orderId: string;
-  traderAddr: string;
-  tradeAmount: number;
-  pnl: number;
-  fee: number;
-  newPositionSizeBC: number;
-  broker: string;
-}
-
-export interface LiquidateMsg extends RedisMsg {
-  perpetualId: number;
-  symbol: string;
-  traderAddr: string;
-  tradeAmount: number;
-  pnl: number;
-  fee: number;
-  newPositionSizeBC: number;
-  liquidator: string;
-}
-
-export interface UpdateMarginAccountMsg extends RedisMsg {
-  perpetualId: number;
-  symbol: string;
-  traderAddr: string;
-  fundingPaymentCC: number;
-}
-
-export interface UpdateMarkPriceMsg extends RedisMsg {
-  perpetualId: number;
-  symbol: string;
-  midPremium: number;
-  markPremium: number;
-  spotIndexPrice: number;
-}
-
-export interface UpdateUnitAccumulatedFundingMsg extends RedisMsg {
-  perpetualId: number;
-  symbol: string;
-  unitAccumulatedFundingCC: number;
 }
 
 export interface LiquidateTraderMsg {
   chainId: number;
   symbol: string;
   traderAddr: string;
-  // px: PriceFeedSubmission;
 }
 
 export enum BotStatus {

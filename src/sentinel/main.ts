@@ -1,6 +1,9 @@
 import { loadConfig } from "../utils.js";
 import BlockhainListener from "./blockchainListener.js";
 import "dotenv/config";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("sentinel");
 
 async function start() {
   const sdkConfig = process.env.SDK_CONFIG;
@@ -9,7 +12,10 @@ async function start() {
   }
   const cfg = await loadConfig(sdkConfig);
   const eventStreamer = new BlockhainListener(cfg);
-  eventStreamer.start();
+  await eventStreamer.start();
 }
 
-start();
+start().catch((err) => {
+  log.error({ err }, "sentinel exiting with error on startup");
+  process.exit(1);
+});
