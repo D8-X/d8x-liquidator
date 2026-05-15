@@ -1,15 +1,41 @@
-name: Build Liquidator Images (no push)
+name: Build
 
 on:
   push:
     branches-ignore: [main, dev, DEV]
+  pull_request:
 
 permissions:
   contents: read
   packages: read
 
 jobs:
-  build:
+  yarn-build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Configure npm auth for @d8-x
+        run: cp dotnpmrcexample .npmrc
+
+      - name: Install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: yarn install --frozen-lockfile
+
+      - name: Build
+        run: yarn build
+
+  image-build:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
