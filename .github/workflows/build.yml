@@ -1,0 +1,67 @@
+name: Build
+
+on:
+  push:
+    branches-ignore: [main, dev, DEV]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  yarn-build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Configure npm auth for @d8-x
+        run: cp dotnpmrcexample .npmrc
+
+      - name: Install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: yarn install --frozen-lockfile
+
+      - name: Build
+        run: yarn build
+
+  image-build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: sentinel
+            dockerfile: ./src/sentinel/Dockerfile
+          - name: executor
+            dockerfile: ./src/executor/Dockerfile
+          - name: commander
+            dockerfile: ./src/commander/Dockerfile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (${{ matrix.service.name }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.service.dockerfile }}
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          secrets: |
+            npm_token=${{ secrets.GITHUB_TOKEN }}
