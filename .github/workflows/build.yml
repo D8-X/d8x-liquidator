@@ -1,0 +1,41 @@
+name: Build Liquidator Images (no push)
+
+on:
+  push:
+    branches-ignore: [main, dev, DEV]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: sentinel
+            dockerfile: ./src/sentinel/Dockerfile
+          - name: executor
+            dockerfile: ./src/executor/Dockerfile
+          - name: commander
+            dockerfile: ./src/commander/Dockerfile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (${{ matrix.service.name }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.service.dockerfile }}
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          secrets: |
+            npm_token=${{ secrets.GITHUB_TOKEN }}
