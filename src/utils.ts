@@ -82,7 +82,10 @@ export function loadAccounts(mnemonicSeed: string, idxFrom: number, idxTo: numbe
   return { addr, pk };
 }
 
-export function getPrivateKeyFromSeed(mnemonic: string, idx: number): [string, string] {
+export function getPrivateKeyFromSeed(mnemonic: string | undefined, idx: number): [string, string] {
+  if (mnemonic === undefined) {
+    throw new Error("mnemonic seed phrase needed: export mnemonic='...");
+  }
   const baseDerivationPath: string = "m/44'/60'/0'/0";
   const path: string = `${baseDerivationPath}/${String(idx)}`;
   const mnemonicWallet: HDNodeWallet = HDNodeWallet.fromMnemonic(Mnemonic.fromPhrase(mnemonic), path);
