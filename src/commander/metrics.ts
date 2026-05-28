@@ -1,5 +1,5 @@
 import * as promClient from "prom-client";
-import express from "express";
+import express, { type Request, type Response } from "express";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("commander.metrics");
@@ -32,17 +32,25 @@ export class CommanderMetrics {
     this.chain = chain;
   }
 
-  public async start() {
-    const app = express();
-    app.get(`/${this.endpoint}`, async (_req: any, res: any) => {
-      res.set("Content-Type", promClient.register.contentType);
-      res.end(await promClient.register.metrics());
+  public start(): void {
+    const app: express.Express = express();
+    app.get(`/${this.endpoint}`, (_req: Request, res: Response): void => {
+      promClient.register
+        .metrics()
+        .then((m: string): void => {
+          res.set("Content-Type", promClient.register.contentType);
+          res.end(m);
+        })
+        .catch((err: unknown): void => {
+          log.error({ err }, "commander metrics endpoint failed");
+          res.status(500).end();
+        });
     });
     log.info({ port: this.port, endpoint: this.endpoint }, "starting commander metrics endpoint");
     app.listen(this.port);
   }
 
-  public observePoolCheck(poolId: number, status: "ok" | "failed", liquidatableCount: number) {
+  public observePoolCheck(poolId: number, status: "ok" | "failed", liquidatableCount: number): void {
     const labels = { chain: this.chain, pool_id: String(poolId), status };
     this.metricsList.lastPoolCheckSeconds.set(labels, Math.floor(Date.now() / 1000));
     this.metricsList.poolChecksTotal.inc(labels);

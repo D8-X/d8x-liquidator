@@ -1,38 +1,33 @@
 import Liquidator from "./liquidator.js";
-import { loadAccounts, loadConfig, sleep } from "../utils.js";
+import { LoadedAccounts, loadAccounts, loadConfig, requireEnv, sleep } from "../utils.js";
 import "dotenv/config";
 import { createLogger } from "../logger.js";
+import { LiquidatorConfig } from "../types.js";
 
 const log = createLogger("executor");
 
-async function run() {
+async function run(): Promise<void> {
   // sdk config
-  const sdkConfig = process.env.SDK_CONFIG;
-  if (sdkConfig == undefined) {
-    throw new Error(`Environment variable SDK_CONFIG not defined.`);
-  }
+  const sdkConfig: string = requireEnv("SDK_CONFIG");
   // seed phrase
-  const seedPhrase = process.env.SEED_PHRASE;
-  if (seedPhrase == undefined) {
-    throw new Error(`Environment variable SEED_PHRASE not defined.`);
-  }
+  const seedPhrase: string = requireEnv("SEED_PHRASE");
   // config
-  const cfg = await loadConfig(sdkConfig);
+  const cfg: LiquidatorConfig = await loadConfig(sdkConfig);
 
   // bot treasury
   const {
     pk: [treasuryPK],
-  } = loadAccounts(seedPhrase, 0, 0);
+  }: LoadedAccounts = loadAccounts(seedPhrase, 0, 0);
 
   // bot wallets
-  const { addr, pk } = loadAccounts(seedPhrase, 1, cfg.bots);
+  const { addr, pk }: LoadedAccounts = loadAccounts(seedPhrase, 1, cfg.bots);
   log.info({ botCount: addr.length, addresses: addr }, "Starting bots");
 
-  const liquidator = new Liquidator(treasuryPK, pk, cfg);
+  const liquidator: Liquidator = new Liquidator(treasuryPK, pk, cfg);
 
   try {
     await liquidator.fundWallets(addr);
-  } catch (e) {
+  } catch (_e: unknown) {
     await sleep(60_000);
     process.exit(1);
   }
@@ -41,7 +36,7 @@ async function run() {
   await liquidator.run();
 }
 
-run().catch((err) => {
+run().catch((err: unknown): void => {
   log.error({ err }, "executor fatal");
   process.exit(1);
 });

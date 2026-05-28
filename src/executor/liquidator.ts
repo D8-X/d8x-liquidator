@@ -1,11 +1,20 @@
 import { LiquidatorTool, MarketData, NodeSDKConfig, PerpetualDataHandler } from "@d8-x/d8x-node-sdk";
-import { Network, Provider, TransactionResponse, Wallet, formatUnits } from "ethers";
+import {
+  type FeeData,
+  Network,
+  type Provider,
+  type TransactionReceipt,
+  type TransactionResponse,
+  Wallet,
+  formatUnits,
+} from "ethers";
 import { Redis } from "ioredis";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { initLiquidatorsFromMarketData, initMarketDataWithCache } from "../sdkInit.js";
 import { loadSDKState, sdkStateUpdatedChannel } from "../sdkState.js";
 import { BotStatus, LiquidateTraderMsg, LiquidatorConfig } from "../types.js";
-import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
+import { PerpStates } from "../watchlist.js";
+import { constructRedis, errCode, errMsg, executeWithTimeout, sleep } from "../utils.js";
 import { loadWatchlist, parsePerpStates, watchlistChannel } from "../watchlist.js";
 import { categorizeFailReason, categorizeRejectReason, Metrics } from "./metrics.js";
 import { createLogger } from "../logger.js";
@@ -20,10 +29,21 @@ export enum LiquidationStatus {
   Rejection,
 }
 
+interface Bot {
+  api: LiquidatorTool;
+  busy: boolean;
+}
+
+interface TxFeeOverrides {
+  gasPrice: bigint | null;
+  maxFeePerGas: bigint | null;
+  maxPriorityFeePerGas: bigint | null;
+}
+
 export default class Liquidator {
   // objects
   private providers: MultiUrlJsonRpcProvider[];
-  private bots: { api: LiquidatorTool; busy: boolean }[];
+  private bots: Bot[];
   private redisSubClient: Redis;
   private redisPubClient: Redis;
   private md!: MarketData;
@@ -34,19 +54,19 @@ export default class Liquidator {
   private config: LiquidatorConfig;
   private chainId: number;
   private sdkConfig: NodeSDKConfig;
-  private gasPriceBuffer = 100n; // no buffer
+  private gasPriceBuffer: bigint = 100n; // no buffer
   private lastUsedRpcIndex: number = 0;
-  private fundingInProgress = false;
-  private refreshingSDK = false;
+  private fundingInProgress: boolean = false;
+  private refreshingSDK: boolean = false;
 
   // state
-  private q: Set<string> = new Set();
+  private q: Set<string> = new Set<string>();
   private lastLiquidateCall: number = 0;
   // Set of symbol:traderAddr elements which are currently being processed.
-  private locked: Set<string> = new Set();
-  private timesTried: Map<string, number> = new Map();
+  private locked: Set<string> = new Set<string>();
+  private timesTried: Map<string, number> = new Map<string, number>();
   private allowedSymbols: Set<string> | null = null;
-  private botBalances: Map<string, bigint> = new Map();
+  private botBalances: Map<string, bigint> = new Map<string, bigint>();
 
   protected metrics: Metrics;
 
@@ -61,11 +81,11 @@ export default class Liquidator {
     this.redisSubClient = constructRedis("executorSubClient");
     this.redisPubClient = constructRedis("executorPubClient");
 
-    const sdkConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
+    const sdkConfig: NodeSDKConfig = PerpetualDataHandler.readSDKConfig(this.config.sdkConfig);
     this.sdkConfig = sdkConfig;
     this.chainId = sdkConfig.chainId;
     this.providers = [
-      new MultiUrlJsonRpcProvider(this.config.rpcExec, new Network(sdkConfig.name || "", sdkConfig.chainId), {
+      new MultiUrlJsonRpcProvider(this.config.rpcExec, new Network(sdkConfig.name ?? "", sdkConfig.chainId), {
         timeoutSeconds: 25,
         logErrors: true,
         logRpcSwitches: true,
@@ -85,11 +105,15 @@ export default class Liquidator {
         "No price feed endpoints specified in config. Using default endpoints from SDK.",
       );
     }
-    this.bots = this.privateKey.map((pk) => ({
-      api: new LiquidatorTool(sdkConfig, pk),
-      busy: false,
-    }));
-    this.privateKey.forEach((pk, idx) => this.metrics.registerBot(idx, new Wallet(pk).address));
+    this.bots = this.privateKey.map(
+      (pk: string): Bot => ({
+        api: new LiquidatorTool(sdkConfig, pk),
+        busy: false,
+      }),
+    );
+    this.bots.forEach((bot: Bot, idx: number): void => {
+      this.metrics.registerBot(idx, bot.api.getAddress());
+    });
     this.metrics.setConfigInfo({
       gasLimit: this.config.gasLimit,
       gasPriceMultiplier: this.config.gasPriceMultiplier,
@@ -117,7 +141,7 @@ export default class Liquidator {
    * Attempts to connect to the blockchain using all given RPC providers until one works.
    * An error is thrown if none of the providers works.
    */
-  public async initialize() {
+  public async initialize(): Promise<void> {
     this.md = new MarketData(this.sdkConfig);
     const result = await initMarketDataWithCache(this.md, this.providers, this.redisPubClient);
     log.info(
@@ -126,9 +150,11 @@ export default class Liquidator {
     );
     await initLiquidatorsFromMarketData(this.bots, this.md, this.providers[result.providerIndex]);
 
-    const initial = await loadWatchlist(this.redisPubClient, this.chainId);
+    const initial: PerpStates | null = await loadWatchlist(this.redisPubClient, this.chainId);
     if (initial !== null) {
-      this.allowedSymbols = new Set(Object.keys(initial).filter((s) => initial[s] === "NORMAL"));
+      this.allowedSymbols = new Set<string>(
+        Object.keys(initial).filter((s: string): boolean => initial[s] === "NORMAL"),
+      );
       log.info({ size: this.allowedSymbols.size }, "executor: loaded initial watchlist from redis");
     }
 
@@ -137,7 +163,7 @@ export default class Liquidator {
       "LiquidateTrader",
       sdkStateUpdatedChannel(this.chainId),
       watchlistChannel(this.chainId),
-      (err, count) => {
+      (err: Error | null | undefined, _count: unknown): void => {
         if (err) {
           log.error({ err }, "redis subscription failed");
           process.exit(1);
@@ -146,9 +172,9 @@ export default class Liquidator {
     );
 
     // Periodic safety-net top-up; complements the rejection-driven path.
-    setInterval(() => {
-      const addrs = this.bots.map((b) => b.api.getAddress());
-      this.fundWallets(addrs).catch((err) => {
+    setInterval((): void => {
+      const addrs: string[] = this.bots.map((b: Bot): string => b.api.getAddress());
+      this.fundWallets(addrs).catch((err: unknown): void => {
         log.warn({ err }, "periodic top-up failed");
       });
     }, 60 * 60 * 1_000).unref();
@@ -158,8 +184,8 @@ export default class Liquidator {
     // "No perpetual found" rejections). This catches the rare edge case
     // where neither fires — e.g. a Redis reconnect drops the subscription
     // while no liquidations are attempted on newly-registered perps.
-    setInterval(() => {
-      this.refreshSDK().catch((err) => {
+    setInterval((): void => {
+      this.refreshSDK().catch((err: unknown): void => {
         log.warn({ err }, "periodic refreshSDK failed");
       });
     }, 60 * 60 * 1_000).unref();
@@ -171,10 +197,10 @@ export default class Liquidator {
     if (this.refreshingSDK) return;
     this.refreshingSDK = true;
     try {
-      for (let i = 0; i < 30 && this.bots.some((b) => b.busy); i++) {
+      for (let i = 0; i < 30 && this.bots.some((b: Bot): boolean => b.busy); i++) {
         await sleep(100);
       }
-      const provider = this.providers[this.lastUsedRpcIndex] ?? this.providers[0];
+      const provider: MultiUrlJsonRpcProvider = this.providers[this.lastUsedRpcIndex] ?? this.providers[0];
       if (opts?.forceRpc) {
         // Wrap with timeout: a hung refreshSymbols (e.g. unresponsive RPC) would
         // leave refreshingSDK=true forever, blocking every liquidation.
@@ -202,7 +228,7 @@ export default class Liquidator {
         }
       }
       await initLiquidatorsFromMarketData(this.bots, this.md, provider);
-    } catch (e) {
+    } catch (e: unknown) {
       log.warn({ err: e }, "executor: refreshSDK failed");
     } finally {
       this.refreshingSDK = false;
@@ -212,63 +238,54 @@ export default class Liquidator {
   /**
    * Subscribes to liquidation opportunities and attempts to liquidate.
    */
-  public async run(): Promise<void> {
-    // consecutive responses
-    let [busy, errors, success, msgs] = [0, 0, 0, 0];
-
-    return new Promise<void>((resolve, reject) => {
-      setInterval(async () => {
+  public run(): Promise<void> {
+    return new Promise<void>((): void => {
+      setInterval((): void => {
         if (Date.now() - this.lastLiquidateCall > this.config.liquidateIntervalSecondsMax) {
-          await this.liquidate();
+          void this.liquidate();
         }
       });
 
-      const watchlistCh = watchlistChannel(this.chainId);
-      const stateUpdCh = sdkStateUpdatedChannel(this.chainId);
-      this.redisSubClient.on("message", async (channel, msg) => {
-        if (channel === watchlistCh) {
-          const states = parsePerpStates(msg);
-          if (states) {
-            this.allowedSymbols = new Set(Object.keys(states).filter((s) => states[s] === "NORMAL"));
-          }
-          return;
-        }
-        if (channel === stateUpdCh) {
-          void this.refreshSDK();
-          return;
-        }
-        switch (channel) {
-          case "LiquidateTrader": {
-            const prevCount = this.q.size;
-            const { chainId } = JSON.parse(msg);
-            if (this.chainId == chainId) {
-              this.q.add(msg);
-              msgs += this.q.size > prevCount ? 1 : 0;
-              const res = await this.liquidate();
-              if (res == BotStatus.Busy) {
-                busy++;
-              } else if (res == BotStatus.PartialError) {
-                errors++;
-              } else if (res == BotStatus.Error) {
-                throw new Error(`error`);
-              } else {
-                // res == BotStatus.Ready
-                success++;
-              }
-            }
-            break;
-          }
-        }
+      const watchlistCh: string = watchlistChannel(this.chainId);
+      const stateUpdCh: string = sdkStateUpdatedChannel(this.chainId);
+      this.redisSubClient.on("message", (channel: string, msg: string): void => {
+        void this.handleMessage(channel, msg, watchlistCh, stateUpdCh);
       });
     });
   }
 
-  private async liquidateTraderByBot(botIdx: number, symbol: string, trader: string) {
+  private async handleMessage(channel: string, msg: string, watchlistCh: string, stateUpdCh: string): Promise<void> {
+    if (channel === watchlistCh) {
+      const states: PerpStates | null = parsePerpStates(msg);
+      if (states) {
+        this.allowedSymbols = new Set<string>(
+          Object.keys(states).filter((s: string): boolean => states[s] === "NORMAL"),
+        );
+      }
+      return;
+    }
+    if (channel === stateUpdCh) {
+      void this.refreshSDK();
+      return;
+    }
+    if (channel === "LiquidateTrader") {
+      const { chainId }: LiquidateTraderMsg = JSON.parse(msg) as LiquidateTraderMsg;
+      if (this.chainId === chainId) {
+        this.q.add(msg);
+        const res: BotStatus = await this.liquidate();
+        if (res === BotStatus.Error) {
+          throw new Error("error");
+        }
+      }
+    }
+  }
+
+  private async liquidateTraderByBot(botIdx: number, symbol: string, trader: string): Promise<LiquidationStatus> {
     trader = trader.toLowerCase();
     if (this.refreshingSDK || this.bots[botIdx].busy || this.locked.has(`${symbol}:${trader}`)) {
       return LiquidationStatus.NoOp;
     }
-    if (this.allowedSymbols === null || !this.allowedSymbols.has(symbol)) {
+    if (!this.allowedSymbols?.has(symbol)) {
       log.warn(
         { symbol, trader },
         this.allowedSymbols === null
@@ -277,7 +294,7 @@ export default class Liquidator {
       );
       return LiquidationStatus.NoOp;
     }
-    const id = `${symbol}:${trader}`;
+    const id: string = `${symbol}:${trader}`;
     this.bots[botIdx].busy = true;
     this.locked.add(id);
     this.timesTried.set(id, (this.timesTried.get(id) ?? 0) + 1);
@@ -293,8 +310,8 @@ export default class Liquidator {
     );
     let tx: TransactionResponse;
     try {
-      const p = this.getNextRpc();
-      const feeData = await this.getFeeData(p);
+      const p: MultiUrlJsonRpcProvider = this.getNextRpc();
+      const feeData: TxFeeOverrides = await this.getFeeData(p);
       // Wrap liquidateTrader with timeout to prevent hanging on slow price feeds or unresponsive RPCs
       tx = await executeWithTimeout(
         this.bots[botIdx].api.liquidateTrader(symbol, trader, this.config.rewardsAddress, undefined, {
@@ -304,8 +321,8 @@ export default class Liquidator {
         30_000, // 30 second timeout
         `liquidateTrader timed out for ${symbol}:${trader}`,
       );
-    } catch (e: any) {
-      const reason = e?.toString() || "";
+    } catch (e: unknown) {
+      const reason: string = errMsg(e);
       log.error(
         {
           err: e,
@@ -318,15 +335,15 @@ export default class Liquidator {
       );
       this.metrics.incLiquidation(botIdx, symbol, "rejected", categorizeRejectReason(e));
       this.locked.delete(`${symbol}:${trader}`);
-      if (e?.code === "INSUFFICIENT_FUNDS" || reason.includes("insufficient funds for intrinsic transaction cost")) {
-        const bot = this.bots[botIdx].api.getAddress();
+      if (errCode(e) === "INSUFFICIENT_FUNDS" || reason.includes("insufficient funds for intrinsic transaction cost")) {
+        const bot: string = this.bots[botIdx].api.getAddress();
         try {
           await this.fundWallets([bot]);
-        } catch (fundErr: any) {
+        } catch (fundErr: unknown) {
           log.error({ err: fundErr, bot }, "failed to fund bot");
         }
       }
-      if (typeof e?.message === "string" && e.message.includes("No perpetual found for symbol")) {
+      if (reason.includes("No perpetual found for symbol")) {
         void this.refreshSDK({ forceRpc: true });
       }
       this.bots[botIdx].busy = false;
@@ -348,9 +365,9 @@ export default class Liquidator {
     );
 
     // confirm execution
-    let result = LiquidationStatus.Success;
+    let result: LiquidationStatus = LiquidationStatus.Success;
     try {
-      const receipt = await tx.wait();
+      const receipt: TransactionReceipt | null = await tx.wait();
       if (receipt === null) {
         throw new Error("tx confirmation receipt is null");
       }
@@ -359,7 +376,7 @@ export default class Liquidator {
       }
       this.metrics.observeLastLiquidation(botIdx, receipt.from);
       this.metrics.incLiquidation(botIdx, symbol, "confirmed", "ok");
-      this.applyGasSpent(botIdx, receipt.from, receipt.gasUsed, receipt.gasPrice ?? 0n);
+      this.applyGasSpent(botIdx, receipt.from, receipt.gasUsed, receipt.gasPrice);
       log.info(
         {
           symbol: symbol,
@@ -373,8 +390,8 @@ export default class Liquidator {
         "txn confirmed",
       );
       this.locked.delete(`${symbol}:${trader}`);
-    } catch (e: any) {
-      let error = e?.toString() || "";
+    } catch (e: unknown) {
+      const error: string = errMsg(e);
       this.metrics.incLiquidation(botIdx, symbol, "failed", categorizeFailReason(e));
       log.error(
         {
@@ -387,17 +404,17 @@ export default class Liquidator {
         "txn reverted",
       );
       this.locked.delete(`${symbol}:${trader}`);
-      const bot = this.bots[botIdx].api.getAddress();
+      const bot: string = this.bots[botIdx].api.getAddress();
       if (error.includes("insufficient funds for intrinsic transaction cost")) {
         try {
           await this.fundWallets([bot]);
-        } catch (e: any) {
-          log.error({ err: e, bot }, "failed to fund bot");
+        } catch (innerErr: unknown) {
+          log.error({ err: innerErr, bot }, "failed to fund bot");
         }
       }
-      if (this.timesTried.get(id)! > 10) {
+      if ((this.timesTried.get(id) ?? 0) > 10) {
         // too many failures for same account
-        this.redisPubClient.publish("Restart", "too many trials");
+        void this.redisPubClient.publish("Restart", "too many trials");
         throw e;
       }
       // Set result to failure
@@ -412,40 +429,39 @@ export default class Liquidator {
   /**
    * Liquidate traders in q
    */
-  public async liquidate() {
+  public async liquidate(): Promise<BotStatus> {
     if (Date.now() - this.lastLiquidateCall < this.config.liquidateIntervalSecondsMin * 1_000) {
       return BotStatus.Busy;
     }
 
     this.lastLiquidateCall = Date.now();
-    let attempts = 0;
-    const q = [...this.q];
+    let attempts: number = 0;
+    const q: string[] = [...this.q];
 
-    if (q.length == 0) {
+    if (q.length === 0) {
       return BotStatus.Ready;
     }
 
     const executed: Promise<LiquidationStatus>[] = [];
     for (const msg of q) {
-      const { symbol, traderAddr }: LiquidateTraderMsg = JSON.parse(msg);
+      const { symbol, traderAddr }: LiquidateTraderMsg = JSON.parse(msg) as LiquidateTraderMsg;
       for (let i = 0; i < this.bots.length; i++) {
-        const liq = this.bots[i];
+        const liq: Bot = this.bots[i];
         if (!liq.busy) {
-          // msg will be attempted by this liquidator
           attempts++;
           this.q.delete(msg);
           executed.push(this.liquidateTraderByBot(i, symbol, traderAddr));
+          break;
         }
       }
     }
 
-    let successes = 0;
-    let noops = 0;
+    let successes: number = 0;
+    let noops: number = 0;
 
     // send txns
-    const results = await Promise.allSettled(executed);
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
+    const results: PromiseSettledResult<LiquidationStatus>[] = await Promise.allSettled(executed);
+    for (const result of results) {
       if (result.status === "fulfilled") {
         switch (result.value) {
           case LiquidationStatus.NoOp:
@@ -470,10 +486,10 @@ export default class Liquidator {
         // failures/rejections only - all bots are down, either rpc or px
         // service issue
         return BotStatus.Error;
-      case attempts == 0 && q.length > 0:
+      case attempts === 0 && q.length > 0:
         // did not try anything
         return BotStatus.Busy;
-      case successes == 0 && attempts > 0:
+      case successes === 0 && attempts > 0:
         // tried something but it didn't work
         return BotStatus.PartialError;
       case successes < attempts:
@@ -485,31 +501,29 @@ export default class Liquidator {
     }
   }
 
-  public async getFeeData(p: Provider) {
-    return await p.getFeeData().then(({ gasPrice, maxFeePerGas, maxPriorityFeePerGas }) => {
-      if (maxFeePerGas) {
-        return {
-          gasPrice: null,
-          maxFeePerGas: (maxFeePerGas * this.gasPriceBuffer) / 100n,
-          maxPriorityFeePerGas: ((maxPriorityFeePerGas ?? maxFeePerGas) * this.gasPriceBuffer) / 100n,
-        };
-      } else {
-        return {
-          gasPrice,
-          maxFeePerGas: null,
-          maxPriorityFeePerGas: null,
-        };
-      }
-    });
+  public async getFeeData(p: Provider): Promise<TxFeeOverrides> {
+    const { gasPrice, maxFeePerGas, maxPriorityFeePerGas }: FeeData = await p.getFeeData();
+    if (maxFeePerGas !== null && maxFeePerGas > 0n) {
+      return {
+        gasPrice: null,
+        maxFeePerGas: (maxFeePerGas * this.gasPriceBuffer) / 100n,
+        maxPriorityFeePerGas: ((maxPriorityFeePerGas ?? maxFeePerGas) * this.gasPriceBuffer) / 100n,
+      };
+    }
+    return {
+      gasPrice,
+      maxFeePerGas: null,
+      maxPriorityFeePerGas: null,
+    };
   }
 
   // Returns next rpc provider in the list
-  public getNextRpc() {
+  public getNextRpc(): MultiUrlJsonRpcProvider {
     this.lastUsedRpcIndex = (this.lastUsedRpcIndex + 1) % this.providers.length;
     return this.providers[this.lastUsedRpcIndex];
   }
 
-  public async fundWallets(addressArray: string[]) {
+  public async fundWallets(addressArray: string[]): Promise<void> {
     if (this.fundingInProgress) {
       log.info({ size: addressArray.length }, "skipping fundWallets - already in progress");
       return;
@@ -522,18 +536,21 @@ export default class Liquidator {
     }
   }
 
-  private async doFundWallets(addressArray: string[]) {
-    const provider = this.providers[Math.floor(Math.random() * this.providers.length)];
-    const treasury = new Wallet(this.treasury, provider);
+  private async doFundWallets(addressArray: string[]): Promise<void> {
+    const provider: MultiUrlJsonRpcProvider = this.providers[Math.floor(Math.random() * this.providers.length)];
+    const treasury: Wallet = new Wallet(this.treasury, provider);
     const { gasPrice: gasPriceWei } = await provider.getFeeData();
+    if (gasPriceWei === null) {
+      throw new Error("provider did not return a gas price");
+    }
     // min balance should cover 1e7 gas
-    const minBalance = gasPriceWei! * BigInt(this.config.gasLimit * 5);
+    const minBalance: bigint = gasPriceWei * BigInt(this.config.gasLimit * 5);
     this.metrics.setMinBalance(Number(formatUnits(minBalance, 18)));
-    for (let addr of addressArray) {
-      const botBalance = await provider.getBalance(addr);
-      const treasuryBalance = await provider.getBalance(treasury.address);
+    for (const addr of addressArray) {
+      const botBalance: bigint = await provider.getBalance(addr);
+      const treasuryBalance: bigint = await provider.getBalance(treasury.address);
       this.metrics.setTreasuryBalance(treasury.address, Number(formatUnits(treasuryBalance, 18)));
-      const botIdx = this.botIdxFromAddress(addr);
+      const botIdx: number = this.botIdxFromAddress(addr);
       if (botIdx >= 0) {
         this.botBalances.set(addr.toLowerCase(), botBalance);
         this.metrics.setBotBalance(botIdx, addr, Number(formatUnits(botBalance, 18)));
@@ -548,11 +565,11 @@ export default class Liquidator {
       });
       if (botBalance < minBalance) {
         // top up many minBalances so we don't transfer every time
-        const fullTopUp = minBalance * BigInt(100) - botBalance;
+        const fullTopUp: bigint = minBalance * BigInt(100) - botBalance;
         // If treasury can't afford the full top-up, fall back to a fair share
         // (treasuryBalance / total bots) so a single bot doesn't drain the
         // treasury and starve the others.
-        const fairShare = treasuryBalance / BigInt(this.bots.length);
+        const fairShare: bigint = treasuryBalance / BigInt(this.bots.length);
         let transferAmount: bigint;
         if (fullTopUp < treasuryBalance) {
           transferAmount = fullTopUp;
@@ -583,13 +600,13 @@ export default class Liquidator {
           },
           "transferring funds...",
         );
-        const tx = await treasury.sendTransaction({
+        const tx: TransactionResponse = await treasury.sendTransaction({
           to: addr,
           value: transferAmount,
         });
         await tx.wait();
         if (botIdx >= 0) {
-          const newBalance = botBalance + transferAmount;
+          const newBalance: bigint = botBalance + transferAmount;
           this.botBalances.set(addr.toLowerCase(), newBalance);
           this.metrics.setBotBalance(botIdx, addr, Number(formatUnits(newBalance, 18)));
         }
@@ -602,17 +619,17 @@ export default class Liquidator {
   }
 
   private botIdxFromAddress(addr: string): number {
-    const target = addr.toLowerCase();
-    return this.bots.findIndex((b) => b.api.getAddress().toLowerCase() === target);
+    const target: string = addr.toLowerCase();
+    return this.bots.findIndex((b: Bot): boolean => b.api.getAddress().toLowerCase() === target);
   }
 
-  private applyGasSpent(botIdx: number, botAddr: string, gasUsed: bigint, gasPrice: bigint) {
-    const key = botAddr.toLowerCase();
-    const cost = gasUsed * gasPrice;
+  private applyGasSpent(botIdx: number, botAddr: string, gasUsed: bigint, gasPrice: bigint): void {
+    const key: string = botAddr.toLowerCase();
+    const cost: bigint = gasUsed * gasPrice;
     this.metrics.incGasSpentWei(botIdx, cost);
-    const cached = this.botBalances.get(key);
+    const cached: bigint | undefined = this.botBalances.get(key);
     if (cached === undefined) return;
-    const next = cost > cached ? 0n : cached - cost;
+    const next: bigint = cost > cached ? 0n : cached - cost;
     this.botBalances.set(key, next);
     this.metrics.setBotBalance(botIdx, botAddr, Number(formatUnits(next, 18)));
   }

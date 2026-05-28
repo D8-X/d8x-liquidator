@@ -7,9 +7,10 @@ import {
   JsonRpcResult,
   JsonRpcError,
 } from "ethers";
-import { WebSocket } from "ws";
+import { WebSocket, type ErrorEvent, type CloseEvent, type MessageEvent, type Event } from "ws";
 import { MultiUrlProvider } from "./multiUrlJsonRpcProvider.js";
 import { createLogger } from "./logger.js";
+import { errMsg } from "./utils.js";
 
 const log = createLogger("rpc.ws");
 
@@ -23,6 +24,36 @@ export interface MultiUrlWebsocketsProviderOptions extends JsonRpcApiProviderOpt
   connTimeout?: number;
 }
 
+type InternalOptions = JsonRpcApiProviderOptions & {
+  maxRetries: number;
+  logRpcSwitches: boolean;
+  logErrors: boolean;
+  connTimeout: number;
+};
+
+interface NotReadyState {
+  promise: Promise<void>;
+  resolve: (() => void) | null;
+}
+
+interface WsErrorEvent extends ErrorEvent {
+  error: unknown;
+  target: WebSocket;
+}
+
+interface WsOpenEvent extends Event {
+  target: WebSocket;
+}
+
+function wsDataToString(data: MessageEvent["data"]): string {
+  if (typeof data === "string") return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (Array.isArray(data)) {
+    return data.map((b: Buffer): string => b.toString("utf8")).join("");
+  }
+  return data.toString("utf8");
+}
+
 /**
  * MultiUrlWebSocketProvider is similar to traditional ethers WebsocketProvider,
  * however it accepts multiple rpc urls and switched to next one in the list in
@@ -31,9 +62,10 @@ export interface MultiUrlWebsocketsProviderOptions extends JsonRpcApiProviderOpt
 export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUrlProvider {
   // Current active ws instance
   public websocket: WebSocket | null = null;
-  // When isStopped is true, it will not attempt to switch rpcs or create new
-  // connections. It can only be set to false by calling stop manually.
-  private isStopped = false;
+  // When isStopped is true, the provider will not attempt to switch rpcs or
+  // create new connections. Set to true by stop() and on max-retries reached;
+  // reset to false by startNextWebsocket().
+  private isStopped: boolean = false;
 
   private rpcUrls: string[] = [];
   // Index of current rpc url in the list. Starts at -1 since we increment it
@@ -42,18 +74,15 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
 
   // List of event listeners that were registered via this.on. We track this
   // list to recreate any event listeners when switching to a new ws instance.
-  private registeredListeners: Map<ProviderEvent, [Listener]> = new Map();
+  private registeredListeners: Map<ProviderEvent, Listener[]> = new Map();
   // Number of errors encountered without a successful connection.
-  private currentErrorsNumber = 0;
-  private options: MultiUrlWebsocketsProviderOptions;
-  private switchingRpc = false;
+  private currentErrorsNumber: number = 0;
+  private options: InternalOptions;
+  private starting: boolean = false;
 
   // See base class implementation. TLDR: prevents _write calls before
   // establishing connection when switching rpcs.
-  private notReady: null | {
-    promise: Promise<void>;
-    resolve: null | ((v: void) => void);
-  } = null;
+  private notReady: NotReadyState | null = null;
 
   constructor(rpcUrls: string[], network?: Networkish, options?: MultiUrlWebsocketsProviderOptions) {
     if (rpcUrls.length <= 0) {
@@ -66,57 +95,66 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
       logRpcSwitches: false,
       logErrors: false,
       connTimeout: 5000,
-
       ...options,
     };
 
-    this.startNextWebsocket();
+    this.startNextWebsocket().catch((err: unknown): void => {
+      log.error({ err }, "initial startNextWebsocket failed");
+    });
   }
 
   /**
    * (Re)starts the websocket provider with the next rpc url from provided list.
    */
-  public async startNextWebsocket(forceCloseOpenConn: boolean = false) {
-    // Do not close open connections by default. Only if explicitly requested.
+  public async startNextWebsocket(forceCloseOpenConn: boolean = false): Promise<void> {
+    if (this.destroyed) return;
     if (this.websocket) {
-      if (this.websocket.readyState === WebSocket.OPEN) {
-        if (!forceCloseOpenConn) {
-          return;
-        }
+      const rs: number = this.websocket.readyState;
+      if (rs === WebSocket.OPEN && !forceCloseOpenConn) return;
+      if (rs === WebSocket.CONNECTING) return;
+    }
+    if (this.starting) return;
+    this.starting = true;
+    try {
+      if (!forceCloseOpenConn) {
+        this.currentErrorsNumber = 0;
       }
-    }
+      if (this.notReady?.resolve) {
+        this.notReady.resolve();
+      }
+      let resolve: (() => void) | null = null;
+      const promise: Promise<void> = new Promise<void>((_resolve: () => void) => {
+        resolve = _resolve;
+      });
+      this.notReady = { promise, resolve };
 
-    // Setup connectionResolved promise for _waitUntilReady
-    let resolve: null | ((v: void) => void) = null;
-    const promise = new Promise<void>((_resolve) => {
-      resolve = _resolve;
-    });
-    this.notReady = {
-      promise,
-      resolve,
-    };
-
-    this.isStopped = false;
-    // Close current connection if it is established, gracefully remove any
-    // event listeners and close the underlying ws conn.
-    if (this.websocket) {
+      this.isStopped = false;
       await this._stop();
-    }
+      if (this.shouldAbortStart()) {
+        this.settleNotReady();
+        return;
+      }
 
-    // From here on until connection is open, we are switching rpc.
-    this.switchingRpc = true;
-    this.switchToNextRpc();
-    if (this.options.logRpcSwitches) {
-      log.warn({ rpcUrl: this.getCurrentRpcUrl() }, "switching rpc");
-    }
+      this.switchToNextRpc();
+      if (this.options.logRpcSwitches) {
+        log.warn({ rpcUrl: this.getCurrentRpcUrl() }, "switching rpc");
+      }
 
-    this.startWebsocketEventListeners();
-    this.registerPreviousEventListeners();
+      this.startWebsocketEventListeners();
+      this.registerPreviousEventListeners();
+    } catch (e: unknown) {
+      this.settleNotReady();
+      throw e;
+    } finally {
+      this.starting = false;
+    }
   }
 
-  private async startNextWebsocketIfNotStopped() {
+  private startNextWebsocketIfNotStopped(): void {
     if (!this.isStopped) {
-      await this.startNextWebsocket(true);
+      this.startNextWebsocket(true).catch((err: unknown): void => {
+        log.error({ err }, "startNextWebsocket failed");
+      });
     }
   }
 
@@ -124,11 +162,13 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * Re-registers all event listeners that were registered via this.on with
    * previous connection
    */
-  private registerPreviousEventListeners() {
-    const prevListeners = this.registeredListeners.entries();
+  private registerPreviousEventListeners(): void {
+    const prevListeners: IterableIterator<[ProviderEvent, Listener[]]> = this.registeredListeners.entries();
     for (const [event, listeners] of prevListeners) {
-      listeners.forEach((listener) => {
-        this.on(event, listener);
+      listeners.forEach((listener: Listener): void => {
+        this.on(event, listener).catch((err: unknown): void => {
+          log.error({ err, event }, "failed to re-register listener after rpc switch");
+        });
       });
     }
   }
@@ -137,25 +177,55 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * Temporarily stop the provider by closing current connection and removing
    * listeners. startNextWebsocket must be called to resume the provider.
    */
-  public async stop() {
+  public async stop(): Promise<void> {
     this.isStopped = true;
+    this.settleNotReady();
     await this._stop();
   }
 
-  private async _stop() {
-    this.pause(true);
-    await this.removeAllListeners();
+  private shutdown(): void {
+    this.isStopped = true;
+    this.settleNotReady();
     if (this.websocket) {
-      if (this.websocket.readyState <= WebSocket.OPEN) {
-        this.websocket.close();
-      }
+      this.detachAndCloseWs(this.websocket);
+      this.websocket = null;
+    }
+  }
+
+  private settleNotReady(): void {
+    if (this.notReady?.resolve) {
+      this.notReady.resolve();
+      this.notReady = null;
+    }
+  }
+
+  private shouldAbortStart(): boolean {
+    return this.isStopped;
+  }
+
+  private async _stop(): Promise<void> {
+    this.pause(true);
+    if (this.websocket) {
+      this.detachAndCloseWs(this.websocket);
+      this.websocket = null;
+    }
+    await this.removeAllListeners();
+  }
+
+  private detachAndCloseWs(ws: WebSocket): void {
+    ws.onopen = (): void => undefined;
+    ws.onerror = (): void => undefined;
+    ws.onmessage = (): void => undefined;
+    ws.onclose = (): void => undefined;
+    if (ws.readyState <= WebSocket.OPEN) {
+      ws.close();
     }
   }
 
   /**
    * Switch to next rpc in the list and initialize a new websocket instance.
    */
-  private switchToNextRpc() {
+  private switchToNextRpc(): void {
     this.currentRpcUrlIndex = (this.currentRpcUrlIndex + 1) % this.rpcUrls.length;
     this.websocket = this.newWsInstance();
   }
@@ -163,115 +233,80 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
   /**
    * Start WebSocket connection listeners. Websocket instance must be set.
    */
-  private startWebsocketEventListeners() {
+  private startWebsocketEventListeners(): void {
     // This should never happen
-    if (this.websocket === null) {
-      throw Error("websocket is not initialized");
+    const ws: WebSocket | null = this.websocket;
+    if (ws === null) {
+      throw new Error("websocket is not initialized");
     }
 
-    // Copy from ethers.WebSocketProvider
-    this.websocket.onopen = async (event) => {
+    ws.onopen = (event: WsOpenEvent): void => {
+      if (ws !== this.websocket) return;
       try {
-        await this._start();
+        this._start();
         this.resume();
-      } catch (error) {
+      } catch (error: unknown) {
         log.error({ err: error }, "failed to start WebsocketProvider");
       }
 
-      // Resolve _waitUntilReady promise once connected
       if (this.notReady !== null && this.notReady.resolve !== null) {
         this.notReady.resolve();
         this.notReady = null;
       }
 
-      // Switching rpc is done.
-      if (this.switchingRpc) {
-        this.switchingRpc = false;
-      }
       this.currentErrorsNumber = 0;
       if (this.options.logRpcSwitches) {
         log.info({ rpcUrl: event.target.url }, "switched rpc");
       }
     };
 
-    this.websocket.onerror = (data) => {
-      const {
-        error,
-        target: { url },
-      } = data;
+    ws.onerror = (data: WsErrorEvent): void => {
+      if (ws !== this.websocket) return;
+      const error: unknown = data.error;
+      const url: string = data.target.url;
 
-      // When we are switching RPC, ignore any errors from previous connection,
-      // since we are closing it anyway. However if the new rpc is failing, we
-      // should switch to the next one in the list.
-      if (!this.isCurrentRpcUrl(url) && this.switchingRpc) {
-        if (this.options.logErrors) {
-          log.warn(
-            { rpcUrl: url, currentRpcUrl: this.getCurrentRpcUrl() },
-            "ignoring error from previous connection while switching rpc"
-          );
-        }
-        return;
-      }
-
-      this.emit("error", error);
-      // Connection failure, attempt to switch to next rpc url
+      this.emit("error", error).catch((emitErr: unknown): void => {
+        log.error({ err: emitErr }, "emit error failed");
+      });
       if (this.options.logErrors) {
-        log.error({ err: error, rpcUrl: url }, "connection error");
+        log.error({ err: error, reason: errMsg(error), rpcUrl: url }, "connection error");
       }
-      if (this.currentErrorsNumber >= this.options.maxRetries!) {
-        log.error("max retries reached");
-        throw error;
+      if (this.currentErrorsNumber >= this.options.maxRetries) {
+        log.error({ rpcUrl: url, reason: errMsg(error) }, "max retries reached; stopping ws provider");
+        this.shutdown();
+        return;
       }
       this.currentErrorsNumber++;
       this.startNextWebsocketIfNotStopped();
     };
 
-    this.websocket.onclose = (closeEvent) => {
-      // @TODO handle potential closes. One caveat is that we close the old
-      // websocket connection on switch, so if we just blindly switched here, we
-      // might introduce an infinite loop of switching websocket conns.
+    ws.onclose = (_closeEvent: CloseEvent): void => {
+      if (ws !== this.websocket) return;
     };
 
-    this.websocket.onmessage = (event) => {
-      const url = event.target.url;
-
-      // Drop messages from previous connection when switching rpc
-      if (!this.isCurrentRpcUrl(url) && this.switchingRpc) {
-        if (this.options.logErrors) {
-          log.warn(
-            { rpcUrl: event.target.url },
-            "ignoring message from previous connection while switching rpc"
-          );
-        }
-        return;
-      }
-
-      const data: string = event.data as string;
-      // Check if message does not contain errors
+    ws.onmessage = (event: MessageEvent): void => {
+      if (ws !== this.websocket) return;
+      const url: string = event.target.url;
+      const data: string = wsDataToString(event.data);
       try {
-        const result = <JsonRpcResult | JsonRpcError>JSON.parse(data);
+        const result: JsonRpcResult | JsonRpcError = JSON.parse(data) as JsonRpcResult | JsonRpcError;
         if ("error" in result) {
-          log.error(
-            { err: result.error, rpcUrl: event.target.url },
-            "received error in message"
-          );
+          log.error({ err: result.error, rpcUrl: url }, "received error in message");
           this.startNextWebsocketIfNotStopped();
           return;
         }
-      } catch (e) {
+      } catch (e: unknown) {
         if (this.options.logErrors) {
-          log.error(
-            { err: e, data, rpcUrl: event.target.url },
-            "invalid JSON in message"
-          );
-          this.startNextWebsocketIfNotStopped();
+          log.error({ err: e, data, rpcUrl: url }, "invalid JSON in message");
         }
+        this.startNextWebsocketIfNotStopped();
         return;
       }
 
-      // Reset error counter on successful message
       this.currentErrorsNumber = 0;
-      this._processMessage(data);
+      this._processMessage(data).catch((err: unknown): void => {
+        log.error({ err }, "_processMessage failed");
+      });
     };
   }
 
@@ -286,18 +321,22 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
 
   async _write(message: string): Promise<void> {
     await this._waitUntilReady();
-    this.websocket!.send(message);
+    if (!this.websocket) {
+      throw new Error("websocket not initialized");
+    }
+    this.websocket.send(message);
   }
 
   /**
    * Destroy the provider and close underlying connection. This will render
    * provider unusable and will require to create a new instance.
    */
-  public async destroy(): Promise<void> {
+  public destroy(): void {
+    if (this.destroyed) return;
+    this.isStopped = true;
+    this.settleNotReady();
     if (this.websocket !== null) {
-      if (this.websocket.readyState <= WebSocket.OPEN) {
-        this.websocket.close();
-      }
+      this.detachAndCloseWs(this.websocket);
       this.websocket = null;
     }
     super.destroy();
@@ -307,6 +346,9 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * @returns the current rpc url
    */
   public getCurrentRpcUrl(): string {
+    if (this.currentRpcUrlIndex < 0) {
+      throw new Error("ws provider not initialized. getCurrentRpcUrl called before first switchToNextRpc");
+    }
     return this.rpcUrls[this.currentRpcUrlIndex];
   }
 
@@ -317,18 +359,17 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * @param listener
    * @returns
    */
-  public async on(event: ProviderEvent, listener: Listener) {
-    // Only append listener to registered listeners map if it is not already
-    // there.
-    if (this.registeredListeners.has(event)) {
-      if (this.registeredListeners.get(event)?.indexOf(listener) === -1) {
-        this.registeredListeners.get(event)?.push(listener);
+  public async on(event: ProviderEvent, listener: Listener): Promise<this> {
+    const result: this = await super.on(event, listener);
+    const existing: Listener[] | undefined = this.registeredListeners.get(event);
+    if (existing) {
+      if (!existing.includes(listener)) {
+        existing.push(listener);
       }
     } else {
       this.registeredListeners.set(event, [listener]);
     }
-
-    return super.on(event, listener);
+    return result;
   }
 
   /**
@@ -339,10 +380,18 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
    * @returns
    */
   async off(event: ProviderEvent, listener?: Listener): Promise<this> {
-    if (listener && this.registeredListeners.has(event)) {
-      const i = this.registeredListeners.get(event)?.indexOf(listener);
-      if (i !== -1) {
-        this.registeredListeners.get(event)?.splice(i!, 1);
+    if (!listener) {
+      this.registeredListeners.delete(event);
+    } else {
+      const listeners: Listener[] | undefined = this.registeredListeners.get(event);
+      if (listeners) {
+        const i: number = listeners.indexOf(listener);
+        if (i !== -1) {
+          listeners.splice(i, 1);
+        }
+        if (listeners.length === 0) {
+          this.registeredListeners.delete(event);
+        }
       }
     }
 
@@ -356,27 +405,16 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
   /**
    * Reset the number of errors back to 0.
    */
-  public resetErrorNumber() {
+  public resetErrorNumber(): void {
     this.currentErrorsNumber = 0;
-  }
-
-  // Trailing slash insensitive url matching
-  private urlsMatch(url1: string, url2: string): boolean {
-    return url1.replace(/\/$/, "").toLowerCase() === url2.replace(/\/$/, "").toLowerCase();
-  }
-
-  // Check if given url is the same as currently active rpc url
-  private isCurrentRpcUrl(url: string): boolean {
-    return this.urlsMatch(this.getCurrentRpcUrl(), url);
   }
 
   /**
    * Override, because base class uses private fields.
    */
   async _waitUntilReady(): Promise<void> {
-    if (this.notReady == null) {
-      return;
+    while (this.notReady !== null) {
+      await this.notReady.promise;
     }
-    return await this.notReady.promise;
   }
 }

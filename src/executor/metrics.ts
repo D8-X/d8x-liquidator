@@ -1,6 +1,7 @@
 import * as promClient from "prom-client";
-import express from "express";
+import express, { type Request, type Response } from "express";
 import { createLogger } from "../logger.js";
+import { errMsg } from "../utils.js";
 import { FundingFailureReason, LiquidationOutcome, Reason, RejectReason, FailReason } from "./metricsTypes.js";
 
 const log = createLogger("executor.metrics");
@@ -8,7 +9,7 @@ const log = createLogger("executor.metrics");
 export { LiquidationOutcome, RejectReason, FailReason, FundingFailureReason, Reason } from "./metricsTypes.js";
 
 export function categorizeRejectReason(err: unknown): RejectReason {
-  const msg = String(err ?? "").toLowerCase();
+  const msg: string = errMsg(err).toLowerCase();
   if (msg.includes("insufficient funds")) return "insufficient_funds";
   if (msg.includes("gas price too low") || msg.includes("fee too low")) return "gas_price_too_low";
   if (msg.includes("intrinsic gas")) return "intrinsic_gas";
@@ -29,7 +30,7 @@ export function categorizeRejectReason(err: unknown): RejectReason {
 }
 
 export function categorizeFailReason(err: unknown): FailReason {
-  const msg = String(err ?? "").toLowerCase();
+  const msg: string = errMsg(err).toLowerCase();
   if (msg.includes("receipt is null") || msg.includes("dropped")) return "tx_dropped";
   if (msg.includes("timed out") || msg.includes("timeout")) return "wait_timeout";
   if (msg.includes("margin safe") || msg.includes("not unsafe")) return "margin_safe_at_mine";
@@ -154,7 +155,7 @@ export class Metrics {
   /**
    * Start the metrics endpoint
    */
-  public async start() {
+  public start(): void {
     this.metricsEndpoint(this.port, this.endpoint);
   }
 
@@ -162,50 +163,64 @@ export class Metrics {
    * Exposes metrics endpoint at given port
    * @param port
    */
-  private async metricsEndpoint(port: number, endpoint: string = "metrics") {
-    const app = express();
-    app.get(`/${endpoint}`, async (_req: any, res: any) => {
-      res.set("Content-Type", promClient.register.contentType);
-      res.end(await promClient.register.metrics());
+  private metricsEndpoint(port: number, endpoint: string = "metrics"): void {
+    const app: express.Express = express();
+    app.get(`/${endpoint}`, (_req: Request, res: Response): void => {
+      promClient.register
+        .metrics()
+        .then((m: string): void => {
+          res.set("Content-Type", promClient.register.contentType);
+          res.end(m);
+        })
+        .catch((err: unknown): void => {
+          log.error({ err }, "metrics endpoint failed");
+          res.status(500).end();
+        });
     });
     log.info({ port, endpoint, url: `http://localhost:${port}/${endpoint}` }, "Starting metrics endpoint");
     app.listen(port);
   }
 
-  public incLiquidation(botIdx: number, symbol: string, outcome: LiquidationOutcome, reason: Reason, n: number = 1) {
+  public incLiquidation(
+    botIdx: number,
+    symbol: string,
+    outcome: LiquidationOutcome,
+    reason: Reason,
+    n: number = 1,
+  ): void {
     if (n <= 0) return;
     this.metricsList.liquidationsTotal.labels(this.chain, String(botIdx), symbol, outcome, reason).inc(n);
   }
 
-  public incGasSpentWei(botIdx: number, wei: bigint) {
+  public incGasSpentWei(botIdx: number, wei: bigint): void {
     if (wei <= 0n) return;
     this.metricsList.gasSpentWei.labels(this.chain, String(botIdx)).inc(Number(wei));
   }
 
-  public observeLastLiquidation(botIdx: number, botAddr: string, when: Date = new Date()) {
+  public observeLastLiquidation(botIdx: number, botAddr: string, when: Date = new Date()): void {
     this.metricsList.lastLiquidationTimestamp
       .labels(this.chain, String(botIdx), botAddr.toLowerCase())
       .set(Math.floor(when.getTime() / 1000));
   }
 
-  public setBotBalance(botIdx: number, botAddr: string, eth: number) {
+  public setBotBalance(botIdx: number, botAddr: string, eth: number): void {
     this.metricsList.botBalance.labels(this.chain, String(botIdx), botAddr.toLowerCase()).set(eth);
   }
 
-  public incFundingFailure(botIdx: number, botAddr: string, reason: FundingFailureReason, n: number = 1) {
+  public incFundingFailure(botIdx: number, botAddr: string, reason: FundingFailureReason, n: number = 1): void {
     if (n <= 0) return;
     this.metricsList.fundingFailures.labels(this.chain, String(botIdx), botAddr.toLowerCase(), reason).inc(n);
   }
 
-  public registerBot(botIdx: number, botAddr: string) {
+  public registerBot(botIdx: number, botAddr: string): void {
     this.metricsList.botInfo.labels(this.chain, String(botIdx), botAddr.toLowerCase()).set(1);
   }
 
-  public setMinBalance(eth: number) {
+  public setMinBalance(eth: number): void {
     this.metricsList.minBalance.labels(this.chain).set(eth);
   }
 
-  public setTreasuryBalance(addr: string, eth: number) {
+  public setTreasuryBalance(addr: string, eth: number): void {
     this.metricsList.treasuryBalance.labels(this.chain, addr.toLowerCase()).set(eth);
   }
 
@@ -220,7 +235,7 @@ export class Metrics {
     checkIntervalSecondsMax?: number;
     liquidatableBatchSize?: number;
     priceMovePctThreshold?: number;
-  }) {
+  }): void {
     this.metricsList.configGasLimit.labels(this.chain).set(cfg.gasLimit);
     this.metricsList.configGasPriceMultiplier.labels(this.chain).set(cfg.gasPriceMultiplier);
     this.metricsList.configBots.labels(this.chain).set(cfg.bots);
