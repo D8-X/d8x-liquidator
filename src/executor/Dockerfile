@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-FROM node:20-alpine
+FROM node:24-alpine
 
 ARG SDK_CONFIG
 ARG REDIS_HOST
