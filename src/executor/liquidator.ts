@@ -317,7 +317,6 @@ export default class Liquidator {
         "txn rejected",
       );
       this.metrics.incLiquidation(botIdx, symbol, "rejected", categorizeRejectReason(e));
-      this.bots[botIdx].busy = false;
       this.locked.delete(`${symbol}:${trader}`);
       if (e?.code === "INSUFFICIENT_FUNDS" || reason.includes("insufficient funds for intrinsic transaction cost")) {
         const bot = this.bots[botIdx].api.getAddress();
