@@ -3,7 +3,7 @@ import { Redis } from "ioredis";
 import { LiquidatorConfig, PerpEmergencyMsg } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 
-import { Network } from "ethers";
+import { Log, Network } from "ethers";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { MultiUrlWebSocketProvider } from "../multiUrlWebsocketProvider.js";
 import { LogPollingJsonRpcProvider } from "../logPollingProvider.js";
@@ -20,6 +20,9 @@ enum ListeningMode {
 
 const HEAD_POLL_INTERVAL_MS = 10_000;
 const HEAD_POLL_TIMEOUT_MS = 8_000;
+const DELIVERY_CHECK_LAG_BLOCKS = 10;
+const DELIVERY_CHECK_MAX_BLOCKS = 2_000;
+const DELIVERY_CHECK_TIMEOUT_MS = 20_000;
 
 export default class BlockhainListener {
   private config: LiquidatorConfig;
@@ -42,6 +45,9 @@ export default class BlockhainListener {
   private switchingRPC = false;
   private headPollTimer?: NodeJS.Timeout;
   private headPollsInflight = new Set<MultiUrlJsonRpcProvider | MultiUrlWebSocketProvider>();
+  private proxyInterface = IPerpetualManager__factory.createInterface();
+  private deliveredLogs = new Map<string, number>();
+  private deliveryCheckFromBlock?: number;
   private emergency!: EmergencyPublishedStore;
   private refreshSymbolsInFlight: Promise<void> | null = null;
 
@@ -129,6 +135,8 @@ export default class BlockhainListener {
 
     this.blockNumber = undefined;
     this.switchingRPC = true;
+    this.deliveredLogs.clear();
+    this.deliveryCheckFromBlock = undefined;
 
     // Remove existing listeners. MultiUrlWebSocketProvider handles this
     // internally, so this is only for Http providers.
@@ -182,7 +190,7 @@ export default class BlockhainListener {
       if (this.mode == ListeningMode.Events) {
         // currently on WS - check that block time is still reasonable or if we
         // need to switch
-        if (!this.checkHeartbeat()) {
+        if (!this.checkHeartbeat() || !(await this.subscriptionsDelivered())) {
           this.switchListeningMode();
         }
       } else if (this.config.rpcListenWs.length > 0) {
@@ -206,6 +214,59 @@ export default class BlockhainListener {
         }
       }
     }, this.config.healthCheckSeconds * 1_000);
+  }
+
+  private recordDelivered(event: any) {
+    if (this.mode === ListeningMode.Events && event?.log) {
+      this.deliveredLogs.set(`${event.log.blockHash}:${event.log.index}`, event.log.blockNumber);
+    }
+  }
+
+  private async subscriptionsDelivered(): Promise<boolean> {
+    if (this.blockNumber === undefined) {
+      return true;
+    }
+    const toBlock = this.blockNumber - DELIVERY_CHECK_LAG_BLOCKS;
+    if (this.deliveryCheckFromBlock === undefined) {
+      this.deliveryCheckFromBlock = toBlock + 1;
+      return true;
+    }
+    if (toBlock < this.deliveryCheckFromBlock) {
+      return true;
+    }
+    const fromBlock = Math.max(this.deliveryCheckFromBlock, toBlock - DELIVERY_CHECK_MAX_BLOCKS + 1);
+    const topics = [
+      [
+        this.proxyInterface.getEvent("SetEmergencyState").topicHash,
+        this.proxyInterface.getEvent("SetNormalState").topicHash,
+      ],
+    ];
+    let logs: Log[];
+    try {
+      logs = await executeWithTimeout(
+        this.httpProvider.getLogs({ address: this.md.getProxyAddress(), topics, fromBlock, toBlock }),
+        DELIVERY_CHECK_TIMEOUT_MS,
+        "delivery check timeout",
+      );
+    } catch (e) {
+      log.warn({ err: e }, "delivery check failed");
+      return true;
+    }
+    this.deliveryCheckFromBlock = toBlock + 1;
+    const missed = logs.filter((l) => !this.deliveredLogs.has(`${l.blockHash}:${l.index}`));
+    for (const [key, block] of this.deliveredLogs) {
+      if (block <= toBlock) {
+        this.deliveredLogs.delete(key);
+      }
+    }
+    if (missed.length > 0) {
+      log.warn(
+        { missed: missed.length, firstTx: missed[0].transactionHash, fromBlock, toBlock },
+        "websocket did not deliver logs",
+      );
+      return false;
+    }
+    return true;
   }
 
   private async probeWebsocket(): Promise<boolean> {
@@ -331,6 +392,7 @@ export default class BlockhainListener {
     proxy.on(
       proxy.filters.SetEmergencyState,
       async (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
+        this.recordDelivered(event);
         const perpId = Number(perpetualId);
         // SetEmergency is emitted for a given perp twice. 
         // SetEmergency recieved for that perp within the last 10min are ignored.
@@ -351,6 +413,7 @@ export default class BlockhainListener {
     );
 
     proxy.on(proxy.filters.SetNormalState, (perpetualId: bigint, event: any) => {
+      this.recordDelivered(event);
       const perpId = Number(perpetualId);
       this.emergency.clear(perpId);
       this.redisPubClient.publish(
