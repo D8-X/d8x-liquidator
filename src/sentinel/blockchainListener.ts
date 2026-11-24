@@ -20,10 +20,10 @@ enum ListeningMode {
 
 const HEAD_POLL_INTERVAL_MS = 10_000;
 const HEAD_POLL_TIMEOUT_MS = 8_000;
-const DELIVERY_CHECK_LAG_BLOCKS = 10;
-const DELIVERY_CHECK_MAX_BLOCKS = 2_000;
 const DELIVERY_CHECK_TIMEOUT_MS = 20_000;
 const PROBE_ATTEMPT_TIMEOUT_MS = 5_000;
+const DELIVERY_CHECK_LAG_BLOCKS = 10;
+const DELIVERY_CHECK_MAX_BLOCKS = 2_000;
 
 export default class BlockhainListener {
   private config: LiquidatorConfig;
