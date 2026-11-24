@@ -6,6 +6,7 @@ import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 import { Network } from "ethers";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { MultiUrlWebSocketProvider } from "../multiUrlWebsocketProvider.js";
+import { LogPollingJsonRpcProvider } from "../logPollingProvider.js";
 import { initMarketDataWithCache } from "../sdkInit.js";
 import { EmergencyPublishedStore } from "./emergencyPublishedStore.js";
 import { createLogger } from "../logger.js";
@@ -52,7 +53,7 @@ export default class BlockhainListener {
     this.config = config;
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig));
     this.redisPubClient = constructRedis("sentinelPubClient");
-    this.httpProvider = new MultiUrlJsonRpcProvider(this.config.rpcListenHttp, this.md.network, {
+    this.httpProvider = new LogPollingJsonRpcProvider(this.config.rpcListenHttp, this.md.network, {
       logErrors: false,
       logRpcSwitches: false,
       switchRpcOnEachRequest: true,
