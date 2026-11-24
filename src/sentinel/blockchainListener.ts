@@ -3,7 +3,7 @@ import { Redis } from "ioredis";
 import { LiquidatorConfig, PerpEmergencyMsg } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 
-import { Log, Network } from "ethers";
+import { Log, Network, ZeroAddress } from "ethers";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { MultiUrlWebSocketProvider } from "../multiUrlWebsocketProvider.js";
 import { LogPollingJsonRpcProvider } from "../logPollingProvider.js";
@@ -23,6 +23,7 @@ const HEAD_POLL_TIMEOUT_MS = 8_000;
 const DELIVERY_CHECK_LAG_BLOCKS = 10;
 const DELIVERY_CHECK_MAX_BLOCKS = 2_000;
 const DELIVERY_CHECK_TIMEOUT_MS = 20_000;
+const PROBE_ATTEMPT_TIMEOUT_MS = 5_000;
 
 export default class BlockhainListener {
   private config: LiquidatorConfig;
@@ -205,7 +206,11 @@ export default class BlockhainListener {
           { rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() },
           "attempting to switch to WS"
         );
-        if (await this.probeWebsocket()) {
+        const probeOk = await this.probeWebsocket();
+        if (this.mode !== ListeningMode.Polling || this.switchingRPC) {
+          return;
+        }
+        if (probeOk) {
           await this.switchListeningMode();
         } else {
           // Otherwise just stop the multi url ws provider and try again later
@@ -270,18 +275,34 @@ export default class BlockhainListener {
   }
 
   private async probeWebsocket(): Promise<boolean> {
+    const deadline = Date.now() + this.config.waitForBlockSeconds * 1_000;
+    const remainingMs = () => Math.max(1, deadline - Date.now());
+    for (;;) {
+      try {
+        await executeWithTimeout(
+          this.multiUrlWsProvider.getBlockNumber(),
+          Math.min(PROBE_ATTEMPT_TIMEOUT_MS, remainingMs()),
+          "websocket probe timeout",
+        );
+        break;
+      } catch (e) {
+        if (Date.now() >= deadline) {
+          log.warn({ err: e, rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() }, "websocket probe failed");
+          return false;
+        }
+        await sleep(Math.min(1_000, remainingMs()));
+      }
+    }
     try {
+      const subId: string = await executeWithTimeout(
+        this.multiUrlWsProvider.send("eth_subscribe", ["logs", { address: ZeroAddress }]),
+        remainingMs(),
+        "websocket subscribe probe timeout",
+      );
       await executeWithTimeout(
-        (async () => {
-          await this.multiUrlWsProvider.getBlockNumber();
-          const subId: string = await this.multiUrlWsProvider.send("eth_subscribe", [
-            "logs",
-            { address: this.md.getProxyAddress() },
-          ]);
-          await this.multiUrlWsProvider.send("eth_unsubscribe", [subId]);
-        })(),
-        this.config.waitForBlockSeconds * 1_000,
-        "websocket probe timeout",
+        this.multiUrlWsProvider.send("eth_unsubscribe", [subId]),
+        remainingMs(),
+        "websocket unsubscribe probe timeout",
       );
       return true;
     } catch (e) {
