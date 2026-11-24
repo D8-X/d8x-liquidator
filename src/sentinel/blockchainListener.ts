@@ -168,6 +168,7 @@ export default class BlockhainListener {
     this.listeningProvider!.resetErrorNumber();
 
     await this.addListeners();
+    void this.pollHead();
     this.redisPubClient.publish("switch-mode", this.mode);
   }
 
