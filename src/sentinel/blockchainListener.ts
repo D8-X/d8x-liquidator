@@ -100,7 +100,8 @@ export default class BlockhainListener {
     if (this.headPollTimer) {
       clearInterval(this.headPollTimer);
     }
-    this.headPollTimer = setInterval(() => void this.pollHead(), HEAD_POLL_INTERVAL_MS);
+    const intervalMs = Math.min(HEAD_POLL_INTERVAL_MS, (this.config.waitForBlockSeconds * 1_000) / 4);
+    this.headPollTimer = setInterval(() => void this.pollHead(), intervalMs);
     void this.pollHead();
   }
 
