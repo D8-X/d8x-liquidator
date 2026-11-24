@@ -140,6 +140,7 @@ export class MultiUrlWebSocketProvider extends SocketProvider implements MultiUr
   public async stop() {
     this.isStopped = true;
     await this._stop();
+    this.registeredListeners.clear();
   }
 
   private async _stop() {
