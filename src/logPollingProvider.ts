@@ -5,7 +5,8 @@ import { createLogger } from "./logger.js";
 const log = createLogger("logPollingProvider");
 
 const LOG_POLL_INTERVAL_MS = 4_000;
-const LOG_POLL_LAG_BLOCKS = 10;
+const LOG_POLL_LAG_BLOCKS = 2;
+const LOG_POLL_OVERLAP_BLOCKS = 30;
 const MAX_LOG_POLL_BLOCKS = 1_000;
 
 export class LogPollingJsonRpcProvider extends MultiUrlJsonRpcProvider {
@@ -20,8 +21,10 @@ export class LogPollingJsonRpcProvider extends MultiUrlJsonRpcProvider {
 class IntervalLogSubscriber implements Subscriber {
   private timer?: NodeJS.Timeout;
   private inflight = false;
+  private startBlock?: number;
   private nextBlock?: number;
   private range = MAX_LOG_POLL_BLOCKS;
+  private seen = new Map<string, number>();
 
   constructor(
     private provider: LogPollingJsonRpcProvider,
@@ -46,7 +49,9 @@ class IntervalLogSubscriber implements Subscriber {
   pause(dropWhilePaused?: boolean) {
     this.stop();
     if (dropWhilePaused) {
+      this.startBlock = undefined;
       this.nextBlock = undefined;
+      this.seen.clear();
     }
   }
 
@@ -61,21 +66,32 @@ class IntervalLogSubscriber implements Subscriber {
     this.inflight = true;
     try {
       const head = await this.provider.getBlockNumber();
-      if (this.nextBlock === undefined) {
+      if (this.startBlock === undefined || this.nextBlock === undefined) {
+        this.startBlock = head + 1;
         this.nextBlock = head + 1;
         return;
       }
-      const fromBlock = this.nextBlock;
-      const toBlock = Math.min(head - LOG_POLL_LAG_BLOCKS, fromBlock + this.range - 1);
-      if (toBlock < fromBlock) {
+      const toBlock = Math.min(head - LOG_POLL_LAG_BLOCKS, this.nextBlock + this.range - 1);
+      if (toBlock < this.nextBlock) {
         return;
       }
+      const fromBlock = Math.max(this.startBlock, this.nextBlock - Math.min(LOG_POLL_OVERLAP_BLOCKS, this.range));
       const logs = await this.provider.getLogs({ ...this.filter, fromBlock, toBlock });
       for (const entry of logs) {
+        const key = `${entry.blockHash}:${entry.index}`;
+        if (this.seen.has(key)) {
+          continue;
+        }
+        this.seen.set(key, entry.blockNumber);
         void this.provider.emit(this.filter, entry);
       }
       this.nextBlock = toBlock + 1;
-      this.range = MAX_LOG_POLL_BLOCKS;
+      for (const [key, block] of this.seen) {
+        if (block < this.nextBlock - LOG_POLL_OVERLAP_BLOCKS) {
+          this.seen.delete(key);
+        }
+      }
+      this.range = Math.min(MAX_LOG_POLL_BLOCKS, this.range * 2);
     } catch (e) {
       this.range = Math.max(1, Math.floor(this.range / 2));
       log.warn({ err: e, nextRange: this.range }, "log poll failed");
