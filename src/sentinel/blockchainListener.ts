@@ -113,7 +113,9 @@ export default class BlockhainListener {
         this.blockNumber = blockNumber;
       }
     } catch (e) {
-      log.warn({ err: e, mode: this.mode }, "head poll failed");
+      if (provider === this.listeningProvider) {
+        log.warn({ err: e, mode: this.mode }, "head poll failed");
+      }
     } finally {
       this.headPollsInflight.delete(provider);
     }
