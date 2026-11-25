@@ -261,11 +261,17 @@ export default class BlockhainListener {
         "delivery check timeout",
       );
     } catch (e) {
-      log.warn({ err: e }, "delivery check failed");
+      log.warn({ err: e, fromBlock, toBlock }, "delivery check failed");
       return true;
     }
     if (this.mode !== ListeningMode.Events || this.switchingRPC || this.deliveryCheckFromBlock === undefined) {
       return true;
+    }
+    if (fromBlock > this.deliveryCheckFromBlock) {
+      log.warn(
+        { fromBlock: this.deliveryCheckFromBlock, toBlock: fromBlock - 1 },
+        "delivery check skipped blocks",
+      );
     }
     this.deliveryCheckFromBlock = toBlock + 1;
     const missed = logs.filter((l) => !this.deliveredLogs.has(`${l.blockHash}:${l.index}`));
