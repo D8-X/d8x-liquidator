@@ -259,6 +259,9 @@ export default class BlockhainListener {
       log.warn({ err: e }, "delivery check failed");
       return true;
     }
+    if (this.mode !== ListeningMode.Events || this.switchingRPC || this.deliveryCheckFromBlock === undefined) {
+      return true;
+    }
     this.deliveryCheckFromBlock = toBlock + 1;
     const missed = logs.filter((l) => !this.deliveredLogs.has(`${l.blockHash}:${l.index}`));
     for (const [key, block] of this.deliveredLogs) {
