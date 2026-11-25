@@ -107,7 +107,12 @@ export default class BlockhainListener {
 
   private async pollHead() {
     const provider = this.listeningProvider;
-    if (provider === undefined || this.switchingRPC || this.headPollsInflight.has(provider)) {
+    if (
+      provider === undefined ||
+      this.mode === ListeningMode.Polling ||
+      this.switchingRPC ||
+      this.headPollsInflight.has(provider)
+    ) {
       return;
     }
     this.headPollsInflight.add(provider);
