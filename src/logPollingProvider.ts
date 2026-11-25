@@ -5,7 +5,7 @@ import { createLogger } from "./logger.js";
 const log = createLogger("logPollingProvider");
 
 const LOG_POLL_INTERVAL_MS = 4_000;
-const LOG_POLL_LAG_BLOCKS = 2;
+const LOG_POLL_LAG_BLOCKS = 10;
 const LOG_POLL_OVERLAP_BLOCKS = 30;
 const MAX_LOG_POLL_BLOCKS = 1_000;
 
