@@ -64,6 +64,8 @@ class IntervalLogSubscriber implements Subscriber {
       return;
     }
     this.inflight = true;
+    let fromBlock: number | undefined;
+    let toBlock: number | undefined;
     try {
       const head = await this.provider.getBlockNumber();
       if (this.startBlock === undefined || this.nextBlock === undefined) {
@@ -71,11 +73,11 @@ class IntervalLogSubscriber implements Subscriber {
         this.nextBlock = head + 1;
         return;
       }
-      const toBlock = Math.min(head - LOG_POLL_LAG_BLOCKS, this.nextBlock + this.range - 1);
+      toBlock = Math.min(head - LOG_POLL_LAG_BLOCKS, this.nextBlock + this.range - 1);
       if (toBlock < this.nextBlock) {
         return;
       }
-      const fromBlock = Math.max(this.startBlock, this.nextBlock - Math.min(LOG_POLL_OVERLAP_BLOCKS, this.range));
+      fromBlock = Math.max(this.startBlock, this.nextBlock - Math.min(LOG_POLL_OVERLAP_BLOCKS, this.range));
       const logs = await this.provider.getLogs({ ...this.filter, fromBlock, toBlock });
       for (const entry of logs) {
         const key = `${entry.blockHash}:${entry.index}`;
@@ -94,7 +96,16 @@ class IntervalLogSubscriber implements Subscriber {
       this.range = Math.min(MAX_LOG_POLL_BLOCKS, this.range * 2);
     } catch (e) {
       this.range = Math.max(1, Math.floor(this.range / 2));
-      log.warn({ err: e, nextRange: this.range }, "log poll failed");
+      log.warn(
+        {
+          err: e,
+          request: fromBlock === undefined ? "eth_blockNumber" : "eth_getLogs",
+          fromBlock,
+          toBlock,
+          nextRange: this.range,
+        },
+        "log poll failed",
+      );
     } finally {
       this.inflight = false;
     }
