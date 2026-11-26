@@ -3,9 +3,10 @@ import { Redis } from "ioredis";
 import { LiquidatorConfig, PerpEmergencyMsg } from "../types.js";
 import { constructRedis, executeWithTimeout, sleep } from "../utils.js";
 
-import { Network } from "ethers";
+import { Log, Network, ZeroAddress } from "ethers";
 import { MultiUrlJsonRpcProvider } from "../multiUrlJsonRpcProvider.js";
 import { MultiUrlWebSocketProvider } from "../multiUrlWebsocketProvider.js";
+import { LogPollingJsonRpcProvider } from "../logPollingProvider.js";
 import { initMarketDataWithCache } from "../sdkInit.js";
 import { EmergencyPublishedStore } from "./emergencyPublishedStore.js";
 import { createLogger } from "../logger.js";
@@ -16,6 +17,13 @@ enum ListeningMode {
   Polling = "Polling",
   Events = "Events",
 }
+
+const HEAD_POLL_INTERVAL_MS = 10_000;
+const HEAD_POLL_TIMEOUT_MS = 8_000;
+const DELIVERY_CHECK_TIMEOUT_MS = 20_000;
+const PROBE_ATTEMPT_TIMEOUT_MS = 5_000;
+const DELIVERY_CHECK_LAG_BLOCKS = 10;
+const DELIVERY_CHECK_MAX_BLOCKS = 2_000;
 
 export default class BlockhainListener {
   private config: LiquidatorConfig;
@@ -36,6 +44,11 @@ export default class BlockhainListener {
   private mode: ListeningMode = ListeningMode.Events;
   private lastBlockReceivedAt: number;
   private switchingRPC = false;
+  private headPollTimer?: NodeJS.Timeout;
+  private headPollsInflight = new Set<MultiUrlJsonRpcProvider | MultiUrlWebSocketProvider>();
+  private proxyInterface = IPerpetualManager__factory.createInterface();
+  private deliveredLogs = new Map<string, number>();
+  private deliveryCheckFromBlock?: number;
   private emergency!: EmergencyPublishedStore;
   private refreshSymbolsInFlight: Promise<void> | null = null;
 
@@ -47,7 +60,7 @@ export default class BlockhainListener {
     this.config = config;
     this.md = new MarketData(PerpetualDataHandler.readSDKConfig(this.config.sdkConfig));
     this.redisPubClient = constructRedis("sentinelPubClient");
-    this.httpProvider = new MultiUrlJsonRpcProvider(this.config.rpcListenHttp, this.md.network, {
+    this.httpProvider = new LogPollingJsonRpcProvider(this.config.rpcListenHttp, this.md.network, {
       logErrors: false,
       logRpcSwitches: false,
       switchRpcOnEachRequest: true,
@@ -83,6 +96,44 @@ export default class BlockhainListener {
     return true;
   }
 
+  private startHeadPolling() {
+    if (this.headPollTimer) {
+      clearInterval(this.headPollTimer);
+    }
+    const intervalMs = Math.min(HEAD_POLL_INTERVAL_MS, (this.config.waitForBlockSeconds * 1_000) / 4);
+    this.headPollTimer = setInterval(() => void this.pollHead(), intervalMs);
+    void this.pollHead();
+  }
+
+  private async pollHead() {
+    const provider = this.listeningProvider;
+    if (
+      provider === undefined ||
+      this.mode === ListeningMode.Polling ||
+      this.switchingRPC ||
+      this.headPollsInflight.has(provider)
+    ) {
+      return;
+    }
+    this.headPollsInflight.add(provider);
+    try {
+      const blockNumber = await executeWithTimeout(provider.getBlockNumber(), HEAD_POLL_TIMEOUT_MS, "head poll timeout");
+      if (provider !== this.listeningProvider || this.switchingRPC) {
+        return;
+      }
+      if (this.blockNumber === undefined || blockNumber > this.blockNumber) {
+        this.lastBlockReceivedAt = Date.now();
+        this.blockNumber = blockNumber;
+      }
+    } catch (e) {
+      if (provider === this.listeningProvider) {
+        log.warn({ err: e, mode: this.mode }, "head poll failed");
+      }
+    } finally {
+      this.headPollsInflight.delete(provider);
+    }
+  }
+
   private async switchListeningMode() {
     if (this.switchingRPC) {
       log.warn("already switching RPC");
@@ -91,6 +142,8 @@ export default class BlockhainListener {
 
     this.blockNumber = undefined;
     this.switchingRPC = true;
+    this.deliveredLogs.clear();
+    this.deliveryCheckFromBlock = undefined;
 
     // Remove existing listeners. MultiUrlWebSocketProvider handles this
     // internally, so this is only for Http providers.
@@ -120,6 +173,7 @@ export default class BlockhainListener {
     this.listeningProvider!.resetErrorNumber();
 
     await this.addListeners();
+    void this.pollHead();
     this.redisPubClient.publish("switch-mode", this.mode);
   }
 
@@ -144,14 +198,12 @@ export default class BlockhainListener {
       if (this.mode == ListeningMode.Events) {
         // currently on WS - check that block time is still reasonable or if we
         // need to switch
-        if (!this.checkHeartbeat()) {
+        if (!this.checkHeartbeat() || !(await this.subscriptionsDelivered())) {
           this.switchListeningMode();
         }
       } else if (this.config.rpcListenWs.length > 0) {
         // currently on HTTP - check if we can switch to WS by seeing if we get
         // blocks with next WS connection.
-        let success = false;
-
         // await this.multiUrlWsProvider.startNextWebsocket(); Do not use once
         // with MultiUrlWebsocketProvider. Also, do not call
         // startNextWebsocket(), multi url provider will handle the switching
@@ -161,24 +213,118 @@ export default class BlockhainListener {
           { rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() },
           "attempting to switch to WS"
         );
-        const blockReceivedCb = () => {
-          log.debug({ rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() }, "block received");
-          success = true;
-        };
-        this.multiUrlWsProvider.on("block", blockReceivedCb);
-        // after N seconds, check if we received a block - if yes, switch
-        setTimeout(async () => {
-          if (success) {
-            this.multiUrlWsProvider.removeListener("block", blockReceivedCb);
-            await this.switchListeningMode();
-          } else {
-            // Otherwise just stop the multi url ws provider and try again later
-            await this.multiUrlWsProvider.stop();
-            log.warn("attempting to switch to WS failed - block not received");
-          }
-        }, this.config.waitForBlockSeconds * 1_000);
+        const probeOk = await this.probeWebsocket();
+        if (this.mode !== ListeningMode.Polling || this.switchingRPC) {
+          return;
+        }
+        if (probeOk) {
+          await this.switchListeningMode();
+        } else {
+          // Otherwise just stop the multi url ws provider and try again later
+          await this.multiUrlWsProvider.stop();
+          log.warn("attempting to switch to WS failed - probe failed");
+        }
       }
     }, this.config.healthCheckSeconds * 1_000);
+  }
+
+  private recordDelivered(event: any) {
+    if (this.mode === ListeningMode.Events && event?.log) {
+      this.deliveredLogs.set(`${event.log.blockHash}:${event.log.index}`, event.log.blockNumber);
+    }
+  }
+
+  private async subscriptionsDelivered(): Promise<boolean> {
+    if (this.blockNumber === undefined) {
+      return true;
+    }
+    const toBlock = this.blockNumber - DELIVERY_CHECK_LAG_BLOCKS;
+    if (this.deliveryCheckFromBlock === undefined) {
+      this.deliveryCheckFromBlock = toBlock + 1;
+      return true;
+    }
+    if (toBlock < this.deliveryCheckFromBlock) {
+      return true;
+    }
+    const fromBlock = Math.max(this.deliveryCheckFromBlock, toBlock - DELIVERY_CHECK_MAX_BLOCKS + 1);
+    const topics = [
+      [
+        this.proxyInterface.getEvent("SetEmergencyState").topicHash,
+        this.proxyInterface.getEvent("SetNormalState").topicHash,
+      ],
+    ];
+    let logs: Log[];
+    try {
+      logs = await executeWithTimeout(
+        this.httpProvider.getLogs({ address: this.md.getProxyAddress(), topics, fromBlock, toBlock }),
+        DELIVERY_CHECK_TIMEOUT_MS,
+        "delivery check timeout",
+      );
+    } catch (e) {
+      log.warn({ err: e, fromBlock, toBlock }, "delivery check failed");
+      return true;
+    }
+    if (this.mode !== ListeningMode.Events || this.switchingRPC || this.deliveryCheckFromBlock === undefined) {
+      return true;
+    }
+    if (fromBlock > this.deliveryCheckFromBlock) {
+      log.warn(
+        { fromBlock: this.deliveryCheckFromBlock, toBlock: fromBlock - 1 },
+        "delivery check skipped blocks",
+      );
+    }
+    this.deliveryCheckFromBlock = toBlock + 1;
+    const missed = logs.filter((l) => !this.deliveredLogs.has(`${l.blockHash}:${l.index}`));
+    for (const [key, block] of this.deliveredLogs) {
+      if (block <= toBlock) {
+        this.deliveredLogs.delete(key);
+      }
+    }
+    if (missed.length > 0) {
+      log.warn(
+        { missed: missed.length, firstTx: missed[0].transactionHash, fromBlock, toBlock },
+        "websocket did not deliver logs",
+      );
+      return false;
+    }
+    return true;
+  }
+
+  private async probeWebsocket(): Promise<boolean> {
+    const deadline = Date.now() + this.config.waitForBlockSeconds * 1_000;
+    const remainingMs = () => Math.max(1, deadline - Date.now());
+    for (;;) {
+      try {
+        await executeWithTimeout(
+          this.multiUrlWsProvider.getBlockNumber(),
+          Math.min(PROBE_ATTEMPT_TIMEOUT_MS, remainingMs()),
+          "websocket probe timeout",
+        );
+        break;
+      } catch (e) {
+        if (Date.now() >= deadline) {
+          log.warn({ err: e, rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() }, "websocket probe failed");
+          return false;
+        }
+        await sleep(Math.min(1_000, remainingMs()));
+      }
+    }
+    try {
+      const subId: string = await executeWithTimeout(
+        this.multiUrlWsProvider.send("eth_subscribe", ["logs", { address: ZeroAddress }]),
+        remainingMs(),
+        "websocket subscribe probe timeout",
+      );
+      await executeWithTimeout(
+        this.multiUrlWsProvider.send("eth_unsubscribe", [subId]),
+        remainingMs(),
+        "websocket unsubscribe probe timeout",
+      );
+      return true;
+    } catch (e) {
+      log.warn({ err: e, rpcUrl: this.multiUrlWsProvider.getCurrentRpcUrl() }, "websocket probe failed");
+      return false;
+    }
   }
 
   public containsEthersConnErrors(error: string) {
@@ -232,6 +378,7 @@ export default class BlockhainListener {
 
     this.connectWsOrSwitchToHttp();
     this.addListeners();
+    this.startHeadPolling();
     this.resetHealthChecks();
   }
 
@@ -277,16 +424,12 @@ export default class BlockhainListener {
       this.switchListeningMode();
     });
 
-    this.listeningProvider.on("block", (blockNumber) => {
-      this.lastBlockReceivedAt = Date.now();
-      this.blockNumber = blockNumber;
-    });
-
     const proxy = IPerpetualManager__factory.connect(this.md.getProxyAddress(), this.listeningProvider);
 
     proxy.on(
       proxy.filters.SetEmergencyState,
       async (perpetualId: bigint, _r: bigint, _s2: bigint, _s3: bigint, event: any) => {
+        this.recordDelivered(event);
         const perpId = Number(perpetualId);
         // SetEmergency is emitted for a given perp twice. 
         // SetEmergency recieved for that perp within the last 10min are ignored.
@@ -307,6 +450,7 @@ export default class BlockhainListener {
     );
 
     proxy.on(proxy.filters.SetNormalState, (perpetualId: bigint, event: any) => {
+      this.recordDelivered(event);
       const perpId = Number(perpetualId);
       this.emergency.clear(perpId);
       this.redisPubClient.publish(
